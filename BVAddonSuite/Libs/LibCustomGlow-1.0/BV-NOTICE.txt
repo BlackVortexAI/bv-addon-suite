@@ -1,0 +1,7 @@
+LibCustomGlow-1.0, upstream minor 25
+https://github.com/Stanzilla/LibCustomGlow/tree/4f8f5c2607d7384b26df9175bb99fa3df891b015
+MIT license: see unchanged LICENSE.txt alongside this file.
+Local change: early capability guard before registration when CreateTexturePool
+or CreateFramePool is unavailable. All remaining upstream code is unchanged.
+BV uses PixelGlow and AutoCastGlow through its owned display adapter. Existing
+Button/Proc and glyph effects retain the native BV implementation/fallback.

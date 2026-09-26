@@ -1,0 +1,11 @@
+BV Icon Collection
+
+Obsidian, Precision, Aether, Gilded, Runebound, Fel, BV Signature and Minimal
+and Icon Echo, including their geometric variants and alpha masks, are original BV designs. BV Signature uses the steel/cyan visual language of
+the approved BV logo; the logo master remains unchanged.
+Their editable source is tools/build_icon_skins.py in the BV UI project.
+No Masque skin artwork or third-party button skin files are included.
+These assets are part of BV Addon Suite and use the project's distribution terms.
+
+The development-only HTML preview references the Blizzard Immolate icon remotely.
+That icon and Masque itself are not bundled in this collection.

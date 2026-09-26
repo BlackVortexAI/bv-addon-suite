@@ -1,0 +1,20 @@
+Bundled unchanged for the BV Addon Suite launcher:
+
+LibDBIcon-1.0, by Funkeh, SVN revision 161 (internal minor 56).
+Source: https://repos.wowace.com/wow/libdbicon-1-0/!svn/bc/161/trunk/LibDBIcon-1.0/LibDBIcon-1.0.lua
+Project: https://www.wowace.com/projects/libdbicon-1-0
+License: https://www.wowace.com/project/15552/license
+The published Ace3 Style BSD license text is included in ACE-LICENSE.txt
+in this directory. This is an embedded library, not a standalone library release.
+
+LibDataBroker-1.1, by tekkub, internal minor 4.
+Source: https://github.com/tekkub/libdatabroker-1-1/tree/1a63ede0248c11aa1ee415187c1f9c9489ce3e02
+Project: https://www.wowace.com/projects/libdatabroker-1-1
+License field: https://www.wowace.com/project/20113/license
+The author expressly instructs addon authors to hard-embed LDB on the project
+page. The project lists All Rights Reserved; the pinned repository supplies no
+separate standard license file. BV does not relicense this library as MIT/BSD.
+The library is embedded unchanged with attribution under that published use.
+
+Research/source/license evidence verified 2026-09-23; see the development
+repository docs/research/2026-09-23-minimap-launcher.md for API and version limits.

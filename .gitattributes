@@ -1,0 +1,5 @@
+# Preserve release bytes; allow blank lines at EOF.
+* -text whitespace=blank-at-eol,space-before-tab,cr-at-eol,-blank-at-eof
+# Keep bundled upstream files and license notices verbatim.
+BVAddonSuite/Libs/** -whitespace
+BVAddonSuite/Media/Fonts/*-OFL.txt -whitespace

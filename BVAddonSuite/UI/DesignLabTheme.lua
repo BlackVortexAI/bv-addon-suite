@@ -1,0 +1,3 @@
+local _, ns = ...
+-- Compatibility name only; all visual primitives live in DesignSystem.lua.
+ns.DesignLabTheme = ns.DesignSystem
