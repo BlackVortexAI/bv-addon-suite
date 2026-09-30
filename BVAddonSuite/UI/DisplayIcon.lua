@@ -18,6 +18,64 @@ function ns.UI:AtlasCoordinates(info)
     if out[1]>=out[2] or out[3]>=out[4] then return end
     return out
 end
+-- Show/hide lifecycle: start on appearing, main loop while shown, finish
+-- before hiding. One animation group per phase, configured on each play.
+local function lifecycleGroup(frame,key,kind)
+    local g=frame[key]
+    if not g then g=frame:CreateAnimationGroup();g.anim=g:CreateAnimation(kind);frame[key]=g end
+    return g
+end
+function ns.UI:StopLifecycle(frame)
+    if frame.lifecycleTimer then frame.lifecycleTimer:Cancel();frame.lifecycleTimer=nil end
+    for _,key in ipairs({"lifeStartAlpha","lifeStartScale","lifeMainAlpha","lifeMainScale","lifeFinishAlpha","lifeFinishScale"}) do if frame[key] then frame[key]:Stop() end end
+    frame.lifecyclePhase=nil
+end
+function ns.UI:PlayLifecycle(frame,phase,life,alpha)
+    if phase=="start" then
+        if life.start=="fade" then
+            local g=lifecycleGroup(frame,"lifeStartAlpha","Alpha");g:SetToFinalAlpha(false)
+            g.anim:SetFromAlpha(0);g.anim:SetToAlpha(alpha);g.anim:SetDuration(life.startTime);g:Play()
+        elseif life.start=="grow" then
+            local g=lifecycleGroup(frame,"lifeStartScale","Scale")
+            g.anim:SetScaleFrom(.2,.2);g.anim:SetScaleTo(1,1);g.anim:SetOrigin("CENTER",0,0);g.anim:SetDuration(life.startTime);g:Play()
+        end
+    elseif phase=="main" then
+        if life.main=="pulse" then
+            local g=lifecycleGroup(frame,"lifeMainAlpha","Alpha");g:SetLooping("BOUNCE")
+            g.anim:SetFromAlpha(alpha);g.anim:SetToAlpha(alpha*.4);g.anim:SetDuration(life.mainPeriod/2);g:Play()
+        elseif life.main=="throb" then
+            local g=lifecycleGroup(frame,"lifeMainScale","Scale");g:SetLooping("BOUNCE")
+            g.anim:SetScaleFrom(1,1);g.anim:SetScaleTo(1.15,1.15);g.anim:SetOrigin("CENTER",0,0);g.anim:SetDuration(life.mainPeriod/2);g:Play()
+        end
+    elseif phase=="finish" then
+        for _,key in ipairs({"lifeMainAlpha","lifeMainScale","lifeStartAlpha","lifeStartScale"}) do if frame[key] then frame[key]:Stop() end end
+        if life.finish=="fade" then
+            local g=lifecycleGroup(frame,"lifeFinishAlpha","Alpha");g:SetToFinalAlpha(true)
+            g.anim:SetFromAlpha(alpha);g.anim:SetToAlpha(0);g.anim:SetDuration(life.finishTime);g:Play()
+        elseif life.finish=="shrink" then
+            local g=lifecycleGroup(frame,"lifeFinishScale","Scale");g:SetToFinalAlpha(true)
+            g.anim:SetScaleFrom(1,1);g.anim:SetScaleTo(.2,.2);g.anim:SetOrigin("CENTER",0,0);g.anim:SetDuration(life.finishTime);g:Play()
+        end
+    end
+    frame.lifecyclePhase=phase
+end
+-- Native FlipBook for sprite sheets; restarted only when the sheet changes.
+function ns.UI:ApplySprite(image,sprite)
+    local key=sprite and (sprite.rows..":"..sprite.columns..":"..sprite.frames..":"..sprite.fps) or nil
+    if image.spriteKey==key then return end
+    image.spriteKey=key
+    if image.spriteAnimation then image.spriteAnimation:Stop() end
+    if not sprite then return end
+    if not image.spriteAnimation then
+        local ok,group=pcall(image.CreateAnimationGroup,image)
+        if not ok or not group then image.spriteKey=nil;return end
+        group:SetLooping("REPEAT");image.spriteAnimation=group;image.spriteFlip=group:CreateAnimation("FlipBook")
+    end
+    local flip=image.spriteFlip
+    flip:SetFlipBookRows(sprite.rows);flip:SetFlipBookColumns(sprite.columns);flip:SetFlipBookFrames(sprite.frames)
+    flip:SetFlipBookFrameWidth(0);flip:SetFlipBookFrameHeight(0);flip:SetDuration(sprite.frames/sprite.fps)
+    image.spriteAnimation:Play()
+end
 function ns.UI:ApplyMediaCrop(image,media,atlasUV)
     local crop=media and (media.crop or (media.kind=="graphic" and media.texcoords))
     if not crop then local inset=media and media.atlas and 0 or media and media.cropBorder==false and 0 or .08;crop={inset,1-inset,inset,1-inset} end
@@ -33,6 +91,61 @@ function ns.UI:ApplyMediaCrop(image,media,atlasUV)
     return true
 end
 -- Owned display properties only. Opaque native values bypass this cache.
+-- Colour overlay layer for Normal/Multiply/Add. Masked by the icon shape
+-- masks and, for file graphics, by the graphic's own alpha.
+function ns.UI:ApplyColorLayer(view,co,media,texture,atlas)
+    local layered=co and (co.mode=="normal" or co.mode=="multiply" or co.mode=="add")
+    if not layered then if view.colorLayer then view.colorLayer:Hide() end;return end
+    local layer=view.colorLayer
+    if not layer then
+        layer=view:CreateTexture(nil,"ARTWORK",nil,6);layer:SetAllPoints(view.image);view.colorLayer=layer;layer.bvMasks={}
+    end
+    local c,k=co.color,co.strength
+    if co.mode=="normal" then layer:SetColorTexture(c[1],c[2],c[3],(c[4] or 1)*k);layer:SetBlendMode("BLEND")
+    elseif co.mode=="multiply" then layer:SetColorTexture(1+(c[1]-1)*k,1+(c[2]-1)*k,1+(c[3]-1)*k,1);layer:SetBlendMode("MOD")
+    else layer:SetColorTexture(c[1]*k,c[2]*k,c[3]*k,1);layer:SetBlendMode("ADD") end
+    -- Masks mirror the image on every present: skins/shapes reuse or detach
+    -- their mask, so stale masks are removed and new ones added (finding 47).
+    pcall(function()
+        local image,current=view.image,{}
+        if image.GetNumMaskTextures then
+            for i=1,image:GetNumMaskTextures() do local mask=image:GetMaskTexture(i);if mask then current[mask]=true end end
+        end
+        if media and media.kind=="graphic" and not atlas and view.CreateMaskTexture then
+            view.colorMask=view.colorMask or view:CreateMaskTexture()
+            view.colorMask:SetAllPoints(view.image);view.colorMask:SetTexture(ns.GraphValues.Native(texture),"CLAMPTOBLACKADDITIVE","CLAMPTOBLACKADDITIVE")
+            current[view.colorMask]=true
+        end
+        if not layer.AddMaskTexture then return end
+        for mask in pairs(layer.bvMasks) do if not current[mask] then layer:RemoveMaskTexture(mask);layer.bvMasks[mask]=nil end end
+        for mask in pairs(current) do if not layer.bvMasks[mask] then layer:AddMaskTexture(mask);layer.bvMasks[mask]=true end end
+    end)
+    layer:SetShown(view.image:IsShown())
+end
+-- Symbol beside text media: sized by font size x scale, placed at the edge of
+-- the rendered string (unreadable string metrics fall back to the box edge).
+function ns.UI:ApplyTextSymbol(view,symbol,fontSize,align)
+    if not symbol then if view.symbolGlyph then view.symbolGlyph:Hide() end;return end
+    local size=math.max(4,math.min(512,fontSize*symbol.scale))
+    local path,l,r,t,b=ns.Symbols:Coords(symbol.name,size)
+    if not path then if view.symbolGlyph then view.symbolGlyph:Hide() end;return end
+    local glyph=view.symbolGlyph
+    if not glyph then glyph=view:CreateTexture(nil,"ARTWORK",nil,5);view.symbolGlyph=glyph end
+    glyph:SetTexture(path);glyph:SetTexCoord(l,r,t,b);glyph:SetVertexColor(symbol.color[1],symbol.color[2],symbol.color[3],symbol.color[4] or 1)
+    glyph:SetSize(size,size)
+    local width,height=view:GetWidth(),view:GetHeight()
+    local ok,sw,sh=pcall(function() return view.caption:GetStringWidth(),view.caption:GetStringHeight() end)
+    if not ok or ns.GraphValues.IsSecret(sw) or ns.GraphValues.IsSecret(sh) or type(sw)~="number" or type(sh)~="number" then sw,sh=width,height end
+    sw,sh=math.min(sw,width),math.min(sh,height)
+    local gap=math.max(2,size*.25)
+    local left=align=="LEFT" and -width/2 or align=="RIGHT" and width/2-sw or -sw/2
+    local x,y=0,0
+    if symbol.position=="left" then x=left-gap-size/2
+    elseif symbol.position=="right" then x=left+sw+gap+size/2
+    elseif symbol.position=="above" then x=left+sw/2;y=sh/2+gap+size/2
+    else x=left+sw/2;y=-(sh/2+gap+size/2) end
+    glyph:ClearAllPoints();glyph:SetPoint("CENTER",view,"CENTER",x,y);glyph:Show()
+end
 function ns.UI:DisplayProperty(region,method,...)
     local count=select('#',...);local cache=region.displayProperties
     local old=cache and cache[method];local same=old and old.count==count
@@ -247,7 +360,21 @@ function ns.UI:DisplayIcon()
     function view:Present(value,visible)
         local media=type(value)=="table" and value or nil
         local rect=self.rect
+        -- Finish animation delays the hide; the timer completes it later.
+        if (not visible or not rect) and not self.lifecycleForce then
+            local last=type(self.lastValue)=="table" and self.lastValue or nil
+            local life=last and last.lifecycle
+            if self.lifecyclePhase=="finish" then return end
+            if self.visible and rect and life and life.finish~="none" then
+                ns.UI:PlayLifecycle(self,"finish",life,last.alpha or 1)
+                self.lifecycleTimer=C_Timer.NewTimer(life.finishTime,function()
+                    self.lifecycleTimer=nil;self.lifecycleForce=true;self:Present(nil,false);self.lifecycleForce=nil
+                end)
+                return
+            end
+        end
         if not visible or not rect then
+            ns.UI:StopLifecycle(self)
             if self.iconSkin then self.iconSkin:Release() end
             if self.glowView then self.glowView:Stop() end
             if self.overlays then self.overlays:Stop() end
@@ -256,6 +383,9 @@ function ns.UI:DisplayIcon()
             self.interaction=nil; self.inputHandler=nil;self.inputIdentity=nil;self.inputInstance=nil;self.feedbackShown=nil;self.feedbackGeometry=nil;self.cropUnavailable=nil
             self:ResetFeedback();self.mediaText=nil; self:EnableMouse(false); return
         end
+        -- Shown again during a finish animation: cancel it and keep showing.
+        local wasVisible=self.visible
+        if self.lifecyclePhase=="finish" then ns.UI:StopLifecycle(self);self.mediaDirty=true end
         local interaction=media and media.interaction or nil
         local lastMedia=type(self.lastValue)=="table" and self.lastValue or nil
         local prior=lastMedia and lastMedia.interaction or nil
@@ -311,6 +441,7 @@ function ns.UI:DisplayIcon()
             self.renderStatus=textOK and self.fontStatus or "text unavailable"
             ns.UI:DisplayProperty(self.caption,"SetTextColor",color[1],color[2],color[3],color[4] or 1)
             ns.UI:DisplayProperty(self.caption,"SetJustifyH",media.align); ns.UI:DisplayProperty(self.caption,"SetJustifyV","MIDDLE"); ns.UI:DisplayProperty(self.caption,"SetWordWrap",media.wrap)
+            ns.UI:ApplyTextSymbol(self,media.symbol,size,media.align)
             self.texture=nil
         elseif not isBar then
             local texture=media and media.texture or value
@@ -334,12 +465,23 @@ function ns.UI:DisplayIcon()
             self.renderStatus=self.assetUnavailable and "asset unavailable" or "ready"
             if not atlas and self.image.displayWasAtlas then self.image.displayProperties=nil end
             local cropOK=ns.UI:ApplyMediaCrop(self.image,media,atlas and self.atlasUV)
+            ns.UI:ApplySprite(self.image,media and media.sprite)
             self.cropUnavailable=not cropOK
             if not cropOK then self.image:Hide();self.renderStatus="atlas crop unavailable" end
             ns.UI:DisplayProperty(self.image,"SetBlendMode",media and media.blendMode or "BLEND")
             self.image.displayWasAtlas=atlas~=nil
-            ns.UI:DisplayProperty(self.image,"SetVertexColor",color[1],color[2],color[3],color[4] or 1)
+            local co=media and media.colorOverlay
+            local r,g,b=color[1],color[2],color[3]
+            if co and (co.mode=="tint" or co.mode=="desaturate") then
+                local k=co.strength
+                r,g,b=r*(1+(co.color[1]-1)*k),g*(1+(co.color[2]-1)*k),b*(1+(co.color[3]-1)*k)
+            end
+            ns.UI:DisplayProperty(self.image,"SetDesaturated",co~=nil and co.mode=="desaturate")
+            ns.UI:DisplayProperty(self.image,"SetVertexColor",r,g,b,color[4] or 1)
+            ns.UI:ApplyColorLayer(self,co,media,texture,atlas)
+        elseif self.colorLayer then self.colorLayer:Hide()
         end
+        if not isText and self.symbolGlyph then self.symbolGlyph:Hide() end
         local angle=math.rad(visual.angle%360)
         assert(not (isBar or (media and (media.cooldown or media.duration or media.overlay))) or angle==0,
             "Rotation of bars and media overlays is not supported")
@@ -363,6 +505,15 @@ function ns.UI:DisplayIcon()
         self:RefreshInput(media)
         self.lastValue=ns.GraphValues.RuntimeCopy(value); self.lastRect=ns.LayoutModel.Copy(rect)
         self.visible=true; self:Show()
+        local life=media and media.lifecycle
+        if not life then if self.lifecyclePhase then ns.UI:StopLifecycle(self) end
+        elseif not wasVisible then
+            ns.UI:StopLifecycle(self);ns.UI:PlayLifecycle(self,"start",life,media.alpha or 1)
+            if life.main~="none" then
+                local alpha=media.alpha or 1
+                self.lifecycleTimer=C_Timer.NewTimer(life.start~="none" and life.startTime or 0,function() self.lifecycleTimer=nil;ns.UI:PlayLifecycle(self,"main",life,alpha) end)
+            end
+        elseif not self.lifecyclePhase and life.main~="none" then ns.UI:PlayLifecycle(self,"main",life,media.alpha or 1) end
         if self.iconSkin then
             local status=self.iconSkin:Paint(media,not self.assetUnavailable)
             if status~="ready" then self.renderStatus=status end

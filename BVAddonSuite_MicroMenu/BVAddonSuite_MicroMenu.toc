@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: BV Addon Suite - Micro Menu
+## Notes: Skinned, movable micro menu with own symbols, order and mouseover. Requires BV Core.
+## Author: BV
+## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
+## Version: 0.8.79
+## Dependencies: BVAddonSuite
+
+MicroMenu.lua

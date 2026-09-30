@@ -194,12 +194,14 @@ local icons={
     undo={{6,3,2,7},{2,7,6,11},{2,7,10,7},{10,7,13,10},{13,10,13,13}},
     fit={{2,6,2,2},{2,2,6,2},{10,2,14,2},{14,2,14,6},{14,10,14,14},{14,14,10,14},{6,14,2,14},{2,14,2,10}},
     edit={{3,10,10,3},{10,3,13,6},{13,6,6,13},{6,13,2,14},{2,14,3,10}},
+    -- "search" also serves the item browse button (Lucide glyph when bundled).
+    gear={lines={{12.8,8,15,8},{3.2,8,1,8},{8,12.8,8,15},{8,3.2,8,1},{11.4,11.4,13,13},{4.6,11.4,3,13},{4.6,4.6,3,3},{11.4,4.6,13,3}},circles={{8,8,4.6},{8,8,1.8}}},
     sliders={{2,4,5,4},{9,4,14,4},{2,12,8,12},{12,12,14,12},{5,2,9,2},{9,2,9,6},{9,6,5,6},{5,6,5,2},{8,10,12,10},{12,10,12,14},{12,14,8,14},{8,14,8,10}},
 }
 DesignSystem.categories={sources={label="Sources",icon="spark"},time={label="Time",icon="clock"},logic={label="Logic",icon="tree"},
     math={label="Values / Math",icon="plus"},media={label="Media",icon="grid"},modifiers={label="Modifiers",icon="sliders"},outputs={label="Outputs",icon="play"},
-    triggers={label="Triggers",icon="spark"},memory={label="Memory",icon="folder"}}
-DesignSystem.categoryOrder={"sources","triggers","time","logic","math","memory","media","modifiers","outputs"}
+    triggers={label="Triggers",icon="spark"},memory={label="Memory",icon="folder"},notes={label="Notes",icon="edit"}}
+DesignSystem.categoryOrder={"sources","triggers","time","logic","math","memory","media","modifiers","outputs","notes"}
 function DesignSystem.NodeCategory(kind,def)
     if def.category and DesignSystem.categories[def.category] then return def.category end
     if kind=="array" or kind=="memory_output" or kind=="memory" or def.memoryOperation then return "memory" end
@@ -217,6 +219,20 @@ end
 function Factory:Icon(parent,name,size,color)
     local icon=CreateFrame("Frame",nil,parent); M.Size(icon,size or 16,size or 16)
     icon:EnableMouse(false); icon.lines={}; icon.circles={}; icon.dots={}
+    -- Lucide graphic when available; the line drawing stays as fallback.
+    local symbol=ns.Symbols and ns.Symbols:UIName(name)
+    if symbol then
+        local path,l,r,t,b=ns.Symbols:Coords(symbol,M.ToNative(size or 16))
+        local glyph=icon:CreateTexture(nil,"OVERLAY")
+        local ok,loaded=pcall(glyph.SetTexture,glyph,path)
+        if ok and loaded~=false then
+            glyph:SetAllPoints(icon);glyph:SetTexCoord(l,r,t,b);icon.glyph=glyph;icon.symbol=symbol
+            function icon:SetColor(...) self.glyph:SetVertexColor(...) end
+            self:Bind(function() icon:SetColor(self:Color(icon.colorRole or color or "accent")) end,icon)
+            return icon
+        end
+        glyph:Hide()
+    end
     local definition=icons[name] or icons.spark
     local function addLine(p,collection)
         local line=icon:CreateLine(nil,"OVERLAY"); M.Thickness(line,1.4)
@@ -369,7 +385,7 @@ function Factory:Button(parent,text,width,callback,kind)
     local function render()
         fitLabel()
         local kind=button.presentationKind or kind
-        local primary=kind=="primary" or (button.selected and kind~="nav" and kind~="tab")
+        local primary=kind=="primary" or (button.selected and kind~="nav" and kind~="tab" and kind~="menu")
         local fill,fillAlpha,edge,edgeAlpha,textColor="raised",.7,"edge",.4,"text"
         if kind=="resize" then fill,fillAlpha,edge,edgeAlpha,textColor=button.hovered and "text" or "accent",1,"bg",1,"bg"
         elseif primary then fill,fillAlpha,edge,edgeAlpha,textColor="accent",1,"accent",.65,"bg"
@@ -380,8 +396,9 @@ function Factory:Button(parent,text,width,callback,kind)
         elseif kind=="tab" then
             fillAlpha,edgeAlpha=0,0; textColor=button.selected and "text" or button.hovered and "accent" or "muted"
         elseif kind=="menu" then
-            fill,fillAlpha,edgeAlpha="accent",button.hovered and .10 or 0,0
-            textColor=button.danger and "danger" or "text"
+            -- Menu entries (0.8.73): flat rows, hover band, current value in accent.
+            fill,fillAlpha,edgeAlpha="accent",button.hovered and .16 or button.selected and .07 or 0,0
+            textColor=button.danger and "danger" or button.selected and "accent" or "text"
         elseif kind=="window" or kind=="ghost" then
             fillAlpha=button.hovered and .35 or 0; edgeAlpha=kind=="window" and button.hovered and .25 or 0
             textColor=button.hovered and "text" or "muted"
@@ -589,12 +606,12 @@ function Factory:Dialog(parent,width,height,name)
     local dialog=CreateFrame("Frame",name,parent); dialog:Hide(); M.Size(dialog,width,height)
     self:Skin(dialog,"panel",8,nil,true); dialog:EnableMouse(true)
     dialog.isDialog=true
-    dialog.title=self:Label(dialog,"",19,"text","bold"); M.Point(dialog.title,"TOPLEFT",20,-13); dialog.title:SetWordWrap(false)
-    dialog.close=self:IconButton(dialog,"close",function() dialog:Hide() end,"ghost"); M.Point(dialog.close,"TOPRIGHT",-10,-8)
-    dialog.rule=self:Rule(dialog); M.Point(dialog.rule,"TOPLEFT",1,-44); M.Point(dialog.rule,"TOPRIGHT",-1,-44)
-    dialog.content=CreateFrame("Frame",nil,dialog); M.Point(dialog.content,"TOPLEFT",0,-44); M.Point(dialog.content,"BOTTOMRIGHT",0,0)
-    dialog:HookScript("OnSizeChanged",function() M.Size(dialog.title,math.max(1,M.GetWidth(dialog)-72),28) end)
-    M.Size(dialog.title,width-72,28)
+    dialog.title=self:Label(dialog,"",16,"text","bold"); M.Point(dialog.title,"TOPLEFT",18,-10); dialog.title:SetWordWrap(false)
+    dialog.close=self:IconButton(dialog,"close",function() dialog:Hide() end,"ghost"); M.Point(dialog.close,"TOPRIGHT",-8,-4)
+    dialog.rule=self:Rule(dialog); M.Point(dialog.rule,"TOPLEFT",1,-36); M.Point(dialog.rule,"TOPRIGHT",-1,-36)
+    dialog.content=CreateFrame("Frame",nil,dialog); M.Point(dialog.content,"TOPLEFT",0,-36); M.Point(dialog.content,"BOTTOMRIGHT",0,0)
+    dialog:HookScript("OnSizeChanged",function() M.Size(dialog.title,math.max(1,M.GetWidth(dialog)-72),22) end)
+    M.Size(dialog.title,width-72,22)
     return dialog
 end
 

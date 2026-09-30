@@ -3,8 +3,8 @@ local UI = ns.UI
 local D = ns.DesignSystem.Metrics
 
 local function previewFont(region,font)
-    local ok=pcall(ns.Theme.Font,ns.Theme,region,D.ToNative(15),font)
-    if not ok then pcall(region.SetFont,region,"Fonts\\FRIZQT__.TTF",D.ToNative(15),"") end
+    local ok=pcall(ns.Theme.Font,ns.Theme,region,D.ToNative(13),font)
+    if not ok then pcall(region.SetFont,region,"Fonts\\FRIZQT__.TTF",D.ToNative(13),"") end
 end
 local function label(text) return type(text)=="string" and text:gsub("|","||") or "—" end
 
@@ -32,7 +32,9 @@ local function createPopup()
     root.rows = {}
     root.hint = UI:Label(root.menu, "", 12, "muted")
     D.Point(root.hint,"BOTTOM", 0, 6)
-    for index = 1, 8 do
+    -- Command menus show up to 16 entries so nothing hides below a silent
+    -- scroll; value dropdowns keep 8 rows plus the scroll hint.
+    for index = 1, 16 do
         local row = UI:Button(root.menu, "", 288, function()
             local owner, option = root.owner, root.rows[index].option
             UI:CloseDropdown()
@@ -45,6 +47,10 @@ local function createPopup()
         D.Point(row,"TOPLEFT", 6, -6 - (index - 1) * 32)
         row.label:ClearAllPoints(); D.Point(row.label,"LEFT", 10, 0)
         row.label:SetJustifyH("LEFT"); row.label:SetJustifyV("MIDDLE"); D.Height(row.label,26)
+        -- Current value: thin accent bar at the left edge.
+        row.mark = row:CreateTexture(nil, "OVERLAY")
+        D.Point(row.mark,"TOPLEFT",0,-4); D.Point(row.mark,"BOTTOMLEFT",0,4); D.Width(row.mark,2)
+        row.mark:Hide()
         row.sample = row:CreateTexture(nil, "ARTWORK")
         D.Point(row.sample,"RIGHT", -8, 0); D.Size(row.sample,54, 12)
         root.rows[index] = row
@@ -52,32 +58,36 @@ local function createPopup()
     function root:RefreshRows()
         local owner = self.owner
         if not owner then return end
-        local count = math.min(8, #owner.options)
+        local visible = owner.menuRows or 8
+        local count = math.min(visible, #owner.options)
         local width = owner.menuWidth or D.GetWidth(owner)
-        local step=owner.contextMenu and 28 or 32
-        D.Size(self.menu,width,count*step+(owner.contextMenu and #owner.options<=8 and 12 or 32))
+        -- Compact list (0.8.73): 26-unit rows in a 4-unit frame, no per-row borders.
+        local step=26
+        local overflow=#owner.options>visible
+        D.Size(self.menu,width,count*step+8+(overflow and 22 or 0))
         for index, row in ipairs(self.rows) do
             local option = index <= count and owner.options[self.offset + index] or nil
             row.option = option
-            row.presentationKind=owner.contextMenu and "menu" or nil
+            row.presentationKind="menu"
             row.danger=option and option.danger
-            D.Height(row,step-2);row:ClearAllPoints();D.Point(row,"TOPLEFT",6,-6-(index-1)*step)
+            D.Height(row,step-2);row:ClearAllPoints();D.Point(row,"TOPLEFT",4,-4-(index-1)*step)
             row:SetShown(option ~= nil)
             if option then
-                D.Width(row,width - 12)
+                D.Width(row,width - 8)
                 row:SetLabelInsets(10,option.texture and 84 or 26,"LEFT")
                 row:SetLabelText(label(option.label))
                 previewFont(row.label,option.font)
                 row.sample:SetShown(option.texture ~= nil)
                 if option.texture then local ok,ready=pcall(row.sample.SetTexture,row.sample,option.texture);row.sample:SetShown(ok and ready~=false) else row.sample:SetTexture(nil) end
-                row:SetSelected(option.value == owner.value)
+                local current=not owner.contextMenu and option.value == owner.value
+                row:SetSelected(current); row.mark:SetColorTexture(ns.Theme:Color("accent")); row.mark:SetShown(current)
             end
         end
-        self.hint:SetText(#owner.options > 8 and "Scroll for more" or "Click to select")
-        self.hint:SetShown(not owner.contextMenu or #owner.options>8)
+        self.hint:SetText("Scroll for more")
+        self.hint:SetShown(overflow)
     end
     root.menu:SetScript("OnMouseWheel", function(_, delta)
-        root.offset = math.max(0, math.min(math.max(0, #root.owner.options - 8), root.offset - delta))
+        root.offset = math.max(0, math.min(math.max(0, #root.owner.options - (root.owner.menuRows or 8)), root.offset - delta))
         root:RefreshRows()
     end)
     UI.dropdown = root
@@ -107,7 +117,7 @@ function UI:OpenDropdown(host)
         measure(branch)
         popup:SetFrameLevel(highest + 1)
         popup.owner = host
-        popup.offset = math.max(0, math.min((host.index or 1) - 1, #host.options - 8))
+        popup.offset = math.max(0, math.min((host.index or 1) - 1, #host.options - (host.menuRows or 8)))
         popup.menu:SetScale(host:GetEffectiveScale() / UIParent:GetEffectiveScale())
         popup.menu:ClearAllPoints()
         D.Point(popup.menu,"TOPLEFT", host.anchor or host, "BOTTOMLEFT", 0, -4)
@@ -119,7 +129,7 @@ end
 -- The session is immutable, so a reused anchor cannot redirect its callback.
 function UI:ContextMenu(anchor,options,callback)
     self:CloseDropdown()
-    local session={anchor=anchor,options=options,callback=callback,menuWidth=260,contextMenu=true}
+    local session={anchor=anchor,options=options,callback=callback,menuWidth=260,contextMenu=true,menuRows=16}
     function session:GetEffectiveScale() return self.anchor:GetEffectiveScale() end
     function session:SetValue() end
     if not anchor.contextMenuHooked then
@@ -148,8 +158,17 @@ function UI:Dropdown(parent, width, options, callback)
             if option.value == value then
                 self.index = index; self:SetLabelText(label(option.label))
                 if option.texture then
-                    if not self.sample then self.sample=self:CreateTexture(nil,"OVERLAY");D.Point(self.sample,"RIGHT",-29,0);D.Size(self.sample,48,10) end
-                    self:SetLabelInsets(12,86,"LEFT")
+                    if not self.sample then self.sample=self:CreateTexture(nil,"OVERLAY") end
+                    self.sample:ClearAllPoints()
+                    -- Narrow fields (node cards): a thin preview strip along the
+                    -- bottom keeps the full width for long names such as
+                    -- "Alu One Soft Light Bevel"; wide fields keep the swatch.
+                    if D.GetWidth(self)<300 then
+                        D.Point(self.sample,"BOTTOMLEFT",10,4);D.Point(self.sample,"BOTTOMRIGHT",-26,4);D.Height(self.sample,3);self:SetLabelInsets(10,24,"LEFT")
+                        UI:GetStyle():Font(self.label,12);self:SetLabelText(label(option.label))
+                    else
+                        D.Point(self.sample,"RIGHT",-29,0);D.Size(self.sample,48,10);self:SetLabelInsets(12,86,"LEFT")
+                    end
                     local ok,ready=pcall(self.sample.SetTexture,self.sample,option.texture);self.sample:SetShown(ok and ready~=false)
                 end
                 return

@@ -34,6 +34,27 @@ end
 function M.AtlasName(value)
     return not V.IsSecret(value) and type(value)=="string" and #value>0 and #value<=128 and not value:find("[^%w_%-]")
 end
+-- Sprite sheet played natively as a FlipBook: rows x columns cells, the first
+-- `frames` cells in row-major order, `fps` frames per second.
+function M.SpriteValid(s)
+    local function int(v,lo,hi) return type(v)=="number" and v==math.floor(v) and v>=lo and v<=hi end
+    return type(s)=="table" and int(s.rows,1,16) and int(s.columns,1,16) and int(s.frames,1,256) and s.frames<=s.rows*s.columns and int(s.fps,1,60)
+end
+-- Show/hide lifecycle (WeakAuras start/main/finish): native animations only.
+M.lifecycleStart={none=true,fade=true,grow=true}
+M.lifecycleMain={none=true,pulse=true,throb=true}
+M.lifecycleFinish={none=true,fade=true,shrink=true}
+function M.LifecycleValid(l)
+    local function time(v,lo,hi) return type(v)=="number" and v==v and v>=lo and v<=hi end
+    return type(l)=="table" and M.lifecycleStart[l.start] and M.lifecycleMain[l.main] and M.lifecycleFinish[l.finish]
+        and time(l.startTime,.05,5) and time(l.mainPeriod,.2,10) and time(l.finishTime,.05,5) or false
+end
+-- Texture coordinates of one 1-based cell, row-major.
+function M.SpriteCell(rows,columns,index)
+    local i=math.max(1,math.min(rows*columns,math.floor(index)))-1
+    local col,row=i%columns,math.floor(i/columns)
+    return {col/columns,(col+1)/columns,row/rows,(row+1)/rows}
+end
 local function cropValid(c)
     return type(c)=="table" and bounded(c[1],0,1) and bounded(c[2],0,1) and bounded(c[3],0,1) and bounded(c[4],0,1)
         and c[1]<c[2] and c[3]<c[4]
@@ -52,10 +73,33 @@ function M.GlowOptions(media)
     end
     return out
 end
+-- Colour overlay (in-game request 0.8.58). WoW textures offer only
+-- BLEND/ADD/MOD blending, so no Photoshop Overlay/Soft light/Screen.
+M.overlayModes={normal=true,multiply=true,add=true,tint=true,desaturate=true}
 local function rgba(c)
     if type(c)~="table" then return false end
     for i=1,4 do if not bounded(c[i],0,1) then return false end end
     return true
+end
+-- Symbol value (Lucide glyph + colour) for Symbol ports, and its media form.
+M.symbolPositions={left=true,right=true,above=true,below=true}
+function M.Symbol(v)
+    if type(v)~="table" or getmetatable(v) or v.kind~="symbol" or not (ns.Symbols and ns.Symbols:Valid(v.name)) or not rgba(v.color) then return false end
+    for k in pairs(v) do if k~="kind" and k~="name" and k~="color" then return false end end
+    return true
+end
+function M.SymbolMedia(sym)
+    local path,l,r,t,b=ns.Symbols:Coords(sym.name,64)
+    local m=M.New("graphic",{source="file",path=path,left=l,right=r,top=t,bottom=b})
+    m.color={sym.color[1],sym.color[2],sym.color[3]};m.alpha=sym.color[4]
+    assert(M.Valid(m),"Invalid symbol media");return m
+end
+-- A symbol shown with text media (Media Text / Button Media).
+function M.AttachSymbol(m,sym,config)
+    if sym==nil then return m end
+    assert(M.Symbol(sym),"Invalid symbol")
+    m.symbol={name=sym.name,color={sym.color[1],sym.color[2],sym.color[3],sym.color[4]},position=config.symbolPosition or "left",scale=config.symbolScale or 1}
+    assert(M.Valid(m),"Invalid symbol placement");return m
 end
 local function descriptor(value,kind,keys)
     if not V.PlainExcept(value,{}) or value.version~=1 or value.kind~=kind then return false end
@@ -118,6 +162,16 @@ function M.Valid(m)
     if type(m)~="table" or m.version~=1 or type(m.ops)~="table" or #m.ops>32 then return false end
     if m.atlas~=nil and m.kind~="icon" and m.kind~="graphic" then return false end
     if m.crop~=nil and ((m.kind~="icon" and m.kind~="graphic") or not cropValid(m.crop)) then return false end
+    if m.sprite~=nil and ((m.kind~="icon" and m.kind~="graphic") or not M.SpriteValid(m.sprite)) then return false end
+    if m.lifecycle~=nil and not M.LifecycleValid(m.lifecycle) then return false end
+    if m.symbol~=nil then
+        local s=m.symbol
+        if m.kind~="text" or type(s)~="table" or not M.Symbol({kind="symbol",name=s.name,color=s.color}) or not M.symbolPositions[s.position] or not bounded(s.scale,.25,8) then return false end
+    end
+    if m.colorOverlay~=nil then
+        local o=m.colorOverlay
+        if (m.kind~="icon" and m.kind~="graphic") or type(o)~="table" or not M.overlayModes[o.mode] or not rgba(o.color) or not bounded(o.strength,0,1) then return false end
+    end
     if m.flipX~=nil and type(m.flipX)~="boolean" or m.flipY~=nil and type(m.flipY)~="boolean" then return false end
     if m.blendMode~=nil and not ({BLEND=true,ADD=true,MOD=true,ALPHAKEY=true})[m.blendMode] then return false end
     if m.buttonStyle~=nil and (m.kind~="text" or not M.buttonLabels[m.buttonStyle]) then return false end
@@ -300,7 +354,12 @@ function M.Modify(media,kind,args,config)
         assert(m.kind=="icon","Cooldown overlay requires icon media")
         m.cooldown={kind="spell",spellID=config.spellID,showNumbers=config.showNumbers};m.duration=nil
     elseif kind=="opacity" then m.alpha=args.alpha
-    elseif kind=="tint" then m.color={args.red,args.green,args.blue}
+    elseif kind=="tint" then
+        -- Colour field (hex) multiplied with the R/G/B inputs; white = no change.
+        local c={1,1,1,1}
+        if args.color~=nil then c=M.GlowColor(args.color) end
+        assert(c,"Colour must be RRGGBB or RRGGBBAA")
+        m.color={args.red*c[1],args.green*c[2],args.blue*c[3]}
     elseif kind=="glow" then
         m.glow=args.strength
         m.glowEffect={iconStyle=config.iconStyle or "auto",textStyle=config.textStyle or "soft",
@@ -317,6 +376,26 @@ function M.Modify(media,kind,args,config)
     elseif kind=="text_outline" then m.textOutline={color=M.GlowColor(args.color),width=args.width}
     elseif kind=="text_shadow" then m.textShadow={color=M.GlowColor(args.color),x=args.x,y=args.y}
     elseif kind=="icon_border" then m.iconBorder={color=M.GlowColor(args.color),width=args.width,style=config.style or "solid"}
+    elseif kind=="display_lifecycle" then
+        m.lifecycle={start=config.start,startTime=config.startTime,main=config.main,mainPeriod=config.mainPeriod,finish=config.finish,finishTime=config.finishTime}
+    elseif kind=="media_sprite" then
+        assert(m.kind=="icon" or m.kind=="graphic","Sprite requires icon or graphic media")
+        local rows,columns,frames=config.rows,config.columns,config.frames
+        if config.mode=="animate" then
+            m.sprite={rows=rows,columns=columns,frames=frames,fps=config.fps};m.crop={0,1,0,1}
+        else
+            local index=args.frame
+            assert(type(index)=="number" and index==index,"Sprite frame must be a number")
+            -- Frames wrap around, so a counter can drive the sheet directly.
+            index=((math.floor(index)-1)%frames)+1
+            m.sprite=nil;m.crop=M.SpriteCell(rows,columns,index)
+        end
+    elseif kind=="color_overlay" then
+        assert(m.kind=="icon" or m.kind=="graphic","Colour overlay requires icon or graphic media")
+        assert(M.overlayModes[config.mode],"Unknown colour overlay mode")
+        local color=M.GlowColor(args.color);assert(color,"Colour must be RRGGBB or RRGGBBAA")
+        local strength=args.strength;assert(type(strength)=="number" and strength==strength,"Strength must be a number")
+        m.colorOverlay={mode=config.mode,color=color,strength=math.max(0,math.min(1,strength))}
     elseif kind=="media_crop" then
         assert(m.kind=="icon" or m.kind=="graphic","Crop requires icon or graphic media")
         m.crop={args.left,args.right,args.top,args.bottom};m.flipX=config.flipX==true;m.flipY=config.flipY==true;m.blendMode=config.blendMode or "BLEND"

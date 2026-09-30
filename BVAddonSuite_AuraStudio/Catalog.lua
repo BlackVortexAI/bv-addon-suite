@@ -2,10 +2,10 @@ local package, A = ...
 local ns=BVAddonSuiteCore
 if not ns or not ns.RequireRelease then
     A.blocked=true
-    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BVAddonSuite Core 0.8.51. Update all BV packages together; saved data is preserved.") end
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BVAddonSuite Core 0.8.79. Update all BV packages together; saved data is preserved.") end
     return
 end
-if not ns:RequireRelease(package,"0.8.51") then A.blocked=true; return end
+if not ns:RequireRelease(package,"0.8.79") then A.blocked=true; return end
 A.G=ns.GraphModel
 local function port(label,t,default,wire,order) return {label=label,type=t,default=default,wire=wire,required=true,order=order} end
 local function logicDefinition(base,config)
@@ -211,7 +211,7 @@ for _,operation in ipairs({"set","get","delete","clear"}) do
     A.catalog["memory_"..operation]=base
 end
 A.catalog.media_font={label="Font definition",source=true,inputs={},outputs={font=port("Font","font",nil,nil,1)},
-    defaults={family="ysabeau",size=20,outline="NONE"},fields={
+    defaults={family="alegreyaSansBold",size=20,outline="NONE"},fields={
         {key="family",label="Font",type="string",options="fonts"},{key="size",label="Font size",type="float"},
         {key="outline",label="Outline",choices={"NONE","OUTLINE","THICKOUTLINE"}}},
     help="Reusable readable font definition for Text media and Media text overlay. The wired definition replaces the local family, size and outline. SharedMedia references identify registered fonts, not arbitrary filesystem fonts; recipients need the same resource. Missing resources preserve the selection and render an explicitly reported fallback."}
@@ -270,9 +270,9 @@ A.catalog.media_style={label="Style definition",source=true,inputs={},outputs={s
         {key="borderColor",label="Border color",type="string",picker="color"},{key="borderWidth",label="Border width",type="float"},
         {key="alpha",label="Opacity",type="float"}},
     help="Reusable readable style for icons, graphics, text and bars. A wired style replaces local fill/text color, background, border and opacity; later media modifiers still apply. Fill alpha affects content; opacity affects the entire element. Transparent background/border are preserved. No font, texture, geometry or input behavior is changed."}
-A.catalog.media_icon={label="Icon media",source=true,secretInputs={texture=true},inputs={texture=port("Texture ID","integer",134400,false,1)},outputs={media=mediaPort()},defaults={texture="134400"},fields={{key="texture",label="Icon",type="string",picker="icon"}}}
+A.catalog.media_icon={label="Icon media",source=true,secretInputs={texture=true},inputs={texture=port("Texture ID","integer",134400,false,1)},outputs={media=mediaPort(),textureID=(function() local p=port("Icon ID","integer",nil,nil,2);p.maySecret=true;p.optional=true;return p end)()},defaults={texture="134400"},fields={{key="texture",label="Icon",type="string",picker="icon"}}}
 A.catalog.media_bar={label="Bar media",source=true,secretInputs={value=true,maximum=true},inputs={value=port("Value","float",65,false,1),maximum=port("Maximum","float",100,false,2)},outputs={media=mediaPort()},
-    defaults={source="values",direction="RIGHT",texture="flat",background="16131CCC",borderColor="000000FF",borderWidth=1},fields={
+    defaults={source="values",direction="RIGHT",texture="softLightBevel",background="16131CCC",borderColor="000000FF",borderWidth=1},fields={
         {key="direction",label="Fill direction",choices={"RIGHT","LEFT","UP","DOWN"}},
         {key="texture",label="Texture",type="string",options="statusbars"}},
     help="Fixed layout frame with four fill directions. Connect Unit values to Value/Maximum. Secret numbers pass only to native StatusBar setters. Background, border color and border width accept graph inputs or local values. Style replaces local styling; individually wired style inputs override Style, and later media modifiers still apply. Existing player-health bars migrate to a Unit source when graph capacity permits; full graphs retain their health binding. Rotation is unsupported for bars."}
@@ -292,7 +292,7 @@ A.catalog.icon_cooldown={label="Icon cooldown",inputs={media=mediaPort()},output
     defaults={spellID=1,showNumbers=true},fields={{key="spellID",label="Spell ID",type="integer"},{key="showNumbers",label="Native countdown",type="boolean"}},
     help="Native spell cooldown overlay on icon media. Duration objects stay inside the renderer adapter. Availability and countdown appearance require target-client support; unavailable bindings clear the overlay. Isolated Test does not query live cooldowns."}
 A.catalog.media_overlay={label="Media text overlay",inputs={media=mediaPort(),text=port("Text","string","",false,2),color=port("Color (hex)","string","FFFFFFFF",false,3),x=port("Offset X","float",0,false,4),y=port("Offset Y","float",0,false,5)},
-    outputs={media=mediaPort()},bypass={media="media"},defaults={font="ysabeau",fontSize=16,point="BOTTOMRIGHT",outline="OUTLINE"},fields={
+    outputs={media=mediaPort()},bypass={media="media"},defaults={font="alegreyaSansBold",fontSize=16,point="BOTTOMRIGHT",outline="OUTLINE"},fields={
         {key="font",label="Font",type="string",options="fonts",advanced=true},
         {key="fontSize",label="Font size",type="float"},{key="point",label="Position",choices=pivots},
         {key="outline",label="Outline",choices={"NONE","OUTLINE","THICKOUTLINE"},advanced=true}},
@@ -457,15 +457,21 @@ A.catalog.player_swing={label="Player swing",nativeEvent=true,inputs={active=por
     help="Fresh Forever PLAYER_SWING event, independent readable duration and weapon-hand fields. ALL can emit with missing/secret fields; a hand filter requires a readable matching enum. This is a swing-timer event, not confirmation of a hit or damage. No combat-log reconstruction or estimated countdown."}
 for _,kind in ipairs({"player_cast","player_swing"}) do for key,p in pairs(A.catalog[kind].outputs) do if key~="event" then p.optional=true;p.maySecret=true end end end
 A.catalog.media_text={label="Text media",source=true,inputs={text=port("Text","string","AuraStudio",false,1)},outputs={media=mediaPort()},
-    defaults={font="ysabeau",fontSize=20,align="CENTER",wrap=true},fields={
+    defaults={font="alegreyaSansBold",fontSize=20,align="CENTER",wrap=true},fields={
         {key="font",label="Font",type="string",options="fonts",advanced=true},
         {key="fontSize",label="Font size",type="float"},{key="align",label="Alignment",choices={"LEFT","CENTER","RIGHT"},advanced=true},{key="wrap",label="Wrap text",type="boolean",advanced=true}}}
 A.catalog.media_text.secretInputs={text=true}
 A.catalog.media_overlay.secretInputs={text=true}
 for _,kind in ipairs({"media_icon","media_graphic","media_bar","media_text"}) do A.catalog[kind].inputs.style=definitionPort("Style","style",20) end
 A.catalog.media_text.inputs.font=definitionPort("Font","font",19)
+-- Symbol next to the text (in-game request 0.8.69); revision 2 adds defaults.
+A.catalog.media_text.inputs.symbol=definitionPort("Symbol","symbol",18)
+A.catalog.media_text.defaults.symbolPosition="left";A.catalog.media_text.defaults.symbolScale=1;A.catalog.media_text.revision=2
+table.insert(A.catalog.media_text.fields,{key="symbolPosition",label="Symbol position",choices={"left","right","above","below"},choiceLabels={left="Left of the text",right="Right of the text",above="Above the text",below="Below the text"},advanced=true})
+table.insert(A.catalog.media_text.fields,{key="symbolScale",label="Symbol size (x font size)",type="float",slider={min=.5,max=4,step=.1},advanced=true})
 A.catalog.media_overlay.inputs.font=definitionPort("Font","font",19)
 A.catalog.media_bar.inputs.color=port("Fill color","string","FFFFFFFF",false,3);A.catalog.media_bar.inputs.color.picker="color"
+A.catalog.media_overlay.inputs.color.picker="color"
 
 for _,kind in ipairs({"bar_duration","icon_duration"}) do
     A.catalog[kind]={label=kind=="bar_duration" and "Bar duration" or "Icon duration",inputs={media=mediaPort(),duration=port("Native duration","duration",nil,true,2)},
@@ -525,12 +531,15 @@ for _,kind in ipairs({"opacity","tint","glow","scale","size","offset","rotate","
                 choiceLabels={soft="Soft glyph glow",outline="Glyph outline",neon="Neon glyph glow",shadow="Soft glyph shadow",pixel="Pixel frame around text",autocast="AutoCast frame around text"},optional=true,default="soft"}}
         d.help="Icons: native Button/Proc plus LibCustomGlow Pixel/AutoCast. Text: Soft, Outline, Neon and Shadow follow glyphs; Pixel/AutoCast frame the text box. Color picker or wired RRGGBB[AA], with independent wired RGBA multipliers. Spread changes the glow radius. Pulse and opacity affect the glow only. Pixel/AutoCast use bounded moving segments/particles; speed zero or unavailable libraries use a static halo. Hidden effects stop and return pooled resources."
     elseif kind=="text_outline" or kind=="text_shadow" or kind=="icon_border" then
-        d.inputs.color=port("Color (hex)","string",kind=="text_shadow" and "000000B3" or "000000",false,2)
+        d.inputs.color=port("Color (hex)","string",kind=="text_shadow" and "000000B3" or "000000",false,2);d.inputs.color.picker="color"
         if kind=="text_shadow" then
             d.inputs.x=port("Offset X (-64..64)","float",2,false,3); d.inputs.y=port("Offset Y (-64..64)","float",-2,false,4)
         else d.inputs.width=port(kind=="icon_border" and "Width (0..24)" or "Width (0..6)","float",1,false,3) end
         d.help="Independent media decoration. Values may be wired. Hex color RRGGBB[AA]; zero width/alpha hides the effect. Text effects apply only to text, icon border only to icons. Other media passes through unchanged. Geometry and saved anchors are not affected."
-    elseif kind=="tint" then for i,k in ipairs({"red","green","blue"}) do d.inputs[k]=port(k.." (0..1)","float",1,false,i+1) end
+    elseif kind=="tint" then
+        for i,k in ipairs({"red","green","blue"}) do d.inputs[k]=port(k.." (0..1)","float",1,false,i+2) end
+        -- Colour with spectrum (0.8.69); multiplied with the wireable R/G/B inputs.
+        d.inputs.color=port("Colour","string","FFFFFF",false,2);d.inputs.color.picker="color"
     else
         if kind=="scale" then d.inputs.factor=port("Factor (0..10)","float",1,false,2)
         elseif kind=="rotate" then d.inputs.angle=port("Degrees CCW","float",0,false,2)
@@ -578,7 +587,7 @@ local function instancePort()
 end
 local function selectorFields(collection)
     if collection then return {{key="relation",label="Nameplates",choices={"ALL","FRIENDLY","HOSTILE"},choiceLabels={ALL="All",FRIENDLY="Friendly",HOSTILE="Hostile"}}}end
-    return {{key="unit",label="Unit",choices=unitChoices,choiceLabels=unitLabels},{key="slot",label="Roster slot",type="integer",advanced=true}}
+    return {{key="unit",label="Unit",choices=unitChoices,choiceLabels=unitLabels},{key="slot",label="Roster slot",type="integer"}}
 end
 local function sourceFamily(kind,label,family,collection)
     local base={label=label,source=true,sourceFamily=family,collectionSource=collection or nil,unitKind=collection and "nameplates" or "unit",
@@ -612,7 +621,7 @@ local function sourceFamily(kind,label,family,collection)
         base.selectableOutputs.instance=instancePort()
     end
     base.help=collection and "Observe each current nameplate binding independently. All includes bindings without readable relation; Friendly/Hostile requires a positive readable relation. Slots are temporary and reuse creates a new instance. Connect Instance to Display Stack to keep each unit's media together."
-        or "Select Player, Target, Target of Target, Focus, Target of Focus, Pet, Party, Raid or Mouseover. Mouseover observes the current unit under the pointer and clears on leave; it does not parse arbitrary item/spell tooltips. Roster slot selects 1..4 for Party or 1..40 for Raid. Secret fields remain opaque runtime values; unavailable data is not zero."
+        or "Select Player, Target, Target of Target, Focus, Target of Focus, Pet, Party, Raid or Mouseover. Mouseover observes the current unit under the pointer and clears on leave; it does not parse arbitrary item/spell tooltips. Party and Raid observe exactly one roster position: Party slot 1..4 (without yourself) or Raid slot 1..40. The slot is a position, not a person; roster changes change the observed player. Use Group Units, Group Aura or Group Cast to observe every member. Secret fields remain opaque runtime values; unavailable data is not zero."
     if family=="aura" then base.help=base.help.." Aura identity/filter must be accessible. Native Remaining uses readable expiration only. Real Time forwards native timing directly to Display Real Time or a duration media node. It is an opaque timer, not numeric seconds. CDM fallback follows the configured spell family on the current unit; unsupported native calls leave it unavailable."..presentEstimateHelp..timingEstimateHelp..auraIconHelp
     elseif family=="cast" then base.help=base.help.." Current cast/channel fields and native durations come from the selected unit. No inferred cast, spell target unit or missed-event replay."end
     base.resolve=function(config)
@@ -624,8 +633,16 @@ local function sourceFamily(kind,label,family,collection)
             if not A.G.Number(config.slot) or config.slot~=math.floor(config.slot) or config.slot<1 or config.slot>max then return nil,"Roster slot must be 1.."..max end
         end
         local d=A.G.Copy(base);d.resolve=nil
-        if not collection and config.unit~="party_member" and config.unit~="raid_member" then
-            for i=#d.fields,1,-1 do if d.fields[i].key=="slot" then table.remove(d.fields,i) end end
+        -- Party/Raid observe one roster position; the slot stays on the node card.
+        for i=#d.fields,1,-1 do if d.fields[i].key=="slot" then
+            if collection or (config.unit~="party_member" and config.unit~="raid_member") then table.remove(d.fields,i)
+            else d.fields[i].label=config.unit=="party_member" and "Party slot (1–4)" or "Raid slot (1–40)" end
+        end end
+        -- Optional Slot input: a connected value chooses the roster position
+        -- at runtime and overrides the card field.
+        if not collection and (config.unit=="party_member" or config.unit=="raid_member") then
+            d.inputs=d.inputs or {};d.inputs.slot=port(config.unit=="party_member" and "Slot (1–4)" or "Slot (1–40)","float",nil,true,1);d.inputs.slot.required=false
+            d.slotInput=true
         end
         if family=="unit" then
             local needed={}
@@ -775,6 +792,12 @@ do
     end
     A.catalog.animation.fields[1].choices={"shake","pulse","float","fade","spin","bounce"}
     A.catalog.animation.help="Choose Shake, Pulse, Float, Fade, Spin or Bounce. Common timing and media ports remain stable. Spin uses Strength as percentage of a full rotation per cycle; Bounce uses Strength as pixel height. Unsupported rotations (bars/overlays) remain explicit errors."
+    A.catalog.target_changed={label="Target changed",nativeEvent=true,category="triggers",
+        inputs={active=port("Active","boolean",true,false,1)},
+        outputs={event=port("Changed","event",nil,nil,1),hasTarget=port("Has target","boolean",nil,nil,2),name=port("Name","string",nil,nil,3),guid=port("GUID","string",nil,nil,4)},
+        defaults={},fields={},
+        help="Fires when your target changes, including clearing it. Has target is false only when the game reports no target; Name and GUID describe the new target. Protected values stay protected and are never treated as no target. For a snapshot at a chosen moment use Capture target."}
+    for _,key in ipairs({"name","guid"}) do A.catalog.target_changed.outputs[key].maySecret=true;A.catalog.target_changed.outputs[key].optional=true end
     for _,kind in ipairs({"encounter_event","ready_check_event"}) do
         local d={label=kind=="encounter_event" and "Encounter event" or "Ready check event",nativeEvent=true,category="triggers",
             inputs={active=port("Active","boolean",true,false,1)},outputs={event=port("Trigger","event",nil,nil,1)},defaults={phase="either"},
@@ -809,6 +832,8 @@ for _,def in pairs(A.catalog) do
     for _,field in ipairs(def.fields or {}) do if ({operation=true,animation=true,targetType=true,source=true,unit=true,phase=true})[field.key] then field.primary=true end end
     def.validate=function(config)
         if def==A.catalog.icon_appearance and not ns.IconSkins.Supports(config.skin or "none",config.shape or "square") then return false,"Shape unavailable for this skin" end
+        if (def==A.catalog.media_text or def==A.catalog.media_button) and ((config.symbolPosition~=nil and not ns.DisplayModel.symbolPositions[config.symbolPosition])
+            or (config.symbolScale~=nil and (not A.G.Number(config.symbolScale) or config.symbolScale<.5 or config.symbolScale>4))) then return false,"Symbol position or size out of range" end
         if config.cropBorder~=nil and type(config.cropBorder)~="boolean" then return false,"Invalid stored icon crop" end
         for _,field in ipairs(def.fields or {}) do
             local v=config[field.key]; if v==nil and field.optional then v=field.default end
@@ -920,7 +945,7 @@ do
         animation_shake=true,animation_pulse=true,animation_float=true,animation_fade=true,
         memory_get=true,memory_set=true,memory_delete=true,memory_clear=true,player_money=true,player_xp=true}
     for i=#A.order,1,-1 do if replaced[A.order[i]] then table.remove(A.order,i) end end
-    for _,kind in ipairs({"math","logic","parse","animation","memory","media_crop","encounter_event","ready_check_event","string_formatter","round","time_format","last_unprotected_value"}) do A.order[#A.order+1]=kind end
+    for _,kind in ipairs({"math","logic","parse","animation","memory","media_crop","encounter_event","ready_check_event","target_changed","string_formatter","round","time_format","last_unprotected_value"}) do A.order[#A.order+1]=kind end
 end
 -- Safe copy-on-write family upgrade. A failed structural check retains the
 -- complete original graph; unknown extension nodes and custom data are intact.

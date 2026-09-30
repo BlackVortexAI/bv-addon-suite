@@ -15,7 +15,7 @@ function T.Ports(def)
 end
 function T.Start(studio,id,values,mode,fire)
     local rec=studio:Graph();local plan,why=G.Compile(rec.draft,A.catalog)
-    if not plan then studio.message=why.message;studio:Changed();return false end
+    if not plan then studio.message=G.DescribeError(rec.draft,A.catalog,why);studio.messageError=studio.message;studio:Changed();return false end
     local def=plan.definitions[id];if not def or #T.Ports(def)==0 then return false end
     if not studio.test or studio.test.draftRevision~=rec.draftRevision then
         studio:EndTest();studio.test=studio:MakeRun(rec,plan,true)

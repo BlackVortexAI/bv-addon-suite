@@ -86,14 +86,18 @@ local function validateLayout(id,raw)
         bounded(raw.stack.maxEntries,1,40);assert(raw.stack.maxEntries==math.floor(raw.stack.maxEntries),"Invalid stack entry limit")
     end
 end
-local function validateGraph(graph,owned)
-    fields(graph,"version nextId nodes edges view")
+-- block=true: a building block without layout ownership (displays get new
+-- layout elements when the block is inserted).
+local function validateInner(graph,owned,block,ctx)
+    fields(graph,"version nextId nodes edges view sections")
+    local sectionError=A.Sections.Check(graph.sections);assert(not sectionError,sectionError)
     bounded(graph.nextId,1,1000000); assert(graph.nextId==math.floor(graph.nextId),"Invalid next node ID")
     fields(graph.view,"x y zoom"); bounded(graph.view.x,-1000000,1000000); bounded(graph.view.y,-1000000,1000000); bounded(graph.view.zoom,.1,4)
     assert(type(graph.nodes)=="table" and count(graph.nodes)<=G.maxNodes,"Node limit exceeded")
     for id,node in pairs(graph.nodes) do
+        ctx.node=id
         assert(type(id)=="string" and #id<=32,"Invalid node identity")
-        fields(node,"id type version x y values config exposed title collapsed")
+        fields(node,"id type version revision x y values config exposed title collapsed")
         flag(node.collapsed); bounded(node.x,-1000000,1000000); bounded(node.y,-1000000,1000000)
         local def=assert(A.catalog[node.type],"Unknown node type: "..tostring(node.type))
         local allowed={}; for k in pairs(def.defaults or {}) do allowed[k]=true end
@@ -119,12 +123,14 @@ local function validateGraph(graph,owned)
         if (node.type=="aura" or def.auraSource) and node.config.texture~=nil then assert(ns.IconCatalog:Reference(node.config.texture),"Invalid aura icon") end
         if node.config.spellIcon~=nil then assert(ns.IconCatalog:Reference(node.config.spellIcon),"Invalid spell icon") end
         local resolved,why=G.Definition(def,node); assert(resolved,why)
-        if resolved.validate then local ok,err=resolved.validate(node.config); assert(ok,err) end
+        -- Block displays have no layout element yet; they are validated after insertion.
+        if resolved.validate and not (block and (def.display or def.layoutOwner)) then local ok,err=resolved.validate(node.config); assert(ok,err) end
         local ports=G.Ports(resolved)
         assert(type(node.values)=="table" and type(node.exposed)=="table","Invalid node inputs")
         for k,v in pairs(node.values) do assert(ports[k] and not ports[k].wire and G.Accepts(ports[k].type,v),"Invalid stored input: "..tostring(k)) end
         for k,v in pairs(node.exposed) do assert(ports[k] and type(v)=="boolean","Invalid exposed port") end
-        if def.display or (def.layoutOwner and node.config.layoutId) then
+        if block then assert(node.config.layoutId==nil,"Blocks carry no layout ownership")
+        elseif def.display or (def.layoutOwner and node.config.layoutId) then
             if def.displayStack then
                 local root
                 for _,element in ipairs(node.config.elements)do if element.id==node.config.rootElement then root=element.layoutId end end
@@ -137,9 +143,23 @@ local function validateGraph(graph,owned)
             end
         end
     end
+    ctx.node=nil
     array(graph.edges,G.maxEdges); for _,e in ipairs(graph.edges) do fields(e,"from output to input") end
-    local plan,why=G.Compile(graph,A.catalog,true); assert(plan,why and why.message)
+    local plan,why=G.Compile(graph,A.catalog,true)
+    if not plan then ctx.node=why and why.node;error(why and why.message or "Invalid graph",0) end
 end
+-- Errors name the node (title, type, id) without the Lua file/line prefix.
+local function validateGraph(graph,owned,block)
+    local ctx={}
+    local ok,err=pcall(validateInner,graph,owned,block,ctx)
+    if ok then return end
+    local message=ns.GraphValues.UserError(err)
+    if ctx.node and type(graph)=="table" and type(graph.nodes)=="table" and graph.nodes[ctx.node] then
+        message=G.DescribeError(graph,A.catalog,{node=ctx.node,message=message})
+    end
+    error(message,0)
+end
+T.ValidateGraph=validateGraph
 function T.Validate(packet)
     -- This also bounds calls made without the text decoder (tests/internal callers).
     C.Serialize(packet)
@@ -152,7 +172,8 @@ function T.Validate(packet)
     for _,rec in ipairs(packet.graphs) do
         fields(rec,"name graph inGroup quickInclude"); name(rec.name); flag(rec.inGroup); flag(rec.quickInclude)
         assert(not rec.inGroup or packet.kind=="group","Missing transfer group")
-        validateGraph(rec.graph,owned)
+        local ok,err=pcall(validateGraph,rec.graph,owned)
+        if not ok then error("Graph '"..tostring(rec.name):gsub("|","||").."': "..ns.GraphValues.UserError(err),0) end
     end
     assert(type(packet.layouts)=="table" and count(packet.layouts)<=1024,"Layout transfer limit exceeded")
     local anchors=0
@@ -256,6 +277,8 @@ local function conflicts(packet,layout)
     table.sort(out); return out
 end
 function S:ExportTransfer(kind,id)
+    if kind=="block" then local packet=T.ExportBlock(self:Store(),id);return C.Encode(packet),packet end
+    if kind=="blocks" then local packet=T.ExportBlocks(self:Store());return C.Encode(packet),packet end
     assert(not ns.Layout.draft,"Save or exit the Layout Editor before exporting")
     local packet=T.Export(self:Store(),ns.Layout:Store(),kind,id)
     return C.Encode(packet),packet
@@ -264,7 +287,23 @@ local pending
 function S:PreviewTransfer(text)
     pending=nil
     assert(not InCombatLockdown() and not ns.Layout.draft,"Import outside combat and close the Layout Editor first")
-    local packet=T.Validate(C.Decode(text)); local data=self:Store(); local layout=ns.Layout:Store()
+    local decoded=C.Decode(text)
+    if type(decoded)=="table" and decoded.kind=="block" then
+        local packet=T.ValidateBlock(decoded);local n=count(packet.block.graph.nodes)
+        local token={conflicts={},graphs=0,anchors=0,names={packet.block.name},frames=0,block=true,
+            summary="Building block: "..packet.block.name.."\n"..n.." node(s). Saved as a new block in your library; insert it from Edit > Blocks."}
+        pending={token=token,packet=packet,store=self:Store(),profile=ns.Settings:Profile(),block=true}
+        return token
+    end
+    if type(decoded)=="table" and decoded.kind=="blocks" then
+        local packet=T.ValidateBlocks(decoded);local names={}
+        for _,b in ipairs(packet.blocks) do names[#names+1]=b.name end
+        local token={conflicts={},graphs=0,anchors=0,names=names,frames=0,block=true,
+            summary="Block library: "..#names.." block(s)\n"..table.concat(names,", ").."\nSaved as new blocks in your library; insert them from Edit > Blocks."}
+        pending={token=token,packet=packet,store=self:Store(),profile=ns.Settings:Profile(),block=true}
+        return token
+    end
+    local packet=T.Validate(decoded); local data=self:Store(); local layout=ns.Layout:Store()
     assert(count(data.graphs)+#packet.graphs<=32,"Graph limit reached (32 per profile)")
     if packet.group then assert(count(data.groups)<32,"Group limit reached (32 per profile)") end
     local prepared,why=ns.FrameLibrary:Prepare(frameEntries(packet));assert(prepared,why)
@@ -280,6 +319,15 @@ end
 function S:CancelTransfer() pending=nil end
 function S:ImportTransfer(token,policy)
     local p=pending; assert(p and p.token==token,"Preview the import first")
+    if p.block then
+        assert(self:Store()==p.store and ns.Settings:Profile()==p.profile,"Import preview expired; preview again")
+        if p.packet.kind=="blocks" then
+            local names=A.Blocks.AddAll(p.store,p.packet);pending=nil
+            self.message=#names.." block(s) imported";self:Changed();return names
+        end
+        local id,name=A.Blocks.Add(p.store,p.packet);pending=nil
+        self.message="Block imported: "..name;self:Changed();return id
+    end
     assert(not InCombatLockdown() and not ns.Layout.draft,"Import outside combat and close the Layout Editor first")
     local data=self:Store(); local layout=ns.Layout:Store(); local packet=p.packet
     assert(data==p.store and ns.Settings:Profile()==p.profile and relevant(layout,packet)==p.layout and libraryStamp()==p.library,"Import preview expired; preview again")
@@ -333,9 +381,9 @@ function S:ImportTransfer(token,policy)
         local draft=A.MigrateGraph(G.Copy(source.graph)); local label=uniqueName(source.name,graphs)
         A.Messaging.ResetPermissions(draft)
         for _,node in pairs(draft.nodes) do if A.catalog[node.type].display or (A.catalog[node.type].layoutOwner and node.config.layoutId) then
-            node.config.layoutId=map[node.config.layoutId]; layouts[node.config.layoutId].label=label.." / "..node.id
+            node.config.layoutId=map[node.config.layoutId]; layouts[node.config.layoutId].label=label.." / "..(node.title or node.id)
             if A.catalog[node.type].displayStack then for _,element in ipairs(node.config.elements)do
-                element.layoutId=map[element.layoutId];layouts[element.layoutId].label=label.." / "..node.id.." / "..element.label
+                element.layoutId=map[element.layoutId];layouts[element.layoutId].label=label.." / "..(node.title or node.id).." / "..element.label
             end end
         end end
         graphs[id]={id=id,name=label,draft=draft,enabled=false,revision=0,draftRevision=0,quickInclude=source.quickInclude,groupId=source.inGroup and groupID or nil}

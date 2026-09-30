@@ -1,7 +1,7 @@
 local addonName, ns = ...
 
 ns.name = addonName
-ns.version = "0.8.51"
+ns.version = "0.8.79"
 ns.errors = {}
 ns.ready = false
 -- Shared, versioned extension namespace for the dependent addon packages.

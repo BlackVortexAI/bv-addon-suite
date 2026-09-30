@@ -3,22 +3,61 @@ local UI,M=ns.UI,ns.DesignSystem.Metrics
 local function at(w,p,x,y) M.Point(w,"TOPLEFT",p,"TOPLEFT",x,-y); return w end
 
 -- Shared bounded clipboard text surface. Native Ctrl+A/C/V, no OS clipboard API.
+-- Built like variant C of the former /bv textdebug, proven natively
+-- (in-game finding 50): a skinned frame for the visible area, inside it a
+-- plain ScrollFrame with an unskinned multi-line edit box as scroll child,
+-- the scroll bar beside it. The border sits on the visible area (a skin on
+-- the tall edit box only showed its bottom edge after scrolling), and the
+-- edit box height is never set per keystroke (variant D2: resizing on text
+-- change broke caret and layout): it keeps the visible height as minimum and
+-- grows natively; the scroll range comes from OnScrollRangeChanged.
 function UI:TransferText(parent,width,height,maxLetters,changed)
-    local form=self:Form(parent,width,height,parent); form:SetClipsChildren(true)
-    local input=self:GetStyle():Input(form.content,width-24,true,"")
-    at(input,form.content,0,0); input:SetMaxLetters(maxLetters); form.input=input
+    local style=self:GetStyle()
+    local form=CreateFrame("Frame",nil,parent); M.Size(form,width-22,height)
+    style:Skin(form,"bg",4,.85); form.surfacePaintOwned=true
+    local scroll=CreateFrame("ScrollFrame",nil,form); form.scroll=scroll
+    local visible=height-4
+    M.Point(scroll,"TOPLEFT",form,"TOPLEFT",2,-2); M.Size(scroll,width-26,visible)
+    local input=style:Input(scroll,width-28,true,"",nil,true)
+    scroll:SetScrollChild(input); M.Height(input,visible)
+    input:SetMaxLetters(maxLetters); form.input=input
+    form.slider=style:Slider(form,12,0,0,1,0); local slider=form.slider
+    M.Point(slider,"TOPLEFT",form,"TOPRIGHT",6,0); M.Size(slider,12,height)
+    slider:SetOrientation("VERTICAL"); slider:SetMinMaxValues(0,0); slider:SetValueStep(1)
+    slider.track:ClearAllPoints(); M.Point(slider.track,"TOP"); M.Point(slider.track,"BOTTOM"); M.Width(slider.track,3)
+    M.Size(slider:GetThumbTexture(),6,32)
+    slider:SetScript("OnValueChanged",function(_,value) scroll:SetVerticalScroll(M.ToNative(value)) end)
+    form.maximum=0
+    local function range(native)
+        form.maximum=math.max(0,M.ToDesign(native or scroll:GetVerticalScrollRange() or 0))
+        slider:SetMinMaxValues(0,form.maximum); slider:SetShown(form.maximum>0)
+        if slider:GetValue()>form.maximum then slider:SetValue(form.maximum) end
+    end
+    form.UpdateRange=function() range() end
+    scroll:SetScript("OnScrollRangeChanged",function(_,_,y) range(y) end)
+    local function scrollTo(v) slider:SetValue(math.max(0,math.min(form.maximum,v))) end
     input:HookScript("OnTextChanged",function(_,user)
-        local text=input:GetText(); local lines=0
-        for line in (text.."\n"):gmatch("(.-)\n") do lines=lines+math.max(1,math.ceil(#line/math.max(1,math.floor((width-44)/9)))) end
-        local h=math.max(height,lines*18+20); M.Height(input,h); form:SetContentHeight(h)
+        range()
         if user and changed then changed() end
     end)
+    -- Keep the native caret in view while typing or moving with the keys.
     input:SetScript("OnCursorChanged",function(_,_,y,_,cursorHeight)
-        local top=math.max(0,-M.ToDesign(y)); local bottom=top+M.ToDesign(cursorHeight)
-        local offset=form.slider:GetValue()
-        if top<offset then form.slider:SetValue(top) elseif bottom>offset+height then form.slider:SetValue(math.min(form.maximum or 0,bottom-height)) end
+        local top=math.max(0,-M.ToDesign(y)); local bottom=top+M.ToDesign(cursorHeight or 14)
+        local offset=slider:GetValue()
+        if top<offset then scrollTo(top) elseif bottom>offset+visible then scrollTo(bottom-visible) end
     end)
-    function form:SetText(text) self.input:SetText(text); self.slider:SetValue(0) end
+    -- Border colour follows the edit box focus, painted on the visible area.
+    local function paint()
+        form:PaintSurface({style:Color("bg")},{style:Color(input.invalid and "danger" or input.focused and "accent" or "edge",.7)},.85)
+    end
+    style:Bind(paint,form)
+    input:HookScript("OnEditFocusGained",paint); input:HookScript("OnEditFocusLost",paint)
+    -- Clicks and the wheel go to the edit box; the frames behind it take none.
+    input:EnableMouse(true); if input.EnableKeyboard then input:EnableKeyboard(true) end
+    input:EnableMouseWheel(true)
+    input:SetScript("OnMouseWheel",function(_,delta) scrollTo(slider:GetValue()-delta*42) end)
+    UI:TextFieldMenu(input,changed)
+    function form:SetText(text) self.input:SetText(text); range(); slider:SetValue(0) end
     form:SetText(""); return form
 end
 
@@ -43,17 +82,19 @@ function UI:TransferDialog(owner,controller)
         dialog.choice=value~="choose" and value or nil
         if dialog.token~=nil and (not dialog.hasConflicts or dialog.choice~=nil) then dialog.confirm:Enable() else dialog.confirm:Disable() end
     end),p,20,338)
-    dialog.preview=at(self:Button(p,"Preview",108,function()
+    function dialog:RunPreview()
         invalidate()
         local ok,result=pcall(controller.PreviewTransfer,controller,dialog.text.input:GetText())
-        if not ok then dialog:Note("Import rejected: "..tostring(result)); return end
+        if not ok then dialog:Note("Import rejected: "..ns.GraphValues.UserError(result)); return false,result end
         dialog.token=result; dialog.hasConflicts=#result.conflicts>0; dialog.choice=nil
         dialog:Note(result.summary); dialog.policy:SetShown(dialog.hasConflicts); dialog.policy:SetValue("choose")
         if not dialog.hasConflicts then dialog.confirm:Enable() else dialog.confirm:Disable() end
-    end),p,20,376)
+        return true
+    end
+    dialog.preview=at(self:Button(p,"Preview",108,function() dialog:RunPreview() end),p,20,376)
     dialog.confirm=at(self:Button(p,"Import disabled",150,function()
         local ok,result=pcall(controller.ImportTransfer,controller,dialog.token,dialog.choice)
-        if not ok then dialog:Note("Import rejected: "..tostring(result)); dialog.confirm:Disable(); return end
+        if not ok then dialog:Note("Import rejected: "..ns.GraphValues.UserError(result)); dialog.confirm:Disable(); return end
         dialog:Hide(); if controller.editor then controller.editor:LoadView() end
     end,"primary"),p,140,376)
     dialog.select=at(self:Button(p,"Select all",108,function() dialog.text.input:SetFocus(); dialog.text.input:HighlightText() end),p,20,376)
@@ -68,14 +109,31 @@ function UI:TransferDialog(owner,controller)
         if mode=="export" then
             self.hint:SetText("Current drafts and required layout dependencies. Select all, then Ctrl+C to copy.")
             local ok,text,packet=pcall(controller.ExportTransfer,controller,kind,id)
-            if ok then
+            if ok and packet.kind=="blocks" then
+                self.text:SetText(text);self:Note("Block library: "..#packet.blocks.." block(s). Layout positions are not included; displays get new positions when inserted.")
+                self.text.input:SetFocus(); self.text.input:HighlightText()
+            elseif ok and packet.kind=="block" then
+                self.text:SetText(text);self:Note("Building block \""..packet.block.name.."\". Layout positions are not included; displays get new positions when inserted.")
+                self.text.input:SetFocus(); self.text.input:HighlightText()
+            elseif ok then
                 self.text:SetText(text); self:Note(#packet.graphs.." graph(s), including required graph dependencies.\nNo live values, history, index cache or profile settings are exported.\nThis is encoding, not encryption.")
                 self.text.input:SetFocus(); self.text.input:HighlightText()
-            else self.text:SetText(""); self:Note("Export rejected: "..tostring(text)) end
+            else self.text:SetText(""); self:Note("Export rejected: "..ns.GraphValues.UserError(text)) end
         else
             self.hint:SetText("Paste a !BVA:1! string with Ctrl+V. Imported graphs are new, disabled copies.")
             self.text:SetText(""); self:Note("Nothing is changed until you review the preview and confirm the import."); self.text.input:SetFocus()
         end
+    end
+    -- Shared by another player (P4): the received string, previewed; the
+    -- import still needs the player's confirmation here.
+    function dialog:OpenReceived(text,sender,kind,name)
+        self:Open("import")
+        self.title:SetText(kind=="block" and "Shared block" or "Shared graph")
+        self.hint:SetText("Received from "..tostring(sender):gsub("|","||").." ("..tostring(name):gsub("|","||").."). Review the preview, then import.")
+        self.text:SetText(text); self.text.input:ClearFocus()
+        local ok,why=self:RunPreview()
+        if not ok then self:Hide() end
+        return ok,ok and nil or tostring(why)
     end
     return dialog
 end

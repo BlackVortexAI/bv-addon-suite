@@ -3,7 +3,7 @@
 ## Notes: In-game node editor, typed graphs and isolated aura tests. Requires BV Core.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.8.51
+## Version: 0.8.79
 ## Dependencies: BVAddonSuite
 ## SavedVariables: BVSpellIndexTestDB, BVSpellIndexTestMetrics, BVUnitDiagnosticsDB
 
@@ -14,6 +14,7 @@ UnitSource.lua
 GroupSources.lua
 ActionCatalog.lua
 SoundCatalog.lua
+ItemSources.lua
 NodeWikiData.lua
 NodeWiki.lua
 PlayerSource.lua
@@ -29,7 +30,14 @@ InfoCollector.lua
 InfoDiagnostics.lua
 Memory.lua
 FlowValues.lua
+Toasts.lua
+TextOps.lua
+BossModSource.lua
+Sections.lua
+Regex.lua
+RangeCheck.lua
 FlowCatalog.lua
+LuaNode.lua
 Dialogs.lua
 FlowRuntime.lua
 Runtime.lua
@@ -38,3 +46,8 @@ GraphMigrations.lua
 Studio.lua
 NodeTesting.lua
 Transfer.lua
+Blocks.lua
+Share.lua
+Examples.lua
+WikiText.lua
+Wiki.lua

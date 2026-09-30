@@ -48,25 +48,56 @@ local function unitValid(unit)
     return party~=nil or raid~=nil and tonumber(raid)<=40
 end
 Q.ValidUnit=unitValid
+-- Override bindings are temporary and owned by the surface root; they never
+-- touch the saved WoW key map and are released with the surface.
+local function applyKeys(s,keys)
+    if Actions.Same(s.keys or {},keys) then return end
+    if s.keys then ClearOverrideBindings(s.root) end
+    s.keys=nil
+    local name=s.button:GetName()
+    for key,value in pairs(keys) do SetOverrideBindingClick(s.root,false,value,name,Actions.VirtualButton(key)) end
+    if next(keys) then s.keys=V.RuntimeCopy(keys) end
+end
+local function keyLabel(s,keys,shown)
+    local label=""
+    if shown then for _,key in ipairs(Actions.bindingOrder) do if keys[key] then label=Actions.ShortcutLabel(keys[key]);break end end end
+    property(s.hotkey,"SetText",label)
+end
+local function shortcutKeys(entry)
+    return entry and entry.shortcuts and Actions.ShortcutKeys(entry.action,entry.shortcuts) or {}
+end
+Q.serial=0;Q.flashSeconds=.12
 local function create(mode)
     assert(mode=="local" or not InCombatLockdown(),"Prepare action media outside combat")
     local root=CreateFrame("Frame",nil,UIParent,mode~="local" and "SecureHandlerStateTemplate" or nil)
     if ns.ExternalFrames then ns.ExternalFrames:MarkOwned(root) end
     root:Hide();root:SetFrameStrata("MEDIUM");root:EnableMouse(false)
     local template=mode~="local" and (mode=="ooc" and "InsecureActionButtonTemplate" or "SecureActionButtonTemplate") or nil
-    local b=CreateFrame("Button",nil,root,template)
-    b:SetAllPoints(root);b:EnableMouse(true);b:RegisterForClicks("LeftButtonUp","RightButtonUp","MiddleButtonUp","Button4Up","Button5Up")
+    -- Named: SetOverrideBindingClick addresses its target by global name.
+    Q.serial=Q.serial+1
+    local b=CreateFrame("Button","BVAddonSuiteActionMedia"..Q.serial,root,template)
+    -- AnyUp also admits the virtual shortcut buttons; release stays the trigger.
+    b:SetAllPoints(root);b:EnableMouse(true);b:RegisterForClicks("AnyUp")
     b:SetAttribute("useOnKeyDown",false)
     local s={root=root,button=b,mode=mode}
+    local refresh
+    -- A bound key only reports its release, so the pressed state flashes briefly.
+    local function flash(key)
+        if s.flashTimer then s.flashTimer:Cancel() end
+        s.down={[key]=true};refresh()
+        s.flashTimer=C_Timer.NewTimer(Q.flashSeconds,function() s.flashTimer=nil;if s.down then s.down[key]=nil end;refresh() end)
+    end
     local function clicked(_,button)
-        local key=Actions.HardwareKey(button);local action=key and s.clickBindings and s.clickBindings[key]
+        local key=Actions.InputKey(button)
+        if key and type(button)=="string" and button:sub(1,#Actions.virtualPrefix)==Actions.virtualPrefix then flash(key) end
+        local action=key and s.clickBindings and s.clickBindings[key]
         if not action or (action.kind~="click" and action.kind~="ui" and action.kind~="group") then return end
         local ok,why=Actions.ExecuteClick(action,s.owner,button)
         if s.record then s.record.actionStatus=why end
         text(s.caption,ok and "" or why)
     end
     if mode=="local" then b:SetScript("OnClick",clicked) else b:HookScript("PostClick",clicked) end
-    local function refresh()
+    refresh=function()
         if s.record and s.record.actionRequest then
             local r=s.record.actionRequest;local e=r.entry
             local compatible=e and r.visible and not s.record.macroPending and s.owner==e.owner and Actions.BindingSame(s.action,e.action) and s.mode==e.mode
@@ -98,6 +129,10 @@ local function create(mode)
     s.caption=s.front:CreateFontString(nil,"OVERLAY");s.caption:SetPoint("TOP",b,"BOTTOM",0,-3)
     UI:ApplyMediaFont(s.caption,"Fonts\\FRIZQT__.TTF",10,"OUTLINE")
     s.caption:SetTextColor(1,.85,.45,1)
+    s.keyFrame=CreateFrame("Frame",nil,b);s.keyFrame:SetAllPoints(b);s.keyFrame:EnableMouse(false)
+    s.hotkey=s.keyFrame:CreateFontString(nil,"OVERLAY");s.hotkey:SetPoint("TOPRIGHT",b,"TOPRIGHT",-2,-2)
+    UI:ApplyMediaFont(s.hotkey,"Fonts\\ARIALN.TTF",11,"OUTLINE");s.hotkey:SetJustifyH("RIGHT")
+    s.hotkey:SetTextColor(.9,.9,.9,1)
     s.front.caption=s.text;s.glow=UI:DisplayGlow(s.front);s.decorations=UI:DisplayDecorations(s.front)
     -- Independent, mouse-transparent visual: protected bindings retain their
     -- original hitbox while the shared renderer can update any cosmetic in combat.
@@ -154,8 +189,10 @@ local function styleSame(s,media)
 end
 local function alpha(region,value) property(region,"SetAlpha",value) end
 local function sharedVisual(media,entry)
-    return media and (#(media.ops or {})>0 or media.cooldown or media.overlay or (media.glow and media.glow>0) or media.surface or media.textOutline or media.textShadow or media.iconBorder or media.iconSkin or media.buttonStyle or media.duration or entry and (entry.hoverMedia or entry.pressedMedia))
+    return media and (#(media.ops or {})>0 or media.cooldown or media.overlay or (media.glow and media.glow>0) or media.surface or media.textOutline or media.textShadow or media.iconBorder or media.iconSkin or media.buttonStyle or media.duration
+        or media.colorOverlay or media.symbol or media.sprite or entry and (entry.hoverMedia or entry.pressedMedia))
 end
+Q.SharedVisual=sharedVisual
 function Q:Cosmetics(rec,media,entry,compatible)
     local s=rec.actionSurface;if not s then return end
     if entry then
@@ -211,7 +248,7 @@ function Q:Cosmetics(rec,media,entry,compatible)
         if shared then
             s.glow:Stop();s.decorations:Stop();s.buttonSkin:Paint(nil);s.iconSkin:Paint(nil,false)
             for _,region in ipairs({s.image,s.text,s.background,s.bar,s.timer,unpack(s.edges)}) do alpha(region,0) end
-            local cosmetic=V.RuntimeCopy(media);cosmetic.interaction=nil
+            local cosmetic=V.RuntimeCopy(media);cosmetic.interaction=nil;cosmetic.lifecycle=nil
             s.visual:Geometry(s.rect);s.visual:SetDisplayLevel(s.front:GetFrameLevel());s.visual:SetInputHandler(nil)
             s.visual:Present(cosmetic,true)
             assert(not s.visual.assetUnavailable and not s.visual.cropUnavailable,"Cosmetic asset unavailable")
@@ -269,9 +306,11 @@ function Q:Watch()
 end
 function Q:Retire(rec)
     local s=rec.actionSurface;if not s then return end
-    assert(s.mode=="local" or not InCombatLockdown(),"Retire action media outside combat")
+    assert((s.mode=="local" and not s.keys) or not InCombatLockdown(),"Retire action media outside combat")
     if s.watched then UnregisterUnitWatch(s.button);s.watched=nil end
     if s.driver then UnregisterStateDriver(s.root,"visibility");s.driver=nil end
+    applyKeys(s,{});keyLabel(s,{},false)
+    if s.flashTimer then s.flashTimer:Cancel();s.flashTimer=nil end
     s.root:Hide();s.button:Hide();clear(s);self:MacroWatch(rec,false)
     s.iconSkin:Release();s.glow:Stop();s.decorations:Stop();s.visual:Present(nil,false);s.style=nil;s.hover=nil;s.down={}
     s.owner=nil;s.spellID=nil;s.unit=nil;s.action=nil;s.attrs=nil;s.record=nil;rec.actionSurface=nil
@@ -280,13 +319,18 @@ end
 function Q:Paint(rec,rect,media,entry,visible)
     if entry then
         local a=entry.action or {kind="spell",spellID=entry.spellID,unit=entry.unit}
-        entry={owner=entry.owner,action=a,mode=Actions.Mode(a)=="local" and "local" or entry.mode,hint=entry.hint,cropBorder=entry.cropBorder,hoverMedia=entry.hoverMedia,pressedMedia=entry.pressedMedia}
+        entry={owner=entry.owner,action=a,mode=Actions.Mode(a)=="local" and "local" or entry.mode,hint=entry.hint,cropBorder=entry.cropBorder,hoverMedia=entry.hoverMedia,pressedMedia=entry.pressedMedia,
+            shortcuts=entry.shortcuts,shortcutLabels=entry.shortcutLabels}
     end
     rec.actionRequest={rect=rect,media=media,entry=entry,visible=visible}
     local want=wanted(rec,rect,entry,visible);local s=rec.actionSurface
+    local keys=want and shortcutKeys(entry) or {}
     local compatible=s and want and not rec.macroPending and s.owner==entry.owner and Actions.BindingSame(s.action,entry.action) and s.mode==entry.mode
+        and Actions.Same(s.keys or {},keys)
     local supported=self:Supported(media);local styled=supported and media or nil
-    if InCombatLockdown() and (s and s.mode~="local" or want and entry.mode~="local") then
+    -- Bound local surfaces freeze like protected ones: bindings cannot change
+    -- in combat, so an obsolete action must stay prepared rather than pooled.
+    if InCombatLockdown() and (s and (s.mode~="local" or s.keys) or want and (entry.mode~="local" or next(keys))) then
         rec.actionPending=(s~=nil or want) and not (compatible and sameRect(s.rect,rect) and (sharedVisual(styled,entry) or styleSame(s,styled))) or nil
         if rec.actionPending then self.pending[rec]=true;self:Watch() else self.pending[rec]=nil end
         if compatible then s.clickBindings=V.RuntimeCopy(Actions.BindingMap(entry.action)) end
@@ -298,13 +342,15 @@ function Q:Paint(rec,rect,media,entry,visible)
     if s and s.mode~=entry.mode then self:Retire(rec);s=nil end
     s=s or table.remove(self.pool[entry.mode]) or create(entry.mode);rec.actionSurface=s
     self:MacroWatch(rec,Actions.HasMacro(entry.action))
-    local attrs,why=Actions.Prepare(entry.action)
+    local attrs,why=Actions.Prepare(entry.action,keys)
     if s.owner~=entry.owner or not Actions.Same(s.action,entry.action) or not Actions.Same(s.attrs,attrs) then
         if s.watched then UnregisterUnitWatch(s.button);s.watched=nil end;s.root:Hide()
         clear(s)
         if attrs then for key,value in pairs(attrs) do s.button:SetAttribute(key,value) end end
         s.owner=entry.owner;s.spellID=entry.action.spellID;s.unit=entry.action.unit;s.action=V.RuntimeCopy(entry.action);s.attrs=attrs
     end
+    -- Keys bind only after their attributes exist; a failed preparation binds none.
+    applyKeys(s,attrs and keys or {});keyLabel(s,s.keys or {},entry.shortcutLabels~=false)
     s.clickBindings=V.RuntimeCopy(Actions.BindingMap(entry.action))
     s.bindingWhy=why;s.label=Actions.Label(entry.action);s.record=rec
     local moved=not sameRect(s.rect,rect)
@@ -315,7 +361,7 @@ function Q:Paint(rec,rect,media,entry,visible)
     if moved or not styleSame(s,styled) then prepareStyle(s,styled) end
     local level=rec.level or 5
     if s.root:GetFrameLevel()~=level then
-        s.root:SetFrameLevel(level);s.button:SetFrameLevel(level+1);s.bar:SetFrameLevel(level+2);s.timer:SetFrameLevel(level+2);s.front:SetFrameLevel(level+3)
+        s.root:SetFrameLevel(level);s.button:SetFrameLevel(level+1);s.bar:SetFrameLevel(level+2);s.timer:SetFrameLevel(level+2);s.front:SetFrameLevel(level+3);s.keyFrame:SetFrameLevel(level+5)
     end
     self:Cosmetics(rec,media,entry,true)
     -- Existence owns only the child; OOC combat visibility owns only its parent.

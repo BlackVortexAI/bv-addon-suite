@@ -61,17 +61,48 @@ function C.Deserialize(raw)
     end
     local result=read(0); assert(done(),"Trailing transfer data"); return result
 end
+-- Adaptive blocks: shrink a block until it compresses into the 512-byte cap
+-- the decoder enforces before inflating. Only while enough of the 64 blocks
+-- remain for the rest as plain 4096-byte blocks, so every raw size still fits.
+local function nextBlock(lib,raw,p,used)
+    local left=#raw-p+1; local size=math.min(4096,left)
+    local function fits(n) return math.ceil((left-n)/4096)<=63-used end
+    for _=1,5 do
+        if not fits(size) then break end
+        local block=raw:sub(p,p+size-1); local compressed=lib:CompressDeflate(block,{level=9})
+        if #compressed<=512 and #compressed<#block then return "D",block,compressed end
+        local guess=math.floor(size*480/#compressed)
+        if guess<256 or guess>=size then break end
+        size=guess
+    end
+    local block=raw:sub(p,p+math.min(4096,left)-1)
+    return "R",block,block
+end
 function C.Encode(value)
     local lib=library(); local raw=C.Serialize(value)
     local parts={tostring(lib:Adler32(raw)),":",tostring(#raw),":"}
-    for p=1,#raw,4096 do
-        local block=raw:sub(p,p+4095); local compressed=lib:CompressDeflate(block,{level=5})
-        local mode,payload="R",block
-        if #compressed<=512 and #compressed<#block then mode,payload="D",compressed end
+    local p,used=1,0
+    while p<=#raw do
+        local mode,block,payload=nextBlock(lib,raw,p,used)
         parts[#parts+1]=mode..#block..":"..#payload..":"..payload
+        p=p+#block;used=used+1
     end
     local encoded="!BVA:1!"..lib:EncodeForPrint(table.concat(parts))
     assert(#encoded<=C.maxText,"Export string too large"); return encoded
+end
+-- Addon-message form of an export string: the same bytes without the
+-- printable 6-bit encoding (about 25% shorter). FromWire restores the string
+-- for the normal bounded Decode.
+function C.ToWire(text)
+    assert(type(text)=="string" and text:sub(1,7)=="!BVA:1!","Unsupported export prefix/version (expected !BVA:1!)")
+    local lib=library(); local body=lib:DecodeForPrint(text:sub(8)); assert(body,"Invalid printable transfer data")
+    return lib:EncodeForWoWAddonChannel(body)
+end
+function C.FromWire(wire)
+    assert(type(wire)=="string" and #wire<=C.maxText,"Shared data too large")
+    local lib=library(); local body=lib:DecodeForWoWAddonChannel(wire)
+    assert(body and #body<=C.maxRaw+2048,"Invalid shared transfer data")
+    return "!BVA:1!"..lib:EncodeForPrint(body)
 end
 function C.Decode(text)
     assert(type(text)=="string" and #text<=C.maxInput,"Import string too large")

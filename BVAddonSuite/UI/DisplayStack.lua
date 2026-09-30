@@ -2,6 +2,7 @@
 -- readback, event subscription or ticker belongs to this reusable UI helper.
 local _,ns=...
 function ns.UI:ResetDisplayAttachment(view)
+    if ns.NameplateBounds then ns.NameplateBounds:Untrack(view) end
     view.nativeAttachment=nil;view.nativeAnchor=nil;view.nativeGeometry=nil;view.displayPlacement=nil;view.visible=false;view.lastRect=nil
     pcall(view.Present,view,nil,false)
     local ok=pcall(function()
@@ -69,6 +70,7 @@ function ns.UI:AnchorDisplayToNameplate(view,frame,rect,link,rootRect)
         view:ClearAllPoints();view:SetPoint("CENTER",frame,point,x,y)
         view:SetSize(visual.width,visual.height)
         view.nativeGeometry={point=point,x=x,y=y,width=visual.width,height=visual.height}
+        if ns.NameplateBounds then ns.NameplateBounds:Track(view,frame) end
         if view.RefreshFeedback then view:RefreshFeedback() end
     end)
     if not ok then

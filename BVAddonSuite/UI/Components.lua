@@ -157,11 +157,41 @@ function UI:IconButton(parent,name,callback,kind)
 end
 function UI:Switch(parent,initial,callback)
     local control=compatibility(self:GetStyle():Switch(parent,initial,function(value) invoke("switch",callback,value) end))
+    control.isSwitch=true
     self:GetStyle():Tooltip(control)
     return control
 end
+-- Right-click menu for text fields (finding 48). WoW gives addons no
+-- clipboard access: copy/cut/paste stay on Ctrl+C / Ctrl+X / Ctrl+V.
+function UI:TextFieldMenu(input,changed)
+    if input.bvTextMenu then return end
+    input.bvTextMenu=true;input.bvHistory={}
+    input:HookScript("OnTextChanged",function(self,user)
+        if user and not self.bvUndoing then
+            local h=self.bvHistory;h[#h+1]=self.bvLastText or "";if #h>20 then table.remove(h,1) end
+        end
+        self.bvLastText=self:GetText()
+    end)
+    input:HookScript("OnMouseDown",function(self,button)
+        if button~="RightButton" then return end
+        local options={{value="all",label="Select all"},{value="clear",label="Clear"}}
+        if #self.bvHistory>0 then options[#options+1]={value="undo",label="Undo last change"} end
+        options[#options+1]={value="hint",label="Copy Ctrl+C / Cut Ctrl+X / Paste Ctrl+V"}
+        UI:ContextMenu(self,options,function(command)
+            if command=="all" then self:SetFocus();self:HighlightText()
+            elseif command=="clear" then
+                local h=self.bvHistory;h[#h+1]=self:GetText();self:SetText("");self:SetFocus()
+                if changed then changed() end
+            elseif command=="undo" then
+                local previous=table.remove(self.bvHistory)
+                if previous then self.bvUndoing=true;self:SetText(previous);self.bvUndoing=nil;self:SetFocus();if changed then changed() end end
+            end
+        end)
+    end)
+end
 function UI:Input(parent,width,onSubmit)
     local input=compatibility(self:GetStyle():Input(parent,width))
+    self:TextFieldMenu(input)
     input:SetMaxLetters(48)
     input:SetScript("OnEnterPressed",function(self) invoke("input",onSubmit,self:GetText()); self:ClearFocus() end)
     self:GetStyle():Tooltip(input)
@@ -170,14 +200,17 @@ end
 function UI:Tabs(parent,definitions,callback)
     local host=CreateFrame("Frame",nil,parent); host.buttons={}; host.pool={}
     M.Size(host,math.max(1,#definitions)*130,38)
+    -- host.bvHeight: compact callers (settings window) use 30.
     function host:Arrange(width)
         M.Width(self,width)
         local count=#(self.definitions or {})
         if count==0 then return end
         local gap=8; local cell=math.min(132,math.max(1,(width-gap*(count-1))/count))
+        local height=self.bvHeight or 38
+        M.Height(self,height)
         for index,definition in ipairs(self.definitions) do
             local button=self.buttons[definition.id]
-            button:ClearAllPoints(); M.Point(button,"TOPLEFT",(index-1)*(cell+gap),0); M.Size(button,cell,38)
+            button:ClearAllPoints(); M.Point(button,"TOPLEFT",(index-1)*(cell+gap),0); M.Size(button,cell,height)
         end
     end
     function host:SetDefinitions(items)
@@ -361,9 +394,59 @@ function UI:VisibleWindows()
     for _,window in ipairs(stack)do if window:IsShown()then out[#out+1]=window end end
     return out
 end
+-- Movable windows (in-game round 4): drag by the handle, clamped to the
+-- screen; the position is remembered account-wide per window (key), a
+-- double-click on the handle resets it to the centre.
+local function positionStore()
+    local db=ns.Settings and ns.Settings.db
+    if type(db)~="table" then return end
+    if type(db.windowPositions)~="table" then db.windowPositions={} end
+    return db.windowPositions
+end
+local function positionKey(frame)
+    if frame.positionKey then return frame.positionKey end
+    local name=frame.GetName and frame:GetName()
+    if name then return name end
+    local title=frame.title and frame.title.GetText and frame.title:GetText()
+    return type(title)=="string" and title~="" and "dialog:"..title or nil
+end
+function UI:SaveWindowPosition(frame)
+    local store,key=positionStore(),positionKey(frame);if not store or not key then return end
+    local point,_,relPoint,x,y=frame:GetPoint(1)
+    if type(point)=="string" and type(x)=="number" and type(y)=="number" then store[key]={point,relPoint or point,x,y} end
+end
+function UI:RestoreWindowPosition(frame)
+    local store,key=positionStore(),positionKey(frame)
+    local saved=store and key and store[key]
+    if type(saved)~="table" or type(saved[3])~="number" or type(saved[4])~="number" then return false end
+    frame:ClearAllPoints();frame:SetPoint(saved[1],UIParent,saved[2],saved[3],saved[4]);return true
+end
+function UI:ResetWindowPosition(frame)
+    local store,key=positionStore(),positionKey(frame)
+    if store and key then store[key]=nil end
+    frame:ClearAllPoints();frame:SetPoint("CENTER",UIParent,"CENTER",0,0)
+end
+function UI:MakeMovable(frame,handle,key)
+    frame.positionKey=key or frame.positionKey
+    frame:SetMovable(true);frame:SetClampedToScreen(true)
+    handle:EnableMouse(true);handle:RegisterForDrag("LeftButton")
+    handle:SetScript("OnDragStart",function() frame:StartMoving() end)
+    handle:SetScript("OnDragStop",function() frame:StopMovingOrSizing();UI:SaveWindowPosition(frame) end)
+    if handle.RegisterForClicks then handle:RegisterForClicks("LeftButtonUp") end
+    handle:SetScript("OnDoubleClick",function() UI:ResetWindowPosition(frame) end)
+    frame:HookScript("OnShow",function() UI:RestoreWindowPosition(frame) end)
+    frame:HookScript("OnHide",function() frame:StopMovingOrSizing() end)
+    return handle
+end
 function UI:Dialog(name,width,height,owner)
     local dialog=self:GetStyle():Dialog(UIParent,width,height,name)
     dialog:SetPoint("CENTER"); dialog:SetFrameStrata("FULLSCREEN_DIALOG"); dialog:SetClampedToScreen(true)
+    -- Title bar drag handle (leaves the close button free).
+    dialog.dragHandle=CreateFrame("Button",nil,dialog)
+    dialog.dragHandle:SetPoint("TOPLEFT",dialog,"TOPLEFT",0,0);dialog.dragHandle:SetPoint("TOPRIGHT",dialog,"TOPRIGHT",-M.ToNative(48),0)
+    dialog.dragHandle:SetHeight(M.ToNative(36));dialog.dragHandle:SetFrameLevel(dialog:GetFrameLevel()+2)
+    self:AttachTooltip(dialog.dragHandle,"Move window","Drag to move. Double-click to reset the position.")
+    self:MakeMovable(dialog,dialog.dragHandle)
     function dialog:FitContent(w,h)
         M.Size(self,w,h); UI:FitWindow(self,w,h,ns.Settings:Get("scale"))
     end

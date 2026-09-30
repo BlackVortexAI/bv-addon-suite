@@ -14,8 +14,10 @@ do
     for _,key in ipairs(Actions.bindingOrder) do
         base.fields[#base.fields+1]={key="click_"..key,label=Actions.bindings[key].label,type="boolean",optional=true,default=key=="left",advanced=key~="left" and key~="right"}
     end
-    base.help="Enable the desired click/modifier combinations in settings; only those Action inputs appear. Unbound combinations do nothing. Click Actions emit graph-local Media Events; spell/item/macro actions remain native hardware clicks. Hover Media and Pressed Media override appearance only, with Pressed taking priority. Prepare protected bindings and geometry outside combat. Test never executes actions."
+    base.fields[#base.fields+1]={key="shortcuts",label="Keyboard shortcuts",type="boolean",optional=true,default=false}
+    base.help="Enable the desired click/modifier combinations in settings; only those Action inputs appear. Unbound combinations do nothing. Click Actions emit graph-local Media Events; spell/item/macro actions remain native hardware clicks. Keyboard shortcuts lets you assign a key to each enabled combination under Tools > Keyboard shortcuts; keys are saved with your profile, not the graph, and a key triggers its combination regardless of held modifiers. Hover Media and Pressed Media override appearance only, with Pressed taking priority. Prepare protected bindings, keys and geometry outside combat. Test never executes actions."
     base.resolve=function(c)
+        if c.shortcuts~=nil and type(c.shortcuts)~="boolean" then return nil,"Keyboard shortcuts must be boolean" end
         local d=G.Copy(base);d.resolve=nil;d.inputs={media=G.Copy(base.inputs.media),hoverMedia=G.Copy(base.inputs.hoverMedia),pressedMedia=G.Copy(base.inputs.pressedMedia)}
         for i,key in ipairs(Actions.bindingOrder) do
             local selected=c["click_"..key];if selected==nil then selected=key=="left" end
@@ -68,10 +70,12 @@ add("item_action","Item Action",{source="item",itemID=5512,slot=13,target="defau
     {field("source","Use","string",{"item","slot"}),field("itemID","Item ID","integer",nil,"item"),field("slot","Equipment slot","integer"),field("target","Target","string",optionalUnits)},
     function(c) return {kind="item",itemID=c.source=="item" and c.itemID or nil,slot=c.source=="slot" and c.slot or nil,unit=unit(c)} end,
     "Use an item by ID or equipment slot (1..19; trinkets 13/14). Blizzard may equip an unequipped equippable item. Default leaves targeting to the game.")
-add("unit_action","Unit Action",{operation="target",target="target"},
+add("unit_action","Target / Focus",{operation="target",target="target"},
     {field("operation","Action","string",{"target","clear","assist","focus"}),field("target","Unit","string",units)},
     function(c) return {kind=c.operation=="clear" and "target" or c.operation,unit=c.operation=="clear" and "none" or c.target} end,
     "Target, clear target, assist or focus a stable unit token. Focus requires client support. Target clicks also follow Blizzard's active spell/item cursor behavior.")
+-- Found by "set target", "focus", "assist" or its former name (finding 52).
+A.catalog.unit_action.keywords="unit action set target set focus assist clear target"
 add("macro_action","Macro Action",{name="",scope="account"},
     {field("name","Saved macro","string",nil,"macro"),field("scope","Scope","string",{"account","character"})},
     function(c) if c.name~="" then return {kind="macro",name=c.name,scope=c.scope} end end,

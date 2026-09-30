@@ -5,6 +5,39 @@ local D=ns.DesignSystem.Metrics
 function UI:Place(widget,parent,x,y)
     widget:ClearAllPoints(); D.Point(widget,"TOPLEFT",parent,"TOPLEFT",x,-y); return widget
 end
+-- Layout helpers (in-game round 4): measured content and button rows instead
+-- of hand-placed coordinates.
+-- Lowest bottom edge (design units) of the shown children and regions of
+-- parent that are anchored at its top left.
+function UI:ContentBottom(parent)
+    local bottom=0
+    local function visit(region)
+        if not region.IsShown or not region:IsShown() or not region.GetPoint then return end
+        local ok,point,rel,_,x,y=pcall(region.GetPoint,region,1)
+        if not ok or point~="TOPLEFT" or (rel and rel~=parent) or type(y)~="number" then return end
+        local h=region.GetHeight and region:GetHeight() or 0
+        bottom=math.max(bottom,D.ToDesign(-y+h))
+    end
+    for _,child in ipairs({parent:GetChildren()}) do visit(child) end
+    if parent.GetRegions then for _,region in ipairs({parent:GetRegions()}) do visit(region) end end
+    return bottom
+end
+-- Places buttons left to right at (x,y) with widths fitted to their labels;
+-- wraps to a new line at maxWidth. Returns the used height (0 when empty).
+function UI:ButtonRow(parent,buttons,x,y,maxWidth,gap)
+    gap=gap or 10;if #buttons==0 then return 0 end
+    local cx,cy,rowH=x,y,0
+    for _,b in ipairs(buttons) do
+        local text=b.label and b.label.GetText and b.label:GetText() or ""
+        local textWidth=b.label and b.label.GetUnboundedStringWidth and D.ToDesign(b.label:GetUnboundedStringWidth()) or #text*8
+        local width=math.max(100,math.floor(textWidth+36))
+        if cx>x and cx+width>x+maxWidth then cx=x;cy=cy+rowH+8;rowH=0 end
+        D.Width(b,width);b:ClearAllPoints();D.Point(b,"TOPLEFT",parent,"TOPLEFT",cx,-cy)
+        local h=D.GetHeight(b);rowH=math.max(rowH,h>0 and h or 34)
+        cx=cx+width+gap
+    end
+    return cy-y+rowH
+end
 function UI:Rule(parent,width,color)
     local line=self:GetStyle():Rule(parent,color); D.Width(line,width)
     return line
@@ -157,7 +190,7 @@ end
 function UI:TextMenu(parent,label,width,options,callback)
     local button=self:Button(parent,label,width,function(host) UI:OpenDropdown(host) end,"nav")
     button:SetLabelInsets(8,8,"CENTER")
-    button.options=options; button.callback=callback; button.menuWidth=246
+    button.options=options; button.callback=callback; button.menuWidth=246; button.menuRows=16
     function button:SetValue() end -- Commands do not replace the menu heading.
     function button:SetOptions(items) self.options=items end
     button:HookScript("OnHide",function(self) if UI.dropdown and UI.dropdown.owner==self then UI:CloseDropdown() end end)
@@ -198,6 +231,7 @@ function UI:ObjectButton(parent,width,callback)
         D.Size(self.identity,math.max(1,identityWidth),20)
         self:SetLabelInsets(row.icon and 38 or 10,identityWidth+14,"LEFT")
         self.preview:SetTexture(row.icon); self.preview:SetShown(row.icon~=nil)
+        if row.coords then self.preview:SetTexCoord(unpack(row.coords)) else self.preview:SetTexCoord(0,1,0,1) end
         self:SetLabelText(row.value and (((row.unverified and "Metadata unavailable" or row.name or "Spell")..(row.rank and " - "..row.rank or "")):gsub("|","||")) or row.label or "Select...")
         UI:AttachTooltip(self,row.label,row.origin or "Select an object.")
     end
@@ -303,6 +337,11 @@ function UI:DismissiblePopup(parent,width,height)
     root:EnableMouseWheel(true); root:SetScript("OnMouseWheel",function() end)
     root:EnableKeyboard(not InCombatLockdown()); UI:SetKeyboardPropagation(root,true)
     root.panel=self:Panel(root,width,height,"raised",6,.9); root.panel:EnableMouse(true)
+    -- Movable by its top strip; position remembered per popup key.
+    root.dragHandle=CreateFrame("Button",nil,root.panel)
+    root.dragHandle:SetPoint("TOPLEFT",root.panel,"TOPLEFT",0,0);root.dragHandle:SetPoint("TOPRIGHT",root.panel,"TOPRIGHT",-D.ToNative(72),0)
+    root.dragHandle:SetHeight(D.ToNative(36))
+    UI:MakeMovable(root.panel,root.dragHandle,"popup:"..width.."x"..height)
     local function release(button)
         if root.dismissButton and root.dismissButton==button then root:Hide() end
     end
@@ -403,7 +442,7 @@ function UI:LibraryTree(parent,onSelect,onToggle,onRename,onMove,options)
                         else select(control) end
                     end)
                 end
-                D.Height(row,34); UI:GetStyle():Font(row.label,13)
+                D.Height(row,28); UI:GetStyle():Font(row.label,12)
                 row.rename=UI:InlineEdit(row,function(text)
                     local target=self.renameItem; self.renameItem=nil; if target and onRename then onRename(target,text) end
                 end); UI:Place(row.rename,row,20,1); row.rename:SetFrameLevel(row:GetFrameLevel()+5)
@@ -434,7 +473,7 @@ function UI:LibraryTree(parent,onSelect,onToggle,onRename,onMove,options)
                 end)
                 row.expand=UI:IconButton(row,"chevron",function()
                     self.collapsed[row.item.id]=not self.collapsed[row.item.id]; self:Rebuild()
-                end,"nav"); D.Size(row.expand,24,28)
+                end,"nav"); D.Size(row.expand,22,24)
                 row.closed=UI:Icon(row.expand,"right",16,"text"); D.Point(row.closed,"CENTER")
                 row.toggle=UI:Switch(row,false,function(value) if not InCombatLockdown() then onToggle(row.item,value) end end)
                 row.status=UI:Icon(row,"spark",12,"accent")
@@ -447,13 +486,13 @@ function UI:LibraryTree(parent,onSelect,onToggle,onRename,onMove,options)
                 if UI.dropdown and UI.dropdown.owner and UI.dropdown.owner.anchor==row then UI:CloseDropdown() end
             end
             row.item=item; self.items[item.id]=row
-            UI:Place(row,self.viewport.content,0,(index-1)*36); D.Width(row,width)
+            UI:Place(row,self.viewport.content,0,(index-1)*30); D.Width(row,width)
             local indent=entry.depth*14
             row:SetLabelInsets(indent+26,44,"LEFT")
             row:SetLabelText(item.label); row:SetSelected(self.value==item.id); row:Show()
-            UI:Place(row.expand,row,indent,3); row.expand:SetShown(item.children~=nil)
+            UI:Place(row.expand,row,indent,2); row.expand:SetShown(item.children~=nil)
             row.expand.icon:SetShown(not self.collapsed[item.id]); row.closed:SetShown(self.collapsed[item.id]==true)
-            UI:Place(row.status,row,indent+6,11); row.status:SetShown(not item.children)
+            UI:Place(row.status,row,indent+6,8); row.status:SetShown(not item.children)
             row.status:SetAlpha(item.running and 1 or .25)
             row.status:SetShown(not item.children and not item.changed);row.changed:SetShown(item.changed==true)
             row.changed:ClearAllPoints();D.Point(row.changed,"LEFT",indent+6,0)
@@ -465,8 +504,8 @@ function UI:LibraryTree(parent,onSelect,onToggle,onRename,onMove,options)
                 item.blocked and "Enabled, but paused by its group or module." or "Enable or disable this applied graph. Draft changes are not applied.")
         end
         for i=#visible+1,#self.pool do self.pool[i]:Hide() end
-        local form=self.viewport; D.Height(form.content,math.max(1,#visible*36))
-        form.maximum=math.max(0,#visible*36-D.GetHeight(form))
+        local form=self.viewport; D.Height(form.content,math.max(1,#visible*30))
+        form.maximum=math.max(0,#visible*30-D.GetHeight(form))
         form.slider:SetMinMaxValues(0,form.maximum); form.slider:SetValue(math.min(form.slider:GetValue(),form.maximum))
         form.slider:SetShown(form.maximum>0)
     end
@@ -526,63 +565,18 @@ function UI:Field(parent,title,control,x,y)
     return control
 end
 function UI:ColorInput(parent,width,callback)
-    local host=self:Button(parent,"",width or 160,function(button) UI:OpenColorEditor(button,callback) end)
+    -- Swatch button with hex label; opens the shared spectrum picker (0.8.73).
+    local host=self:Button(parent,"",width or 160,function(button) UI:OpenColorPicker(button,callback) end)
+    host.callback=callback
     host.sample=host:CreateTexture(nil,"ARTWORK"); D.Size(host.sample,20,16); D.Point(host.sample,"LEFT",8,0)
     host:SetLabelInsets(37,6,"LEFT")
     function host:SetValue(hex)
         self.value=hex; self.sample:SetColorTexture(UI:RGBA(hex)); self:SetLabelText("#"..hex:sub(1,6))
     end
-    host:HookScript("OnHide",function(self) if UI.colorEditor and UI.colorEditor.owner==self then UI.colorEditor:Hide() end end)
+    host:HookScript("OnHide",function(self) if UI.colorPopup and UI.colorPopup.owner==self then UI.colorPopup:Hide() end end)
     return host
 end
--- A BV-owned RGBA picker keeps ownership and cancellation independent of other addons.
+-- Former RGBA-only editor; kept as an entry point for callers.
 function UI:OpenColorEditor(owner,callback)
-    self:CloseDropdown()
-    if not self.colorEditor then
-        local panel=self:Panel(UIParent,280,300,"surface"); panel:Hide(); panel:SetFrameStrata("FULLSCREEN_DIALOG")
-        panel:SetClampedToScreen(true); panel:EnableMouse(true)
-        self:Place(self:Label(panel,"Color & opacity",16,"text",true),panel,16,15)
-        panel.preview=panel:CreateTexture(nil,"ARTWORK"); D.Size(panel.preview,248,28); D.Point(panel.preview,"TOPLEFT",16,-44)
-        panel.values={}; panel.sliders={}
-        function panel:Render()
-            self.hexValue=string.format("%02X%02X%02X%02X",unpack(self.values))
-            self.preview:SetColorTexture(UI:RGBA(self.hexValue)); self.hex:SetText(self.hexValue)
-        end
-        for index,name in ipairs({"Red","Green","Blue","Alpha"}) do
-            local i=index
-            self:Place(self:Label(panel,name,12,"muted"),panel,16,84+(i-1)*30)
-            local slider=CreateFrame("Slider",nil,panel); D.Size(slider,172,18); D.Point(slider,"TOPLEFT",90,-82-(i-1)*30)
-            slider:SetOrientation("HORIZONTAL"); slider:SetMinMaxValues(0,255); slider:SetValueStep(1)
-            slider:SetThumbTexture("Interface\\Buttons\\WHITE8X8"); D.Size(slider:GetThumbTexture(),8,18)
-            slider:GetThumbTexture():SetVertexColor(Theme:Color("accent"))
-            local track=self:Rule(slider,172); D.Point(track,"CENTER")
-            slider:SetScript("OnValueChanged",function(_,value)
-                panel.values[i]=math.floor(value+0.5); if not panel.loading then panel:Render() end
-            end)
-            panel.sliders[i]=slider
-        end
-        panel.hex=self:Place(self:Input(panel,248,function(text)
-            text=text:gsub("#",""):upper(); if #text==6 then text=text.."FF" end
-            if text:match("^%x%x%x%x%x%x%x%x$") then panel:Load(text) else panel:Render() end
-        end),panel,16,209); panel.hex:SetMaxLetters(9)
-        function panel:Load(hex)
-            self.loading=true
-            for i=1,4 do self.values[i]=tonumber(hex:sub(i*2-1,i*2),16); self.sliders[i]:SetValue(self.values[i]) end
-            self.loading=false; self:Render()
-        end
-        self:Place(self:Button(panel,"Cancel",112,function() panel:Hide() end),panel,16,254)
-        self:Place(self:Button(panel,"Apply",124,function()
-            -- Accept a valid typed hex value even without pressing Enter first.
-            local hex=panel.hex:GetText():gsub("#",""):upper(); if #hex==6 then hex=hex.."FF" end
-            if not hex:match("^%x%x%x%x%x%x%x%x$") then panel:Render(); return end
-            local apply=panel.callback; panel:Hide(); ns:Call("color",apply,hex)
-        end,true),panel,140,254)
-        panel:SetScript("OnHide",function(self) self.hex:ClearFocus(); self.owner=nil end)
-        self:ManageWindow(panel)
-        self.colorEditor=panel
-    end
-    local panel=self.colorEditor; panel.owner=owner; panel.callback=callback
-    panel:ClearAllPoints(); D.Point(panel,"TOPLEFT",owner,"BOTTOMLEFT",0,-5)
-    panel:SetScale(owner:GetEffectiveScale()/UIParent:GetEffectiveScale()); panel:Load(owner.value); panel:Show()
-    self:FocusWindow(panel)
+    self:OpenColorPicker(owner,callback)
 end

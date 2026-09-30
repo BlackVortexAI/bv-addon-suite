@@ -318,16 +318,18 @@ local function targetMemoryTiming(run,id,state,values,fields,observation,now)
     end
 end
 function R.New(plan,emit,diagnose,display)
-    local roots,timeRoots,estimateRoots={},{},{}; local messageDriven=false
+    local roots,timeRoots,estimateRoots,rangeRoots={},{},{},{}; local messageDriven=false
+    local sectionMute,sectionBypass=A.Sections.Effects(plan.graph)
     for _,e in ipairs(plan.graph.edges) do
         if plan.active[e.to] and (plan.graph.nodes[e.from].type=="aura" or plan.definitions[e.from].auraSource) and e.output=="remaining" then roots[e.from]=true end
         if plan.active[e.to] and (plan.graph.nodes[e.from].type=="aura" or plan.definitions[e.from].auraSource) and (e.output=="remainingEstimate" or e.output=="presentEstimate" and plan.graph.nodes[e.from].config.unit=="target") then estimateRoots[e.from]=true end
     end
     for id in pairs(plan.active) do
         if plan.definitions[id].clock then timeRoots[id]=true end
+        if plan.definitions[id].rangeSource then rangeRoots[id]=true end
         if plan.definitions[id].messageSource then messageDriven=true end
     end
-    return {plan=plan,emit=emit,diagnose=diagnose,display=display,state={},trace={},values={},signals={},auras={},clockRoots=roots,timeRoots=timeRoots,estimateClockRoots=estimateRoots,messageDriven=messageDriven,stopped=false,revision=0}
+    return {plan=plan,emit=emit,diagnose=diagnose,display=display,state={},trace={},values={},signals={},auras={},clockRoots=roots,timeRoots=timeRoots,estimateClockRoots=estimateRoots,rangeRoots=rangeRoots,sectionMute=sectionMute,sectionBypass=sectionBypass,messageDriven=messageDriven,stopped=false,revision=0}
 end
 local function evaluate(run,id,sample,now,dirty,context)
     local n=run.plan.graph.nodes[id]; local def=run.plan.definitions[id]; local args={}
@@ -368,6 +370,23 @@ local function evaluate(run,id,sample,now,dirty,context)
         elseif not G.RuntimeAccepts(p.type,value) then error("Invalid input: "..key) end
         args[key]=value
         return value
+    end
+    -- A muted section silences every member, sources included; its Bypass
+    -- applies to members that have a bypass mapping. Node settings stay as is.
+    if run.sectionMute and run.sectionMute[id] then
+        if def.soundSink then BVAddonSuiteCore.Sound:Stop(run,id) end
+        if def.clock then state.time=nil end;if def.lastUnprotectedValue then state.lastReadable=nil end;state.auraEstimate=nil
+        return nil,"muted by section"
+    end
+    local sectionBypass=run.sectionBypass and run.sectionBypass[id] and def.bypass
+    if sectionBypass then
+        if def.animation then state.time=nil end
+        local out={}
+        for key,input in pairs(def.bypass) do
+            if resolve(input,true)==nil then return nil,"unavailable" end
+            out[key]=args[input]
+        end
+        return out,"bypassed by section"
     end
     -- Controls are evaluated before payload. Bypass needs only its mapped input,
     -- not operands belonging exclusively to the skipped operation.
@@ -536,6 +555,12 @@ local function evaluate(run,id,sample,now,dirty,context)
         if (context.reason=="source_event" or (run.test and context.reason=="test")) and p and p.kind==n.type then
             if (n.type=="encounter_event" or n.type=="ready_check_event") and n.config.phase~="either" and p.values[n.config.phase]~=true then return {event=false},"filtered" end
             if n.type=="chat_receive" and not (p.matches and p.matches[id]) then return {event=false},"filtered" end
+            if n.type=="bossmod_event" then
+                local c=n.config;local v=p.values
+                if (c.provider~="any" and v.provider~=c.provider) or (c.eventType~="any" and v.eventType~=c.eventType) then return {event=false},"filtered" end
+                if c.spellID~=0 then if v.spellId==nil then return {event=false},"filtered" end;if v.spellId~=c.spellID then return {event=false},"filtered" end end
+                if c.text~="" and not (v.text and A.TextOps.Fold(v.text):find(A.TextOps.Fold(c.text),1,true)) then return {event=false},"filtered" end
+            end
             local key,filter
             if n.type=="player_cast" and n.config.spellID~=0 then key="spellID";filter=n.config.spellID end
             if n.type=="player_swing" and n.config.hand~="ALL" then key="hand";filter=n.config.hand end
@@ -645,8 +670,14 @@ local function evaluate(run,id,sample,now,dirty,context)
         local matches=run.test or A.UnitSource.MatchesRelation(_G,token,n.config.relation)
         if not matches then state.auraEstimate=nil;return nil,"filtered" end
     end
+    -- Connected Slot input chooses the roster token for this evaluation.
+    local function sourceToken()
+        if not A.UnitSource.DynamicSlot(run.plan,id) then return A.UnitSource.Token(n.type,n.config,run.instance) end
+        local token=A.UnitSource.SlotToken(n.config,resolve("slot"))
+        state.slotToken=token;return token
+    end
     if def.auraSource then
-        local token=A.UnitSource.Token(n.type,n.config,run.instance)
+        local token=sourceToken()
         local observation=token and run.auras and run.auras[A.AuraSource.Key(n.config.spellID,n.config.filter,token)]
         local values=G.RuntimeCopy(observation and observation.values or {})
         local fields=G.Copy(observation and observation.fields or {})
@@ -663,7 +694,7 @@ local function evaluate(run,id,sample,now,dirty,context)
         return values,observation and observation.status or "unavailable",fields
     end
     if def.unitSource then
-        local token=A.UnitSource.Token(n.type,n.config,run.instance)
+        local token=sourceToken()
         if not token then return nil,"unavailable" end
         local key=A.UnitSource.Key(token,n.config)
         local observation=sample.unitQueries and sample.unitQueries[key] or (key==token and (n.type=="player" and sample.player or sample.units and sample.units[token]))
@@ -681,7 +712,7 @@ local function evaluate(run,id,sample,now,dirty,context)
             if def.outputs.castSucceeded then values.castSucceeded=matched==true;fields.castSucceeded="readable" end
             if def.outputs.succeededSpellID and matched then values.succeededSpellID=event.spellID;fields.succeededSpellID=G.SignalStatus(event.spellID) end
         end
-        return G.RuntimeCopy(values),"observed",G.Copy(fields)
+        return G.RuntimeCopy(values),A.UnitSource.SlotStatus(n.config,token) or "observed",G.Copy(fields)
     end
     -- Resolve only the operands needed for a decision. nil is an unavailable
     -- signal, not Boolean false; unused choices cannot invalidate a selection.
@@ -737,15 +768,18 @@ local function evaluate(run,id,sample,now,dirty,context)
         return {value=value,available=status=="readable",status=status},"projected",{value=status}
     end
     if n.type=="media_icon" then
+        -- Icon ID output (e.g. for the Toast Note icon input): the connected
+        -- texture as is, else the chosen icon when it is a numeric file ID.
         if run.plan.incoming[id].texture then
             local texture=resolve("texture");if texture==nil then return nil,"unavailable" end
-            return {media=styled(M.New("icon",n.config,texture))}
+            return {media=styled(M.New("icon",n.config,texture)),textureID=texture}
         end
-        return {media=styled(M.New("icon",n.config))}
+        local ref=BVAddonSuiteCore.IconCatalog:Reference(n.config.texture)
+        return {media=styled(M.New("icon",n.config)),textureID=type(ref)=="number" and ref or tonumber(ref)}
     end
     local missing=false
     for key,p in pairs(ports) do
-        local unusedDefinition=(p.type=="font" or p.type=="style" or n.type=="display" and key=="realTime") and not run.plan.incoming[id][key]
+        local unusedDefinition=(p.type=="font" or p.type=="style" or p.type=="symbol" or n.type=="display" and key=="realTime") and not run.plan.incoming[id][key]
         if not unusedDefinition and args[key]==nil and resolve(key)==nil then missing=true end
     end
     if missing then return nil,"unavailable" end
@@ -758,10 +792,10 @@ local function evaluate(run,id,sample,now,dirty,context)
     elseif n.type=="icon_cooldown" then
         if run.test then return {media=G.RuntimeCopy(args.media)},"native preview unavailable" end
         return {media=M.Modify(args.media,n.type,args,n.config)}
-    elseif n.type=="media_overlay" or n.type=="media_crop" or n.type=="icon_appearance" then return {media=M.Modify(args.media,n.type,args,n.config)}
+    elseif n.type=="media_overlay" or n.type=="media_crop" or n.type=="icon_appearance" or n.type=="media_sprite" or n.type=="display_lifecycle" or n.type=="color_overlay" then return {media=M.Modify(args.media,n.type,args,n.config)}
     elseif n.type=="media_interaction" then return {media=M.Modify(args.media,n.type,args,n.config)}
-    elseif n.type=="media_button" then return {media=styled(M.NewButton(n.config,args.text))}
-    elseif n.type=="media_text" then return {media=styled(M.New("text",n.config,args.text))}
+    elseif n.type=="media_button" then return {media=M.AttachSymbol(styled(M.NewButton(n.config,args.text)),args.symbol,n.config)}
+    elseif n.type=="media_text" then return {media=M.AttachSymbol(styled(M.New("text",n.config,args.text)),args.symbol,n.config)}
     elseif n.type=="display" then
         local media=args.media
         if run.plan.incoming[id].realTime then
@@ -846,6 +880,7 @@ local function evaluate(run,id,sample,now,dirty,context)
 end
 function R.NeedsClock(run)
     if not run or run.stopped then return false end
+    if run.rangeRoots and next(run.rangeRoots) then return true end
     for id in pairs(run.timeRoots) do
         local s=run.state[id]; if s and s.time and s.time.clock then return true end
     end
@@ -853,7 +888,7 @@ function R.NeedsClock(run)
         local s=run.state[id];if s and s.auraEstimate and s.auraEstimate.clock then return true end
     end
     for id in pairs(run.clockRoots) do
-        local n=run.plan.graph.nodes[id];local token=run.plan.definitions[id].auraSource and A.UnitSource.Token(n.type,n.config,run.instance)
+        local n=run.plan.graph.nodes[id];local token=run.plan.definitions[id].auraSource and (A.UnitSource.DynamicSlot(run.plan,id) and run.state[id] and run.state[id].slotToken or A.UnitSource.Token(n.type,n.config,run.instance))
         local o=run.auras[A.AuraSource.Key(n.config.spellID,n.config.filter,token)]
         if o and o.values and not G.IsSecret(o.values.present) and o.values.present and G.Number(o.expirationTime) and o.expirationTime>0
             and not (run.values[id] and run.values[id].remaining==0) then return true end
@@ -879,8 +914,10 @@ function R.Begin(run,sample,now,reason)
         if reason=="frame_state" and run.plan.definitions[id].frameSource and sample.sources and sample.sources["frame_state:"..n.config.reference] then dirty[id]=true end
         if n.type=="player" and ({hp=true,power=true,player_state=true,context=true})[reason] then dirty[id]=true end
         if reason=="unit" and run.plan.definitions[id].unitSource then
-            local token=A.UnitSource.Token(n.type,n.config,run.instance);local key=token and A.UnitSource.Key(token,n.config)
-            if sample.unitQueries and sample.unitQueries[key] or not sample.unitQueries and sample.units and sample.units[token] then dirty[id]=true end
+            for _,token in ipairs(A.UnitSource.PlanTokens(run.plan,id,n,run.instance)) do
+                local key=A.UnitSource.Key(token,n.config)
+                if sample.unitQueries and sample.unitQueries[key] or not sample.unitQueries and sample.units and sample.units[token] then dirty[id]=true end
+            end
         end
         if run.plan.definitions[id].auraSource and (reason=="aura" or reason=="unit" or reason=="clock" or reason=="metadata") then dirty[id]=true end
         if reason=="message" and n.type=="message_receive" then
@@ -894,6 +931,8 @@ function R.Begin(run,sample,now,reason)
         if reason=="message_policy" and n.type=="message_send" then dirty[id]=true end
         if reason=="macros" and n.type=="macro_exists" and not run.plan.incoming[id].event then dirty[id]=true end
         if reason=="clock" and run.clockRoots[id] then dirty[id]=true end
+        if reason=="clock" and run.rangeRoots and run.rangeRoots[id] then dirty[id]=true end
+        if reason=="bossmod" and run.plan.definitions[id].bossmodTimer then dirty[id]=true end
         if reason=="clock" and run.estimateClockRoots[id] then
             local s=run.state[id];if s and s.auraEstimate and s.auraEstimate.clock then dirty[id]=true end
         end
@@ -925,9 +964,12 @@ function R.Step(job)
         if status=="unavailable" and context.missing then status=context.missing end
         if ok then
             if value then
-                for key,p in pairs(run.plan.definitions[id].outputs) do
+                -- Bypass forwards only its mapped outputs; the others stay empty.
+                local def=run.plan.definitions[id]
+                local bypassing=(status=="bypass" or status=="bypassed by section") and def.bypass
+                for key,p in pairs(def.outputs) do
                     local v=value[key]
-                    if not (not G.IsSecret(v) and (p.optional or run.test and run.nodeOverrides and run.nodeOverrides[id]) and v==nil)
+                    if not (not G.IsSecret(v) and (p.optional or (bypassing and not def.bypass[key]) or run.test and run.nodeOverrides and run.nodeOverrides[id]) and v==nil)
                         and not (p.type=="event" and not G.IsSecret(v) and type(v)=="boolean" or G.RuntimeAccepts(p.type,v)) then ok=false; value="Invalid output: "..key; break end
                 end
             end

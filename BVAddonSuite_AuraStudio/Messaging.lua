@@ -21,7 +21,8 @@ function M.Senders(value)
 end
 local communicationKinds={message_send=true,message_receive=true,chat_send=true,chat_direct=true,chat_receive=true}
 function M.ResetPermissions(graph)
-    for _,node in pairs(graph.nodes or {})do if communicationKinds[node.type] or node.type=="macro_write" then node.config.permission=false end end
+    -- Lua Script: imported code stays visible but off until enabled (finding 53).
+    for _,node in pairs(graph.nodes or {})do if communicationKinds[node.type] or node.type=="macro_write" or node.type=="lua_script" then node.config.permission=false end end
 end
 local migrated=setmetatable({},{__mode="k"})
 function M.MigratePermissions(graph,legacy)

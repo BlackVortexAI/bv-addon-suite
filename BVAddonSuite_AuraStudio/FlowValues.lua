@@ -67,7 +67,7 @@ function F.Array(c,array,key,value,timestamp,index)
     if op=="set" or op=="add" then
         if not A.Memory.Key(key) or not G.Accepts(c.valueType,value) then return nil,"invalid value" end
         if op=="add" and found then return nil,"key already exists" end
-        if not found and #out.entries>=F.limit then return nil,"array full" end
+        if not found and #out.entries>=F.limit then return nil,"dictionary full" end
         out.entries[position or #out.entries+1]={key=key,value=value,timestamp=timestamp}
     elseif op=="remove" and found then table.remove(out.entries,position)
     elseif op=="clear" then out.entries={}

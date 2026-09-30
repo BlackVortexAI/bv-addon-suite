@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: BV Addon Suite - Bags
+## Notes: Skinned, movable bag bar with an optional one-button mode. Requires BV Core.
+## Author: BV
+## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
+## Version: 0.8.79
+## Dependencies: BVAddonSuite
+
+Bags.lua

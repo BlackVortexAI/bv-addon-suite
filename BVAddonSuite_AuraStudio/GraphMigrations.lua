@@ -35,6 +35,29 @@ local function migrate(graph)
     seen[out]=true
     return out,"player health migrated"
 end
+-- Node revisions: settings added in later versions are filled with their
+-- defaults and per-type migrations run (def.migrate(config,fromRevision)), so
+-- older nodes keep resolving. Unknown or newer nodes are left untouched.
+local function upgradeNodes(graph)
+    local out
+    for id,n in pairs(graph.nodes) do
+        local def=type(n)=="table" and type(n.config)=="table" and A.catalog[n.type]
+        local target=def and (def.revision or 1)
+        local from=def and (G.Number(n.revision) and n.revision or 1)
+        if def and from<=target then
+            local missing=false
+            for key in pairs(def.defaults or {}) do if n.config[key]==nil then missing=true;break end end
+            if missing or n.revision~=target then
+                out=out or G.Copy(graph);local node=out.nodes[id]
+                for key,value in pairs(def.defaults or {}) do if node.config[key]==nil then node.config[key]=G.Copy(value) end end
+                if def.migrate and from<target then def.migrate(node.config,from) end
+                node.revision=target
+            end
+        end
+    end
+    return out or graph
+end
+A.UpgradeNodes=upgradeNodes
 function A.MigrateGraph(graph)
     if seen[graph] then return graph end
     if type(graph)=="table" and type(graph.nodes)=="table" and type(graph.edges)=="table" then
@@ -65,6 +88,10 @@ function A.MigrateGraph(graph)
     if A.MigrateNodeFamilies then
         local familyOK,family,familyStatus=pcall(A.MigrateNodeFamilies,result)
         if familyOK then result=family;status=familyStatus or status end
+    end
+    -- Last: legacy migrations above rely on settings still being absent.
+    if type(result)=="table" and type(result.nodes)=="table" and not G.IsSecret(result) then
+        local upOK,upgraded=pcall(upgradeNodes,result);if upOK then result=upgraded end
     end
     seen[result]=true
     return result,status

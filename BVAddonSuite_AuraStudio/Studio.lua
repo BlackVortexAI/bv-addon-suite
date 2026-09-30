@@ -2,8 +2,19 @@ local _, A=...
 if A.blocked then return end
 local ns=BVAddonSuiteCore
 local G,R=A.G,A.Runtime
+local Actions=ns.Actions
 local S={nodeTesting=A.NodeTesting,catalog=A.catalog,catalogOrder=A.order,runs={},queue={},errors={},histories={},budget=1,maxQueue=128,maxInteractions=16,source=A.AuraSource.New()}
 ns.AuraStudio=S
+S.sections=A.Sections
+-- Layout Editor options for every node that owns a layout element (off by default).
+for _,def in pairs(A.catalog) do
+    if def.display or def.layoutOwner then
+        def.fields=def.fields or {}
+        -- layoutOption: listed first in the node details (no scrolling).
+        def.fields[#def.fields+1]={key="hideInLayout",label="Hide in Layout Editor",type="boolean",optional=true,default=false,advanced=true,layoutOption=true}
+        def.fields[#def.fields+1]={key="lockSize",label="Lock size in Layout Editor",type="boolean",optional=true,default=false,advanced=true,layoutOption=true}
+    end
+end
 local function displayElements(node)
     if A.catalog[node.type] and A.catalog[node.type].displayStack then return node.config.elements or {} end
     return {{id=node.id,layoutId=node.config.layoutId}}
@@ -86,7 +97,167 @@ function S:Store()
     data.quick=data.quick or {shown=false,width=280,height=360,collapsed={}}
     data.quick.collapsed=data.quick.collapsed or {}
     data.communication=data.communication or {send=false,receive=false,group=true,channels={PARTY=true,RAID=true,INSTANCE_CHAT=true},allowlist={}}
+    -- Keyboard shortcuts are profile data keyed by graph/node, never graph data.
+    -- Entries of deleted graphs are dropped; invalid entries never bind.
+    if type(data.shortcuts)~="table" then data.shortcuts={} end
+    for id,keys in pairs(data.shortcuts) do
+        local graph=type(id)=="string" and id:match("^([^/]+)/.+$")
+        if not graph or not data.graphs[graph] or type(keys)~="table" then data.shortcuts[id]=nil
+        else
+            for key,value in pairs(keys) do if not Actions.bindings[key] or not Actions.ShortcutKey(value) then keys[key]=nil end end
+            if not next(keys) then data.shortcuts[id]=nil end
+        end
+    end
+    if type(data.shortcutLabels)~="boolean" then data.shortcutLabels=true end
     return data
+end
+-- Blizzard nameplate stacking CVar (bits: 1 enemy, 2 friendly). Read-only
+-- unless the user clicks in the Nameplate stacking panel.
+local stackCVar="nameplateStackingTypes"
+function S:NameplateStacking()
+    local get=C_CVar and C_CVar.GetCVar or GetCVar
+    if type(get)~="function" then return nil end
+    local ok,value=pcall(get,stackCVar)
+    if not ok or G.IsSecret(value) then return nil end
+    local n=tonumber(value);if not n or n<0 or n~=math.floor(n) then return nil end
+    return {enemy=n%2==1,friendly=math.floor(n/2)%2==1,raw=n}
+end
+local function writeStacking(self,value)
+    local set=C_CVar and C_CVar.SetCVar or SetCVar
+    if type(set)~="function" then self.message="Nameplate stacking is not available on this client";return false end
+    pcall(set,stackCVar,tostring(value))
+    local now=self:NameplateStacking()
+    if not now or now.raw~=value then self.message="The client did not accept the nameplate setting";return false end
+    return true
+end
+function S:SetNameplateStacking(enemy,friendly)
+    if InCombatLockdown() then self.message="Change nameplate stacking after combat";self:Changed();return false end
+    local current=self:NameplateStacking()
+    if not current then self.message="Nameplate stacking is not available on this client";self:Changed();return false end
+    local data=self:Store();if data.nameplateStackingRestore==nil then data.nameplateStackingRestore=current.raw end
+    local ok=writeStacking(self,(enemy and 1 or 0)+(friendly and 2 or 0));self:Changed();return ok
+end
+-- Experimental opt-in: BV attachments count toward Blizzard's stacking bounds.
+function S:SetNameplateBounds(value)
+    self:Store().nameplateBoundsExperiment=value==true
+    if ns.NameplateBounds then ns.NameplateBounds:SetEnabled(self.active==true and value==true) end
+    self:Changed();return true
+end
+function S:RestoreNameplateStacking()
+    if InCombatLockdown() then self.message="Change nameplate stacking after combat";self:Changed();return false end
+    local data=self:Store();local previous=data.nameplateStackingRestore
+    if previous==nil then self.message="Nothing to restore";self:Changed();return false end
+    local ok=writeStacking(self,previous);if ok then data.nameplateStackingRestore=nil end
+    self:Changed();return ok
+end
+-- Graph sharing (roadmap P4). Receiving is opt-in per profile; each offer
+-- needs Accept; imports go through the normal transfer preview/import.
+function S:SetShareReceive(value)
+    self:Store().shareReceive=value==true;self:Changed();return true
+end
+function S:ShareStatus(text)
+    self.shareStatus=text
+    if text and DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffBV share:|r "..tostring(text):gsub("|","||")) end
+    self:Changed()
+end
+function S:ShareHooks()
+    return {
+        allowReceive=function(sender)
+            local data=self:Store()
+            if self.active~=true or data.shareReceive~=true then return "disabled" end
+            if data.shareKnownOnly==true and not A.Share.IsKnown(_G,sender) then return "restricted" end
+            return true
+        end,
+        pack=function(text) return ns.TransferCodec.ToWire(text) end,
+        unpack=function(wire) return ns.TransferCodec.FromWire(wire) end,
+        export=function(kind,id)
+            local text=self:ExportTransfer(kind,id)
+            local rec=kind=="block" and self:Blocks()[id] or self:Store().graphs[id]
+            return text,rec and rec.name
+        end,
+        askAccept=function(sender,kind,name,parts,accept,decline) ns.UI:ShareRequest(sender,kind,name,parts,accept,decline) end,
+        -- Received data opens in the normal import dialog; nothing is imported
+        -- until the player confirms there.
+        review=function(text,sender,kind,name)
+            local dialog=self:TransferUI()
+            local ok,why=dialog:OpenReceived(text,sender,kind,name)
+            return ok,why
+        end,
+        status=function(text) self:ShareStatus(text) end,
+    }
+end
+function S:StartShare()
+    if not A.Share then return end
+    self.share=self.share or A.Share.New(_G,ns.Events,self:ShareHooks())
+    self.share:Start()
+end
+function S:TransferUI(owner)
+    self.transferUI=self.transferUI or ns.UI:TransferDialog(owner,self)
+    return self.transferUI
+end
+function S:SetShareKnownOnly(value) self:Store().shareKnownOnly=value==true;self:Changed();return true end
+-- Recipient: "target" or a party/raid unit token chosen in the sharing panel.
+function S:ShareRecipients() return A.Share and A.Share.GroupMembers(_G) or {} end
+function S:ShareCurrent(kind,id)
+    if not self.share then self.message="Enable Aura Studio to share";return false,self.message end
+    if not kind then local store=self:Store();kind,id="graph",store.selected end
+    if not id then return false,"Select a graph first" end
+    local unit=self.shareUnit or "target"
+    if unit~="target" then
+        local found=false;for _,m in ipairs(self:ShareRecipients()) do if m.unit==unit and m.name==self.shareName then found=true end end
+        if not found then self.shareUnit,self.shareName=nil,nil;self:ShareStatus("The chosen group member changed; choose again");return false,"The chosen group member changed; choose again" end
+    end
+    local ok,why=self.share:Send(kind,id,unit)
+    if not ok then self:ShareStatus(why) end
+    return ok,why
+end
+function S:CancelShare() if self.share then self.share:Cancel() end end
+function S:ShortcutId(graphId,nodeId) return tostring(graphId).."/"..tostring(nodeId) end
+function S:ShortcutOwner(value,except)
+    for id,keys in pairs(self:Store().shortcuts) do
+        for key,assigned in pairs(keys) do if assigned==value and not (id==except.id and key==except.key) then return id,key end end
+    end
+end
+function S:SetShortcut(id,key,value)
+    if InCombatLockdown() then self.message="Change keyboard shortcuts after combat";self:Changed();return false end
+    local graph=type(id)=="string" and id:match("^([^/]+)/.+$")
+    if not graph or not self:Store().graphs[graph] or not Actions.bindings[key] then self.message="Unknown shortcut target";self:Changed();return false end
+    if value~=nil and not Actions.ShortcutKey(value) then self.message="Choose a keyboard key";self:Changed();return false end
+    local data=self:Store()
+    if value~=nil then
+        local owner,ownerKey=self:ShortcutOwner(value,{id=id,key=key})
+        if owner then self.message=value.." is already assigned ("..owner.." / "..Actions.bindings[ownerKey].label..")";self:Changed();return false end
+    end
+    local keys=data.shortcuts[id] or {};keys[key]=value;data.shortcuts[id]=next(keys) and keys or nil
+    ns.DisplayAnchors:RefreshShortcuts();self:Changed();return true
+end
+function S:SetShortcutLabels(value)
+    if InCombatLockdown() then self.message="Change keyboard shortcuts after combat";self:Changed();return false end
+    self:Store().shortcutLabels=value==true;ns.DisplayAnchors:RefreshShortcuts();self:Changed();return true
+end
+-- Rows for every shortcut-enabled Action Display in the saved (applied) graphs.
+function S:ShortcutTargets()
+    local data=self:Store();local rows={}
+    for _,graphId in ipairs(data.graphOrder) do
+        local rec=data.graphs[graphId];local graph=rec and rec.applied
+        if graph and graph.nodes then
+            local ids={};for nodeId,node in pairs(graph.nodes) do
+                if A.catalog[node.type] and A.catalog[node.type].actionDisplay and node.config and node.config.shortcuts==true then ids[#ids+1]=nodeId end
+            end
+            table.sort(ids,function(a,b) return tostring(a)<tostring(b) end)
+            for _,nodeId in ipairs(ids) do
+                local node=graph.nodes[nodeId];local id=self:ShortcutId(graphId,nodeId);local assigned=data.shortcuts[id] or {}
+                for _,key in ipairs(Actions.bindingOrder) do
+                    local selected=node.config["click_"..key];if selected==nil then selected=key=="left" end
+                    if selected==true then
+                        rows[#rows+1]={id=id,key=key,graph=rec.name,node=type(node.title)=="string" and node.title~="" and node.title or "Action Display "..tostring(nodeId),
+                            binding=Actions.bindings[key].label,value=assigned[key],enabled=rec.enabled==true}
+                    end
+                end
+            end
+        end
+    end
+    return rows
 end
 function S:Communication() return self:Store().communication end
 function S:CommunicationPolicy()
@@ -317,6 +488,33 @@ function S:RefreshQuick()
         self.quick=self.quick or ns.UI:QuickAccess(self); self.quick:Refresh(); self.quick:Show()
     elseif self.quick then self.quick:Hide() end
 end
+-- Sections: draft edits like node settings (Save applies them).
+function S:AddSection(x,y,width,height)
+    local id
+    local ok=self:Edit(function(g)
+        g.sections=g.sections or {}
+        id=A.Sections.NextId(g)
+        local s={id=id,name="Section",color=A.Sections.colors[(#g.sections%#A.Sections.colors)+1],x=x,y=y,
+            width=math.max(A.Sections.minWidth,width),height=math.max(A.Sections.minHeight,height),muted=false,bypassed=false}
+        g.sections[#g.sections+1]=s
+        local why=A.Sections.Check(g.sections);assert(not why,why)
+    end)
+    return ok and id or nil
+end
+function S:SetSection(id,key,value)
+    return self:Edit(function(g)
+        local s=assert(A.Sections.Find(g,id),"Section no longer exists")
+        assert(({name=true,color=true,muted=true,bypassed=true,x=true,y=true,width=true,height=true})[key],"Unknown section setting")
+        s[key]=value
+        local why=A.Sections.Check(g.sections);assert(not why,why)
+    end)
+end
+function S:DeleteSection(id)
+    return self:Edit(function(g)
+        local _,index=A.Sections.Find(g,id);assert(index,"Section no longer exists")
+        table.remove(g.sections,index);if #g.sections==0 then g.sections=nil end
+    end)
+end
 function S:ToggleCollapsed(id)
     local rec=self:Graph(); local graph=rec and (self.inspectApplied and rec.applied or rec.draft)
     local node=graph and graph.nodes[id]; if not node then return end
@@ -431,17 +629,32 @@ function S:Commit(graph)
         if not schemas[key] then schemas[key]=payload end
     end end
     for _,node in pairs(graph.nodes) do if node.type=="media_event" and schemas[node.config.key] then node.config.payload=G.Copy(schemas[node.config.key]) end end
-    local plan,err=G.Compile(graph,A.catalog,true); if not plan then self.message=err.message; self:Changed(); return false end
+    -- Tolerant: an outdated/invalid node is marked on its card instead of
+    -- blocking every edit. Save/Apply, export and runtime stay strict.
+    local plan,err=G.Compile(graph,A.catalog,true,true)
+    if not plan then self.message=G.DescribeError(graph,A.catalog,err);self.messageError=self.message;self:Changed();return false end
+    -- Only problems that already existed are tolerated; an edit that makes a
+    -- node invalid is still rejected with that node's message.
+    local current=self:Draft();local old=current and G.Compile(current,A.catalog,true,true)
+    local oldInvalid=old and old.invalid or {}
+    local ids={};for id in pairs(plan.invalid) do ids[#ids+1]=id end;table.sort(ids)
+    for _,id in ipairs(ids) do if oldInvalid[id]~=plan.invalid[id] then
+        self.message=G.DescribeError(graph,A.catalog,{node=id,message=plan.invalid[id]});self.messageError=self.message;self:Changed();return false
+    end end
+    local invalid=G.FirstInvalid(plan)
     local before=self:HistorySnapshot(self:Draft())
     self:PrepareDisplays(graph,self:Graph())
     local rec=self:Graph(); local h=self:History(); h.undo[#h.undo+1]=before
     if #h.undo>40 then table.remove(h.undo,1) end; h.redo={}
-    rec.draft=graph; rec.draftRevision=rec.draftRevision+1; self:CaptureLayouts(); self.message="Draft saved"; self:Changed(); return true
+    rec.draft=graph; rec.draftRevision=rec.draftRevision+1; self:CaptureLayouts()
+    if invalid then self.message="Draft saved. Needs attention: "..G.DescribeError(graph,A.catalog,invalid);self.messageError=self.message
+    else self.message="Draft saved";self.messageError=nil end
+    self:Changed(); return true
 end
 function S:Edit(callback)
     if self.inspectApplied then self.message="Leave applied view to edit"; self:Changed(); return false end
     local g=G.Copy(self:Draft()); local ok,why=pcall(callback,g)
-    if not ok then self.message=ns.GraphValues.Error(why); self:Changed(); return false end
+    if not ok then self.message=ns.GraphValues.UserError(why);self.messageError=self.message; self:Changed(); return false end
     return self:Commit(g)
 end
 function S:Undo(redo)
@@ -459,7 +672,7 @@ function S:Connect(from,output,to,input)
     if self.inspectApplied then return end
     local graph,why=G.Connect(self:Draft(),A.catalog,from,output,to,input)
     if graph then return self:Commit(graph) end
-    self.message=why; self:Changed(); return false
+    self.message=why;self.messageError=why; self:Changed(); return false
 end
 function S:SetValue(id,key,value,config)
     return self:Edit(function(g)
@@ -650,7 +863,18 @@ function S:Picker(id,key)
 end
 function S:IconPicker(id,key)
     local catalog=ns.IconCatalog; local store=self:Store(); local session={}; local graphId=self:Graph().id
-    if id then local kind=self:Draft().nodes[id].type; assert((kind=="icon" or kind=="media_icon") and key=="texture","Unsupported icon selector") end
+    -- Icon/Media Icon texture, or any node field declared with picker="icon"
+    -- (e.g. the Toast Note icon, key "icon").
+    local nodeType
+    if id then
+        local node=self:Draft().nodes[id];nodeType=node and node.type
+        local supported=(nodeType=="icon" or nodeType=="media_icon") and key=="texture"
+        if not supported and node then
+            local def=G.Definition(A.catalog[node.type],node)
+            for _,f in ipairs(def and def.fields or {}) do if f.key==key and f.picker=="icon" then supported=true end end
+        end
+        assert(supported,"This field has no icon selector")
+    end
     catalog:Open(session)
     function session:Status() return catalog:Status() end
     function session:Search(query) return catalog:Search(query) end
@@ -659,7 +883,7 @@ function S:IconPicker(id,key)
         local value=store.iconSelection
         if id then
             local rec=store.graphs[graphId]; local node=rec and rec.draft.nodes[id]
-            value=node and {kind="icon",texture=node.config.texture}
+            value=node and {kind="icon",texture=node.config[key]}
         end
         if type(value)~="table" or value.kind~="icon" then return end
         local texture,key=catalog:Reference(value.texture)
@@ -671,8 +895,8 @@ function S:IconPicker(id,key)
         if id then
             if S:Graph().id~=graphId or S.inspectApplied then return false end
             local changed=S:Edit(function(g)
-                local node=assert(g.nodes[id]); assert(node.type=="icon" or node.type=="media_icon","Node changed")
-                node.config.texture=tostring(found.texture)
+                local node=assert(g.nodes[id]); assert(node.type==nodeType,"Node changed")
+                node.config[key]=tostring(found.texture)
             end)
             if not changed then return false end
         end
@@ -739,10 +963,11 @@ function S:PrepareDisplays(graph,rec)
             if not saved and rec.displayLayout then for old,new in pairs(remap)do if new==id then saved=G.Copy(rec.displayLayout.elements[old]);break end end end
             if A.catalog[node.type].layoutOwner then
                 node.config.layoutId=id
-                A.Dialogs.Prepare(node,rec.name.." / "..node.id,saved)
+                A.Dialogs.Prepare(node,rec.name.." / "..(node.title or node.id),saved)
             else
-            ns.DisplayAnchors:Ensure(id,rec.name.." / "..node.id..(A.catalog[node.type].displayStack and " / "..element.label or ""),texture,saved)
+            ns.DisplayAnchors:Ensure(id,rec.name.." / "..(node.title or node.id)..(A.catalog[node.type].displayStack and " / "..element.label or ""),texture,saved)
             end
+            ns.Layout:SetEditorFlags(id,node.config.hideInLayout,node.config.lockSize)
             end
             if A.catalog[node.type].displayStack then
                 local root
@@ -1256,7 +1481,7 @@ function S:MakeRun(rec,plan,test)
             if plan.definitions[id].collectionSource then
                 run.collection=true;tokens=A.CollectionTokens(plan.definitions[id],node.config)
                 run.collectionTokens=run.collectionTokens or {};for _,token in ipairs(tokens) do run.collectionTokens[token]=true end
-            else tokens[1]=A.UnitSource.Token(node.type,node.config) end
+            else tokens=A.UnitSource.PlanTokens(plan,id,node) end
             for _,token in ipairs(tokens) do
             run.unitFields[token]=run.unitFields[token] or {};run.unitNodes[token]=run.unitNodes[token] or {};run.unitNodes[token][id]=true
             local key=A.UnitSource.Key(token,node.config)
@@ -1279,13 +1504,13 @@ function S:MakeRun(rec,plan,test)
             if node.type=="player" then run.playerFields[edge.output]=true end
             if plan.definitions[edge.from].auraSource and edge.output=="realTime" then
                 local tokens=plan.definitions[edge.from].collectionSource and A.CollectionTokens(plan.definitions[edge.from],node.config)
-                    or {A.UnitSource.Token(node.type,node.config)}
+                    or A.UnitSource.PlanTokens(plan,edge.from,node)
                 for _,token in ipairs(tokens) do run.unitAuras[A.AuraSource.Key(node.config.spellID,node.config.filter,token)].realTime=true end
             end
             if plan.definitions[edge.from].unitSource then
                 local tokens={}
                 if plan.definitions[edge.from].collectionSource then tokens=A.CollectionTokens(plan.definitions[edge.from],node.config)
-                else tokens[1]=A.UnitSource.Token(node.type,node.config) end
+                else tokens=A.UnitSource.PlanTokens(plan,edge.from,node) end
                 for _,token in ipairs(tokens) do
                 run.unitFields[token][edge.output]=true
                 if A.UnitDataCatalog.fields[edge.output] or A.UnitSource.presentationFields[edge.output] or A.UnitSource.playerFields[edge.output] then run.queryFields[A.UnitSource.Key(token,node.config)].fields[edge.output]=true end
@@ -1301,7 +1526,7 @@ function S:MakeRun(rec,plan,test)
         local node=plan.graph.nodes[id];local def=plan.definitions[id]
         if def.display then
             local saved=rec.displayLayout and rec.displayLayout.elements[node.config.layoutId]
-            ns.DisplayAnchors:Ensure(node.config.layoutId,rec.name.." / "..id,node.config.texture or 134400,saved)
+            ns.DisplayAnchors:Ensure(node.config.layoutId,rec.name.." / "..(node.title or id),node.config.texture or 134400,saved)
         end
     end
     for _,id in ipairs(plan.order) do
@@ -1318,7 +1543,8 @@ function S:MakeRun(rec,plan,test)
             ns.DisplayAnchors:OpenStack(run,id,node.config,test and 1 or 0)
         elseif A.catalog[node.type].display then
             items[#items+1]={key=id,anchor=node.config.layoutId,texture=node.config.spellIcon or node.config.texture or 134400,
-                actionDisplay=not test and A.catalog[node.type].actionDisplay or nil,cropBorder=node.config.cropBorder,secureSpell=not test and A.catalog[node.type].secureAction and node.config.spellID or nil}
+                actionDisplay=not test and A.catalog[node.type].actionDisplay or nil,cropBorder=node.config.cropBorder,secureSpell=not test and A.catalog[node.type].secureAction and node.config.spellID or nil,
+                shortcut=not test and A.catalog[node.type].actionDisplay and node.config.shortcuts==true and self:ShortcutId(rec.id,id) or nil}
         end
     end
     if #items>0 then
@@ -1365,7 +1591,8 @@ local function ignoresReason(run,reason,queue)
         or (reason=="frame_state" and not run.needs.frame_state)
         or (reason=="macros" and not run.needs.macros)
         or (reason=="player_state" and not run.needs.player_state and not run.needs.player)
-        or (({location=true,inventory=true,proc=true,usable=true,spellbook=true,totem=true,xp=true,money=true,currency=true,reputation=true,talents=true})[reason] and not run.needs[reason]) then return true end
+        or (({location=true,inventory=true,proc=true,usable=true,spellbook=true,totem=true,xp=true,money=true,currency=true,reputation=true,talents=true,durability=true,enchant=true,item_cooldown=true,queued=true})[reason] and not run.needs[reason])
+        or (reason=="bossmod" and not run.needs.bossmod_timer) then return true end
     if reason=="clock" then
         if not R.NeedsClock(run) then return true end
         for _,item in ipairs(queue) do if item.run==run then return true end end
@@ -1569,9 +1796,9 @@ function S:RefreshClock()
 end
 function S:DropRun(run)
     if run then
-        run.stopped=true;A.Dialogs.Release(run)
-        if run.baseRun then run.baseRun.stopped=true;A.Dialogs.Release(run.baseRun)end
-        for _,child in pairs(run.children or {})do child.stopped=true;A.Dialogs.Release(child)end
+        run.stopped=true;A.Dialogs.Release(run);A.Toasts.Release(run)
+        if run.baseRun then run.baseRun.stopped=true;A.Dialogs.Release(run.baseRun);A.Toasts.Release(run.baseRun)end
+        for _,child in pairs(run.children or {})do child.stopped=true;A.Dialogs.Release(child);A.Toasts.Release(child)end
     end
     if not run then return end; run.stopped=true
     ns.Sound:Release(run)
@@ -1802,6 +2029,12 @@ function S:Subscriptions()
     if dataNeeds.proc then listen("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW","proc"); listen("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE","proc") end
     if dataNeeds.usable then listen("SPELL_UPDATE_USABLE","usable") end
     if dataNeeds.totem then listen("PLAYER_TOTEM_UPDATE","totem") end
+    -- Newer item events may not exist on every client; an unknown event must not abort startup.
+    local function tryListen(event,reason) local ok=pcall(listen,event,reason);if not ok then self:Diagnostic("events",reason,"Event unavailable: "..event) end end
+    if dataNeeds.durability then for _,event in ipairs({"UPDATE_INVENTORY_DURABILITY","UPDATE_INVENTORY_ALERTS","PLAYER_EQUIPMENT_CHANGED"})do tryListen(event,"durability") end end
+    if dataNeeds.enchant then for _,event in ipairs({"WEAPON_ENCHANT_CHANGED","WEAPON_SLOT_CHANGED","PLAYER_EQUIPMENT_CHANGED","UNIT_INVENTORY_CHANGED"})do tryListen(event,"enchant") end end
+    if dataNeeds.item_cooldown then for _,event in ipairs({"BAG_UPDATE_COOLDOWN","ACTIONBAR_UPDATE_COOLDOWN","PLAYER_EQUIPMENT_CHANGED"})do tryListen(event,"item_cooldown") end end
+    if dataNeeds.queued then for _,event in ipairs({"CURRENT_SPELL_CAST_CHANGED","ACTIONBAR_UPDATE_STATE","START_AUTOREPEAT_SPELL","STOP_AUTOREPEAT_SPELL","SPELLS_CHANGED"})do tryListen(event,"queued") end end
     if dataNeeds.talents then
         for _,event in ipairs({"TRAIT_CONFIG_UPDATED","TRAIT_NODE_CHANGED","TRAIT_NODE_CHANGED_PARTIAL","ACTIVE_PLAYER_SPECIALIZATION_CHANGED","ACTIVE_TALENT_GROUP_CHANGED","PLAYER_TALENT_UPDATE","PLAYER_ENTERING_WORLD"})do listen(event,"talents")end
     end
@@ -1818,7 +2051,18 @@ function S:Subscriptions()
             if packet then for _,run in pairs(self.runs) do if run.needs[packet.kind] then self:Schedule(run,{sourceEvent=packet},"source_event") end end end
         end) end
     end
-    for kind,events in pairs({encounter_event={"ENCOUNTER_START","ENCOUNTER_END"},ready_check_event={"READY_CHECK","READY_CHECK_FINISHED"}}) do
+    -- Boss mods: bind only while a run needs them; packets reach event nodes,
+    -- bar list changes re-evaluate timer nodes.
+    local bossmodTimers=false;for _,run in pairs(self.runs) do if run.needs.bossmod_timer then bossmodTimers=true end end
+    if nativeEvents.bossmod_event or bossmodTimers then
+        A.BossMods:Start(function(packet,changed)
+            for _,run in pairs(self.runs) do
+                if packet and run.needs.bossmod_event then self:Schedule(run,{sourceEvent=packet},"source_event") end
+                if changed and run.needs.bossmod_timer then self:Schedule(run,{},"bossmod") end
+            end
+        end)
+    else A.BossMods:Stop() end
+    for kind,events in pairs({encounter_event={"ENCOUNTER_START","ENCOUNTER_END"},ready_check_event={"READY_CHECK","READY_CHECK_FINISHED"},target_changed={"PLAYER_TARGET_CHANGED"}}) do
         if nativeEvents[kind] then for _,event in ipairs(events) do ns.Events:Subscribe(self,event,function(_,a,b,c,d,e)
             local packet=self.dataSource:Event(event,a,b,c,d,e)
             if packet then for _,run in pairs(self.runs) do if run.needs[packet.kind] then self:Schedule(run,{sourceEvent=packet},"source_event") end end end
@@ -1870,7 +2114,10 @@ end
 function S:Apply()
     if InCombatLockdown() then self.message="Save is unavailable in combat"; self:Changed(); return false end
     local rec=self:Graph(); local ok,plan,err=pcall(G.Compile,rec.draft,A.catalog)
-    if not ok or not plan then self.validation=ok and err or {message=ns.GraphValues.Error(plan)}; self.message=self.validation.message; self:Changed(); return false end
+    if not ok or not plan then
+        self.validation=ok and err or {message=ns.GraphValues.UserError(plan)}
+        self.message="Not saved: "..G.DescribeError(rec.draft,A.catalog,self.validation);self.messageError=self.message;self:Changed();return false
+    end
     for _,id in ipairs(plan.order) do
         local def=plan.definitions[id];local layout=plan.graph.nodes[id].config.layoutId
         if def.secureAction and not ns.SecureSpells:ValidLayout(layout) then
@@ -1946,7 +2193,7 @@ function S:TestSample(before,current,maximum,combat,auraPresent,auraSeconds,prot
         return result
     end
     if not self.test then
-        local plan,err=G.Compile(rec.applied,A.catalog); if not plan then self.message=err.message; self:Changed(); return false end
+        local plan,err=G.Compile(rec.applied,A.catalog); if not plan then self.message=G.DescribeError(rec.applied,A.catalog,err);self.messageError=self.message; self:Changed(); return false end
         self.test=self:MakeRun(rec,plan,true)
         self:Schedule(self.test,simulated(before,false),"initial")
     end
@@ -1973,25 +2220,30 @@ function S:Stop()
     if self.source and self.source.ResetTargetEstimates then self.source:ResetTargetEstimates() end
     if A.infoDiagnostics then A.infoDiagnostics:Stop() end
     ns.ExternalFrames:Unwatch(self)
-    ns.Events:Release(self); self:EndTest()
+    ns.Events:Release(self); A.BossMods:Stop(); self:EndTest()
     if self.playerChat then self.playerChat:Stop();self.playerChat=nil end
     self.unitRefs={};self.visibleNameplates={};self.unitAuraRequests={};self.unitAuraSamples={}
     if self.messaging then self.messaging:Stop();self.messaging=nil end
+    if self.share then self.share:Stop() end
+    if ns.NameplateBounds then ns.NameplateBounds:SetEnabled(false) end
     if self.restrictionTimer then self.restrictionTimer:Cancel(); self.restrictionTimer=nil end
     for _,run in pairs(self.runs) do self:DropRun(run) end; self.runs={}; self.queue={}
     if self.clockTimer then self.clockTimer:Cancel();self.clockTimer=nil end
     self.mouseoverPresence=nil
     if self.timer then self.timer:Cancel(); self.timer=nil end
-    self.auraRequests={}; self.dataRequests={};self.playerRequests={};self.legacyPlayerFields={};self.playerSource=nil;self.unitSource=nil;if self.sourceTimer then self.sourceTimer:Cancel();self.sourceTimer=nil end;self.pendingUnitQueries={};self.pendingAuraQueries={};self.unitRequests={};self.unitQueries={};self.unitPresence={};self.unitGenerations={};self.dynamicIndex=nil;self.nameplateAbsent={}; self.active=false; ns.DisplayAnchors.nativeSource=nil;ns.DisplayAnchors.inputHandler=nil; if self.editor then self.editor:Close() end
+    self.auraRequests={}; self.dataRequests={};self.playerRequests={};self.legacyPlayerFields={};self.playerSource=nil;self.unitSource=nil;if self.sourceTimer then self.sourceTimer:Cancel();self.sourceTimer=nil end;self.pendingUnitQueries={};self.pendingAuraQueries={};self.unitRequests={};self.unitQueries={};self.unitPresence={};self.unitGenerations={};self.dynamicIndex=nil;self.nameplateAbsent={}; self.active=false; ns.DisplayAnchors.nativeSource=nil;ns.DisplayAnchors.inputHandler=nil;ns.DisplayAnchors.shortcutProvider=nil; if self.editor then self.editor:Close() end
     if self.quick then self.quick:Hide() end
 end
 function S:Start(ctx)
     self.active=true; ctx:Defer(function() self:Stop() end)
     ns.DisplayAnchors.nativeSource=A.NativeSource.New(_G)
     ns.DisplayAnchors.inputHandler=function(owner,packet) self:Interaction(owner,packet) end
+    ns.DisplayAnchors.shortcutProvider=function(id) local data=self:Store();return data.shortcuts[id],data.shortcutLabels end
     self.dataSource=A.DataSource.New(_G)
     self.playerSource=A.PlayerSource.New(_G)
     self:RefreshMessaging()
+    self:StartShare()
+    if ns.NameplateBounds then ns.NameplateBounds:SetEnabled(self:Store().nameplateBoundsExperiment==true) end
     self:RestoreLayouts()
     for _,rec in pairs(self:Store().graphs) do
         if rec.enabled and rec.applied and self:GroupAllows(rec) then

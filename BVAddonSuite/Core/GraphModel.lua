@@ -24,6 +24,7 @@ function G.Accepts(t,v)
     if t=="font" then return ns.DisplayModel.Font(v) end
     if t=="style" then return ns.DisplayModel.Style(v) end
     if t=="action" then return G.Action(v) end
+    if t=="symbol" then return ns.DisplayModel.Symbol(v) end
     if t=="float" then return G.Number(v) end
     if t=="integer" then return G.Number(v) and v==math.floor(v) end
     if t=="boolean" then return type(v)=="boolean" end
@@ -37,7 +38,7 @@ function G.RuntimeAccepts(t,v)
     if t=="any" and type(v)=="table" then return ns.DisplayModel.Valid(v) or ns.DisplayModel.Font(v) or ns.DisplayModel.Style(v) or G.Action(v) end
     return G.Accepts(t,v)
 end
-local valueTypes={action=true,boolean=true,integer=true,float=true,string=true,media=true,event=true,data=true,duration=true,calculator=true,unitref=true,font=true,style=true}
+local valueTypes={action=true,boolean=true,integer=true,float=true,string=true,media=true,event=true,data=true,duration=true,calculator=true,unitref=true,font=true,style=true,symbol=true}
 function G.Compatible(from,to)
     -- Nil is an explicit missing value, never a wildcard carrying arbitrary data.
     -- "any" is an inspection input only; ordinary value ports remain typed.
@@ -86,7 +87,7 @@ end
 function G.Ports(def)
     if def.resolve then def=assert(G.Definition(def)) end
     local inputs={}; for k,v in pairs(def.inputs or {}) do inputs[k]=v end
-    if not def.source then inputs.mute={type="boolean",default=false,label="Mute",control=true} end
+    if not def.source and not def.annotation then inputs.mute={type="boolean",default=false,label="Mute",control=true} end
     if def.bypass then inputs.bypass={type="boolean",default=false,label="Bypass",control=true} end
     return inputs
 end
@@ -125,7 +126,7 @@ function G.Add(graph, kind, catalog, x,y)
             config.key=base.."."..suffix
         end
     end
-    graph.nodes[id]={id=id,type=kind,version=1,x=x or 0,y=y or 0,values=values,
+    graph.nodes[id]={id=id,type=kind,version=1,revision=catalog[kind].revision or 1,x=x or 0,y=y or 0,values=values,
         config=config,exposed={}}
     return id
 end
@@ -145,17 +146,32 @@ function G.OutputType(graph,catalog,id,key,seen)
     end
     return edge and G.OutputType(graph,catalog,edge.from,edge.output,seen) or "any"
 end
-function G.Compile(graph,catalog,structureOnly)
+-- tolerant=true (editor drafts only): a node whose settings no longer resolve
+-- is recorded in plan.invalid instead of rejecting the whole graph, so one
+-- outdated node never blocks editing. Apply, export and runtime stay strict.
+function G.Compile(graph,catalog,structureOnly,tolerant)
     local function fail(message,node,port) return nil,{message=message,node=node,port=port} end
+    local invalid={}
     if V.Contains(graph) then return fail("Secret or opaque values cannot enter graph storage") end
     if type(graph)~="table" or graph.version~=1 or type(graph.nodes)~="table" or type(graph.edges)~="table" then return fail("Unsupported graph schema") end
     local count=0; local incoming,dependents,definitions={},{},{}
     for id,n in pairs(graph.nodes) do
         count=count+1
         if type(id)~="string" or type(n)~="table" or n.id~=id or not catalog[n.type] or n.version~=1 then return fail("Invalid or unsupported node",id) end
+        -- Node revision (per type): newer than this client means a newer addon made it.
+        if n.revision~=nil and (not G.Number(n.revision) or n.revision<1 or n.revision~=math.floor(n.revision)) then return fail("Invalid node revision",id) end
+        if (n.revision or 1)>(catalog[n.type].revision or 1) then
+            if not tolerant then return fail("This node was made with a newer BV Addon Suite version; update the addon",id) end
+            invalid[id]="This node was made with a newer BV Addon Suite version; update the addon"
+        end
         if not G.Number(n.x) or not G.Number(n.y) or type(n.values)~="table" or type(n.config)~="table" or type(n.exposed)~="table" then return fail("Invalid node data",id) end
         if n.title~=nil and G.NodeTitle(n.title)~=n.title then return fail("Invalid node title",id) end
-        local def,why=G.Definition(catalog[n.type],n); if not def then return fail(why or "Invalid port configuration",id) end
+        local def,why=G.Definition(catalog[n.type],n)
+        if not def then
+            if not tolerant then return fail(why or "Invalid port configuration",id) end
+            invalid[id]=why or "Invalid port configuration"
+            def=G.Definition(catalog[n.type]) or {inputs={},outputs={}}
+        end
         definitions[id]=def
         incoming[id]={}; dependents[id]={}
     end
@@ -176,7 +192,8 @@ function G.Compile(graph,catalog,structureOnly)
         if type(e)~="table" or not graph.nodes[e.from] or not graph.nodes[e.to] then return fail("Connection references a missing node") end
         local output=definitions[e.from].outputs[e.output]
         local input=G.Ports(definitions[e.to])[e.input]
-        if not output or not input or not G.Compatible(output.type,input.type) then return fail("Incompatible ports",e.to,e.input) end
+        local lenient=invalid[e.from] or invalid[e.to]
+        if not lenient and (not output or not input or not G.Compatible(output.type,input.type)) then return fail("Incompatible ports",e.to,e.input) end
         if incoming[e.to][e.input] then return fail("Input already connected",e.to,e.input) end
         incoming[e.to][e.input]=e; dependents[e.from][e.to]=true
     end
@@ -220,14 +237,38 @@ function G.Compile(graph,catalog,structureOnly)
             return fail("Repeated units require a Display Stack output",id)
         end
     end
-    return {graph=G.Copy(graph),order=execution,incoming=incoming,active=active,dependents=dependents,definitions=definitions,repeated=repeated}
+    return {graph=G.Copy(graph),order=execution,incoming=incoming,active=active,dependents=dependents,definitions=definitions,repeated=repeated,invalid=invalid}
+end
+-- User-facing type name: internal "array:string" reads "Dictionary (string)".
+local typeLabels={boolean="On/off",integer="Whole number",float="Number",string="Text",event="Event",media="Media",font="Font",style="Style",
+    symbol="Symbol",timestamp="Timestamp",duration="Duration",unitref="Unit",action="Action",data="Data",any="Any value",calculator="Calculator",click="Click",["nil"]="Nothing"}
+function G.TypeLabel(t)
+    if type(t)~="string" then return tostring(t) end
+    local inner=t:match("^array:(.+)$")
+    if inner then return "Dictionary ("..(typeLabels[inner] or inner)..")" end
+    return typeLabels[t] or t
+end
+-- Names the node an error belongs to: "Node 'Title' (Type, n5): message".
+function G.DescribeError(graph,catalog,err)
+    local message=V.UserError(type(err)=="table" and err.message or err)
+    local id=type(err)=="table" and err.node
+    local n=id and type(graph)=="table" and type(graph.nodes)=="table" and graph.nodes[id]
+    if not n then return message end
+    local def=catalog and catalog[n.type]
+    local label=def and def.label or tostring(n.type)
+    local name=type(n.title)=="string" and n.title~="" and n.title or label
+    return "Node '"..name.."' ("..(name~=label and label..", " or "")..id.."): "..message
+end
+function G.FirstInvalid(plan)
+    local ids={};for id in pairs(plan and plan.invalid or {}) do ids[#ids+1]=id end;table.sort(ids)
+    if ids[1] then return {node=ids[1],message=plan.invalid[ids[1]]} end
 end
 function G.Connect(graph,catalog,from,output,to,input)
     local nextGraph=G.Copy(graph)
     local _,index=G.Binding(nextGraph,to,input); if index then table.remove(nextGraph.edges,index) end
     nextGraph.edges[#nextGraph.edges+1]={from=from,output=output,to=to,input=input}
-    local plan,err=G.Compile(nextGraph,catalog,true)
-    if not plan then return nil,err.message end
+    local plan,err=G.Compile(nextGraph,catalog,true,true)
+    if not plan then return nil,G.DescribeError(nextGraph,catalog,err) end
     return nextGraph
 end
 function G.Remove(graph,selection)

@@ -95,6 +95,12 @@ function Layout:Register(id, definition)
     assert(type(definition.defaults)=="function" and type(definition.apply)=="function","Editable element contract missing")
     self.elements[id]=definition; self.order[#self.order+1]=id
 end
+-- Editor presentation flags set by the owning node: hidden elements stay out of
+-- the Layout Editor (links still move them), locked ones keep their size.
+function Layout:SetEditorFlags(id,hidden,sizeLocked)
+    local def=self.elements[id];if not def then return end
+    def.editorHidden=hidden==true or nil;def.sizeLocked=sizeLocked==true or nil
+end
 -- Future providers return rectangles in UIParent coordinates and call Notify when
 -- geometry/availability changes. Registration never discovers or mutates a frame.
 function Layout:RegisterProvider(name, provider)

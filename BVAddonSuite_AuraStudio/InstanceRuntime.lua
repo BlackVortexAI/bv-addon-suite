@@ -42,7 +42,7 @@ local function current(parent,child)
  local b=parent.bindings and parent.bindings[child.unitToken]
  return valid(child.unitToken,b) and b.generation==child.instanceGeneration and rawequal(b.reference,child.instance)
 end
-local inherited={"nodeOverrides","draftRevision","dialogResume","test","graphId","appliedRevision","objectIcons","send","messageStatus","messageAccept","requestChat","sendChat","needs","messageTopics","interactionKeys"}
+local inherited={"nodeOverrides","draftRevision","dialogResume","test","graphId","appliedRevision","objectIcons","send","messageStatus","messageAccept","requestChat","sendChat","needs","messageTopics","interactionKeys","sectionMute","sectionBypass"}
 local function inherit(parent,run)
  for _,key in ipairs(inherited)do run[key]=parent[key]end
  run.messageDriven=parent.messageDriven
@@ -101,7 +101,7 @@ function R.InvalidateNodes(parent,affected)
  for id in pairs(affected)do
   local def=parent.plan.definitions[id];local n=parent.plan.graph.nodes[id]
   if def and (def.unitSource or def.auraSource) and not def.collectionSource then
-   local token=A.UnitSource.Token(n.type,n.config);if token then purge(parent,token)end
+   for _,token in ipairs(A.UnitSource.PlanTokens(parent.plan,id,n)) do purge(parent,token) end
   end
   for _,run in ipairs(runs)do if run.plan.active[id]then
    if def and def.soundSink then BVAddonSuiteCore.Sound:Stop(run,id) end
@@ -183,8 +183,7 @@ local function copyForContext(run,sample)
  for _,id in ipairs(run.plan.order)do
   local node,def=run.plan.graph.nodes[id],run.plan.definitions[id]
   if def.unitSource or def.auraSource then
-   local token=A.UnitSource.Token(node.type,node.config,run.instance)
-   if token then units[token]=true;queries[A.UnitSource.Key(token,node.config)]=true end
+   for _,token in ipairs(A.UnitSource.PlanTokens(run.plan,id,node,run.instance)) do units[token]=true;queries[A.UnitSource.Key(token,node.config)]=true end
   end
  end
  local work={sample={},items={},index=1}

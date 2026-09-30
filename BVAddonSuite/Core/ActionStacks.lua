@@ -21,7 +21,7 @@ function Q:ValidLayout(config)
     return true
 end
 local function placeholder(unit)
-    return ns.DisplayModel.New("text",{font="ysabeau",fontSize=12,align="CENTER",wrap=true},unit.." / pending")
+    return ns.DisplayModel.New("text",{font="alegreyaSansBold",fontSize=12,align="CENTER",wrap=true},unit.." / pending")
 end
 function Q:Open(owner,key,config,mode)
     assert(self:ValidLayout(config))

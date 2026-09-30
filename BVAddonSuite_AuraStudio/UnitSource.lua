@@ -55,6 +55,36 @@ function P.Token(kind,config,instance)
     local slot=config and config.slot
     if limit and G.Number(slot) and slot==math.floor(slot) and slot>=1 and slot<=limit then return (kind=="party_member" and "party" or kind=="nameplate" and "nameplate" or "raid")..slot end
 end
+-- Slot input (P8 follow-up): every roster token a connected Slot input may
+-- choose, and the token for a resolved slot value (nil when out of range).
+function P.SlotTokens(config)
+    local out={}
+    if config and config.unit=="party_member" then for i=1,4 do out[i]="party"..i end
+    elseif config and config.unit=="raid_member" then for i=1,40 do out[i]="raid"..i end end
+    return out
+end
+function P.SlotToken(config,value)
+    local max=config and (config.unit=="party_member" and 4 or config.unit=="raid_member" and 40)
+    if not max or not G.Number(value) or value~=math.floor(value) or value<1 or value>max then return end
+    return (config.unit=="party_member" and "party" or "raid")..value
+end
+-- True when the node's Slot input is connected in this plan.
+function P.DynamicSlot(plan,id)
+    return plan.definitions[id].slotInput==true and plan.incoming[id] and plan.incoming[id].slot~=nil or false
+end
+-- All tokens a plan node can observe (static or every roster position).
+function P.PlanTokens(plan,id,node,instance)
+    if P.DynamicSlot(plan,id) then return P.SlotTokens(node.config) end
+    local token=P.Token(node.type,node.config,instance);return {token}
+end
+-- Party/Raid slot nodes name the roster position and, when readable, its player.
+function P.SlotStatus(config,token)
+    local unit=config and config.unit
+    if unit~="party_member" and unit~="raid_member" or type(token)~="string" then return end
+    local ok,name=pcall(UnitName,token)
+    if not ok or protected(name) or type(name)~="string" or name=="" then return token..": empty or unreadable" end
+    return token..": "..name
+end
 -- A positive readable relationship is required for filtered collections. A
 -- protected/absent/error result never means hostile, friendly or neutral.
 function P.MatchesRelation(api,unit,relation)

@@ -155,7 +155,10 @@ function D:Paint(rec,rect,texture,visible)
         if rec.secureButton then ns.SecureSpells:Release(rec) end
         rec.level=ns.Layout:Level(rec.id)
         local e=rec.actionEntry;local a=e.action
-        ns.SecureActionMedia:Paint(rec,rect,rec.media,a and {owner=e.owner,action=a,mode="secure",hint=e.actionHint,hoverMedia=e.hoverMedia,pressedMedia=e.pressedMedia},visible and ns.Layout:IsAvailable(rec.id))
+        local keys,labels
+        if e.shortcut and self.shortcutProvider then keys,labels=self.shortcutProvider(e.shortcut) end
+        ns.SecureActionMedia:Paint(rec,rect,rec.media,a and {owner=e.owner,action=a,mode="secure",hint=e.actionHint,hoverMedia=e.hoverMedia,pressedMedia=e.pressedMedia,
+            shortcuts=keys,shortcutLabels=labels},visible and ns.Layout:IsAvailable(rec.id))
         return
     elseif rec.actionSurface then ns.SecureActionMedia:Release(rec) end
     if ns.SecureSpells and rec.secureEntry and not rec.preview then
@@ -230,6 +233,7 @@ function D:Open(owner,items,priority)
         local rec=self.records[item.anchor]; self.serial=self.serial+1
         local entry={record=rec,owner=owner,texture=assert(ns.IconCatalog:Reference(item.texture)),visible=false,priority=priority or 0,serial=self.serial}
         entry.actionDisplay=item.actionDisplay
+        entry.shortcut=item.actionDisplay and item.shortcut or nil
         entry.secureSpell=item.secureSpell
         entry.cropBorder=item.cropBorder
         bindings[item.key]=entry; rec.owners[owner]=entry; self:Render(rec)
@@ -242,6 +246,12 @@ function D:SetSecureHint(owner,key,hint)
         entry.secureHint=nil
         if not ns.GraphValues.IsSecret(hint) and type(hint)=="boolean" then entry.secureHint=hint end
         if ns.SecureSpells then ns.SecureSpells:Cue(entry.record) end
+    end
+end
+-- Profile key assignments changed: repaint shortcut-enabled action displays.
+function D:RefreshShortcuts()
+    for _,rec in pairs(self.records) do
+        if rec.actionEntry and rec.actionEntry.shortcut then self:Render(rec) end
     end
 end
 function D:SetAction(owner,key,visible,media,action,hint,states)

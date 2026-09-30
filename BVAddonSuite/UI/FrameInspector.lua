@@ -142,7 +142,7 @@ function I:HideEditors()
  local library=UI.frameLibrary
  if library and library.window and library.window:IsShown()then state.library=true;library.window:Hide()end
  for index=#state.windows,1,-1 do state.windows[index]:Hide()end
- UI:CloseDropdown();UI:HideTooltip();if UI.colorEditor then UI.colorEditor:Hide()end
+ UI:CloseDropdown();UI:HideTooltip();if UI.colorPopup then UI.colorPopup:Hide()end
 end
 function I:Start()
  if InCombatLockdown()then ns:Print("Start frame inspection outside combat.");return end

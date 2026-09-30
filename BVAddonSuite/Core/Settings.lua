@@ -2,7 +2,7 @@ local _, ns = ...
 local Settings = { profileListeners = {}, afterProfileListeners={} }
 ns.Settings = Settings
 
-local defaults = { font = "ysabeau", themeKey = "violet", accent = "verdant", scale = 1, tooltips = true, statusbar = "flat", inspectorGap = 100, gridSize = 16, snapToGrid = true, snapToElements = true }
+local defaults = { font = "alegreyaSansBold", themeKey = "violet", accent = "verdant", scale = 1, tooltips = true, statusbar = "softLightBevel", inspectorGap = 100, gridSize = 16, snapToGrid = true, snapToElements = true }
 local choices = {
     themeKey = { violet=true, ember=true, tide=true },
     font = { ysabeau = true, ysabeauBold = true, alegreyaSans = true, alegreyaSansBold = true, alegreya = true, alegreyaBold = true },

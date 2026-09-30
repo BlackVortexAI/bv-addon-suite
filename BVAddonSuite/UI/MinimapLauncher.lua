@@ -11,10 +11,15 @@ function Launcher:Store()
     data.hide=data.hide==true; data.lock=data.lock==true
     return data
 end
+-- Left-click opens AuraStudio directly only when no other module is loaded.
+function Launcher:StudioOnly()
+    for id in pairs(ns.Modules.records) do if id~="aura_studio" then return false end end
+    return true
+end
 function Launcher:Click(button)
     if button~="LeftButton" and button~="RightButton" then return end
     local studio=ns.AuraStudio
-    local standalone=studio and not ns.Modules.records.experience_bar and not ns.Modules.records.reputation_bar
+    local standalone=studio and Launcher:StudioOnly()
     if studio and (button=="RightButton" or standalone) then studio:Open()
     else ns.Config:Toggle() end
 end
@@ -34,7 +39,7 @@ function Launcher:Initialize()
     self.object.OnClick=function(_,button) ns:Call("minimap",function() self:Click(button) end) end
     self.object.OnEnter=function(button)
         local studio=ns.AuraStudio
-        local standalone=studio and not ns.Modules.records.experience_bar and not ns.Modules.records.reputation_bar
+        local standalone=studio and Launcher:StudioOnly()
         UI:ShowTooltip(button,"BV Addon Suite",(standalone and "Left-click: AuraStudio" or "Left-click: Addon Suite")..
             (studio and "\nRight-click: AuraStudio" or "\nRight-click: Addon Suite")..
             (self:Store().lock and "\nPosition locked (change in Settings)" or "\nDrag: move around minimap").."\n/bv minimap show | hide | reset")

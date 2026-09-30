@@ -169,6 +169,12 @@ end
 function V.Error(value)
     return not V.IsSecret(value) and type(value)=="string" and value or "Operation failed (secret or opaque error)"
 end
+-- User-facing text: without the "…/File.lua:123: " prefix Lua adds to errors.
+function V.UserError(value)
+    local text=V.Error(value)
+    text=text:gsub("^[^\n]-%.lua:%d+: ","")
+    return (text:gsub("^%[string \".-\"%]:%d+: ",""))
+end
 -- Typed click payloads are opaque runtime snapshots, never graph or trace data.
 function V.ClickSchema(schema)
     if schema==nil then return true end
