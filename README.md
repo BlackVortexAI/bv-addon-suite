@@ -19,4 +19,13 @@ For AuraStudio alone, install the core and AuraStudio folders. For the full suit
 install all six. Do not add another enclosing directory around these folders.
 Preserve your existing SavedVariables when updating.
 
-Bundled third-party license notices are included with their respective libraries.
+## License
+
+Copyright (c) 2026 BlackVortexAI. All rights reserved.
+
+The addon is free to use. Modifications are allowed for private use only.
+Publishing or redistributing this addon or any part of it requires explicit
+permission. See [LICENSE](LICENSE) for the full terms.
+
+Bundled third-party libraries, fonts and symbols keep their own licenses; their
+notices are included with them.
