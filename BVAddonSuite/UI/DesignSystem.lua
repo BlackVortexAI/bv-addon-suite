@@ -304,7 +304,7 @@ function Factory:Tooltip(control,title,body)
     control.tooltipTitle,control.tooltipBody=title,body
     if control.tooltipHooked then return end
     control.tooltipHooked=true
-    control:HookScript("OnEnter",function()
+    local function show()
         if control.IsEnabled and not control:IsEnabled() then return end
         if not control.tooltipTitle and not control.tooltipBody and not control.labelTruncated then return end
         local full=control.fullLabel or ""
@@ -312,9 +312,18 @@ function Factory:Tooltip(control,title,body)
         local copy=control.tooltipBody or ""
         if full~="" and (full~=heading or control.labelTruncated) then copy=full..(copy~="" and "\n\n"..copy or "") end
         if heading~="" then self.owner:ShowTooltip(control,heading,copy) end
+    end
+    -- tooltipDelay (seconds): settings rows explain themselves only after the
+    -- pointer rests on them, so moving across a page stays quiet.
+    local function cancel() if control.tooltipTimer then control.tooltipTimer:Cancel();control.tooltipTimer=nil end end
+    control:HookScript("OnEnter",function()
+        cancel()
+        if control.tooltipDelay and C_Timer then
+            control.tooltipTimer=C_Timer.NewTimer(control.tooltipDelay,function() control.tooltipTimer=nil;show() end)
+        else show() end
     end)
-    control:HookScript("OnLeave",function() self.owner:HideTooltip() end)
-    control:HookScript("OnHide",function() self.owner:HideTooltip() end)
+    control:HookScript("OnLeave",function() cancel();self.owner:HideTooltip() end)
+    control:HookScript("OnHide",function() cancel();self.owner:HideTooltip() end)
 end
 function Factory:Button(parent,text,width,callback,kind)
     local button=CreateFrame("Button",nil,parent); M.Size(button,width or 112,32)

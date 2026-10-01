@@ -1,4 +1,23 @@
 local _,ns=...
+-- Explanations per setting key; {bar, text field} where a key exists in both.
+local HELP={
+    texture="Status bar texture of the fill. \"Inherit\" uses the texture from Global Settings.",
+    color={"Color of the filled part of the bar.","Text color of this field."},
+    background="Color of the empty part and of the dividers between segments.",
+    showRested="Shows rested experience as a lighter section after the fill.",
+    restedColor="Color of the rested section.",
+    hideInactive="Hides the bar when there is nothing to show, for example at the level cap or without a watched faction.",
+    template="Text of this field. Variables in braces are replaced; hover for the list.",
+    font="Font of this field. \"Inherit\" uses the font from Global Settings.",
+    size="Font size of this field.",
+    enabled="Shows or hides this text field.",
+    anchor="Point of the text that is attached to the bar.",
+    relative="Point on the bar the text is attached to.",
+    align="Alignment of the text inside its width.",
+    width="Width available for the text; longer text is cut off.",
+    x="Horizontal shift from the anchor point.",
+    y="Vertical shift from the anchor point.",
+}
 local UI=ns.UI
 local D=ns.DesignSystem.Metrics
 local Editor={pages={}}
@@ -34,7 +53,8 @@ function Editor:Build(parent,kind)
         if ns.Config.window then ns.Config:Layout() end
     end
     local head=UI:SettingsGrid(p); p.head=head
-    p.enabled=head:Row("Module enabled",UI:Switch(head,false,function(value) ns.Modules:SetEnabled(kind.."_bar",value); changed() end))
+    p.enabled=head:Row("Module enabled",UI:Switch(head,false,function(value) ns.Modules:SetEnabled(kind.."_bar",value); changed() end),
+        {help="Shows this bar. Turning it off hides the bar and gives the area back to Blizzard's own bar."})
     local layoutButton=head:Row("Position & size",UI:Button(head,"Open Layout Editor",170,function() ns.LayoutEditor:Open("bv:"..kind) end),
         {help="Arrange, resize and link elements together in the shared Layout Editor."})
     local pages={}
@@ -73,14 +93,16 @@ function Editor:Build(parent,kind)
         elseif mode=="choice" and key=="texture" then control:SetOptionsProvider(function()return ns.Media:BarOptions(true)end) end
         p.controls[#p.controls+1]={widget=control,key=key,field=isField}
         p.inputs[isField and "field" or "bar"][key]=control
-        return grid:Row(title,control,{help=help,width=width,wide=mode=="text" or nil})
+        local text=HELP[key]
+        if type(text)=="table" then text=text[isField and 2 or 1] end
+        return grid:Row(title,control,{help=help or text,width=width,wide=mode=="text" or nil})
     end
     local a=UI:SettingsGrid(pages.appearance); p.appearanceGrid=a
     a:Section("surface","Surface")
     field(a,"Texture","texture",false,"choice",220,ns.Media:BarOptions(true))
     field(a,"Fill","color",false,"color",150)
     field(a,"Background / dividers","background",false,"color",150)
-    p.barSample=a:Row("Preview",UI:StatusBar(a,220,12),{width=220})
+    p.barSample=a:Row("Preview",UI:StatusBar(a,220,12),{width=220,help="How the bar looks with the current texture and colors."})
     UI.styled[p.barSample]=nil
     a:Section("shape","Segmentation & opacity")
     field(a,"Segments","segments",false,"number",90,1,40,"1 = continuous bar.")

@@ -3,7 +3,7 @@
 ## Notes: Skinned, movable micro menu with own symbols, order and mouseover. Requires BV Core.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.8.88
+## Version: 0.8.89
 ## Dependencies: BVAddonSuite
 
 MicroMenu.lua

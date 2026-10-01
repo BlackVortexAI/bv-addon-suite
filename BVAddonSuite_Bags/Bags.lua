@@ -1,10 +1,11 @@
 local package=...
 local ns=BVAddonSuiteCore
-if not ns or not ns.RequireRelease then
-    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BVAddonSuite Core 0.8.88. Update all BV packages together; saved data is preserved.") end
+if not ns or not ns.RequireCore then
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.89 or newer. Update Core; saved data is preserved.") end
     return
 end
-if not ns:RequireRelease(package,"0.8.88") then return end
+-- Own version, oldest compatible Core, Core interface generation.
+if not ns:RequireCore(package,"0.8.89","0.8.89",1) then return end
 local N=ns.NativeButtons
 
 -- Blizzard's bag buttons, backpack last (it sits at the right end natively).
@@ -99,8 +100,10 @@ ns.Config:RegisterPage("bags",{title="Bag Bar",description="Skinned bag slots an
                 p.collapsed=p:Row("One button",ns.UI:Switch(g,false,function(value) cfg().collapsed=value;changed() end),
                     "Click opens all bags; the bag slots appear on hover.")
                 p.flyout=p:Row("Bag slots open",ns.UI:Dropdown(g,170,{{value="UP",label="Upwards"},{value="DOWN",label="Downwards"},
-                    {value="LEFT",label="To the left"},{value="RIGHT",label="To the right"}},function(value) cfg().flyout=value;changed() end))
-                p.count=p:Row("Show free slots",ns.UI:Switch(g,true,function(value) cfg().showCount=value;changed() end))
+                    {value="LEFT",label="To the left"},{value="RIGHT",label="To the right"}},function(value) cfg().flyout=value;changed() end),
+                    "Direction in which the bag slots open from the single button.")
+                p.count=p:Row("Show free slots",ns.UI:Switch(g,true,function(value) cfg().showCount=value;changed() end),
+                    "Number of free bag slots on the single button.")
                 function p:RefreshExtra(c) self.collapsed:SetValue(c.collapsed);self.flyout:SetValue(c.flyout);self.count:SetValue(c.showCount) end
             end)
         end

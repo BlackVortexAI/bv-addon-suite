@@ -1,10 +1,11 @@
 local package,L=...
 local ns=BVAddonSuiteCore
-if not ns or not ns.RequireRelease then
-    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BVAddonSuite Core 0.8.88. Update all BV packages together; saved data is preserved.") end
+if not ns or not ns.RequireCore then
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.89 or newer. Update Core; saved data is preserved.") end
     return
 end
-if not ns:RequireRelease(package,"0.8.88") then return end
+-- Own version, oldest compatible Core, Core interface generation.
+if not ns:RequireCore(package,"0.8.89","0.8.89",1) then return end
 -- Shared state of the loot package. Files below fill L (package-private table):
 -- Rolls (data), RollFrame/Monitor/Results (views), Master (window), Sim.
 L.ns=ns

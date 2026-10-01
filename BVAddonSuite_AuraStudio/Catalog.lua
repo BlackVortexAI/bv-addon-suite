@@ -1,11 +1,12 @@
 local package, A = ...
 local ns=BVAddonSuiteCore
-if not ns or not ns.RequireRelease then
+if not ns or not ns.RequireCore then
     A.blocked=true
-    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BVAddonSuite Core 0.8.88. Update all BV packages together; saved data is preserved.") end
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.89 or newer. Update Core; saved data is preserved.") end
     return
 end
-if not ns:RequireRelease(package,"0.8.88") then A.blocked=true; return end
+-- Own version, oldest compatible Core, Core interface generation.
+if not ns:RequireCore(package,"0.8.89","0.8.89",1) then A.blocked=true; return end
 A.G=ns.GraphModel
 local function port(label,t,default,wire,order) return {label=label,type=t,default=default,wire=wire,required=true,order=order} end
 local function logicDefinition(base,config)

@@ -10514,7 +10514,7 @@ A.NodeWikiData.availability["targettarget:threatLeadSituation:threatLeadSituatio
 A.NodeWikiData.availability["targettarget:threatPercentageOfLead:threatPercentageOfLead"]={["combat"]={["protected"]=true},["peace"]={["protected"]=true}}
 A.NodeWikiData.availability["targettarget:threatSituation:threatSituation"]={["combat"]={["unavailable"]=true},["peace"]={["unavailable"]=true}}
 A.NodeWikiData.availability["targettarget:treatAsPlayerForDisplay:treatAsPlayerForDisplay"]={["combat"]={["readable"]=true},["peace"]={["readable"]=true}}
-A.NodeWikiData.catalogVersion="0.8.88"
+A.NodeWikiData.catalogVersion="0.8.89"
 A.NodeWikiData.fields={}
 A.NodeWikiData.fields["unit.alternatePower"]={["key"]="alternatePower",["label"]="alternate Power",["queryId"]="alternatePower",["type"]="float"}
 A.NodeWikiData.fields["unit.alternatePowerMax"]={["key"]="alternatePowerMax",["label"]="alternate Power Max",["queryId"]="alternatePowerMax",["type"]="float"}

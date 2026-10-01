@@ -1,7 +1,20 @@
 # BV Addon Suite
 
-Installable addon files for BV Addon Suite, version **0.8.88**.
+Installable addon files for BV Addon Suite. Every module has its own version
+and states the oldest Core it works with.
 This development version is undergoing in-game acceptance testing.
+
+## Versions
+
+| Folder | Version |
+| --- | --- |
+| `BVAddonSuite` | 0.8.89 |
+| `BVAddonSuite_AuraStudio` | 0.8.89 |
+| `BVAddonSuite_Experience` | 0.8.89 |
+| `BVAddonSuite_Reputation` | 0.8.89 |
+| `BVAddonSuite_Bags` | 0.8.89 |
+| `BVAddonSuite_MicroMenu` | 0.8.89 |
+| `BVAddonSuite_Loot` | 0.8.89 |
 
 ## Installation
 
@@ -19,7 +32,8 @@ Copy the desired addon folders directly into your compatible WoW client's
 
 For AuraStudio alone, install the core and AuraStudio folders. For the full suite,
 install all seven. Do not add another enclosing directory around these folders.
-Preserve your existing SavedVariables when updating.
+Modules can be updated one by one; keep Core at least at the version a module
+requires. Preserve your existing SavedVariables when updating.
 
 ## License
 

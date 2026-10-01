@@ -5,7 +5,7 @@
 local _,ns=...
 local UI,Theme=ns.UI,ns.Theme
 local D=ns.DesignSystem.Metrics
-local G={ROW=32,HEADING=30,GAP=10,COLUMN_GAP=28,TWO_COLUMNS=620,CONTROL=26}
+local G={ROW=32,HEADING=30,GAP=10,COLUMN_GAP=28,TWO_COLUMNS=620,CONTROL=26,TOOLTIP_DELAY=.5}
 UI.SettingsMetrics=G
 
 -- Slider with its value to the right, on one line. Commits on release or wheel.
@@ -55,10 +55,14 @@ function UI:SettingsGrid(parent)
             if opts.help then
                 -- Hit area over the label so the explanation is reachable there too.
                 row.hit=CreateFrame("Frame",nil,self);row.hit:EnableMouse(true)
+                row.hit.tooltipDelay=G.TOOLTIP_DELAY
                 UI:AttachTooltip(row.hit,title,opts.help)
             end
         end
-        if opts.help and control and control.HookScript and not control.tooltipTitle then UI:AttachTooltip(control,title,opts.help) end
+        if opts.help and control and control.HookScript and not control.tooltipTitle then
+            control.tooltipDelay=G.TOOLTIP_DELAY
+            UI:AttachTooltip(control,title,opts.help)
+        end
         local kind=control and control.GetObjectType and control:GetObjectType()
         if not opts.fixedHeight and (kind=="Button" and not control.isSwitch or kind=="EditBox" and not control.multiline) then
             D.Height(control,G.CONTROL)

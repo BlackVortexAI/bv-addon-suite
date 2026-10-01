@@ -3,7 +3,7 @@
 ## Notes: Skinned, movable bag bar with an optional one-button mode. Requires BV Core.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.8.88
+## Version: 0.8.89
 ## Dependencies: BVAddonSuite
 
 Bags.lua

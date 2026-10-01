@@ -612,13 +612,15 @@ function Editor:Build()
     number("width","Width",0,5000,function(v)
         if L:Get(self.selected).widthTarget then self:Message("Unlink width before resizing."); self:Refresh(); return end
         self:Change({width=v})
-    end)
+    end,"Width of the element. Linked widths follow their target; unlink first to set it here.")
     number("height","Height",0,2000,function(v)
         if L:Get(self.selected).heightTarget then self:Message("Unlink height before resizing."); self:Refresh(); return end
         self:Change({height=v})
-    end)
-    number("x","Position X",-10000,10000,function(v) local r=L:Resolve(); L:Move(self.selected,v,r[self.selected].y) end)
-    number("y","Position Y",-10000,10000,function(v) local r=L:Resolve(); L:Move(self.selected,r[self.selected].x,v) end)
+    end,"Height of the element. Content-sized elements (\"Height (content)\") take it from their content.")
+    number("x","Position X",-10000,10000,function(v) local r=L:Resolve(); L:Move(self.selected,v,r[self.selected].y) end,
+        "Horizontal position of the element's center, relative to the screen center.")
+    number("y","Position Y",-10000,10000,function(v) local r=L:Resolve(); L:Move(self.selected,r[self.selected].x,v) end,
+        "Vertical position of the element's center, relative to the screen center.")
     grid:Section("links","Links")
     self.targetButtons={}
     for index,axis in ipairs({"width","height","position"}) do
@@ -645,7 +647,7 @@ function Editor:Build()
     number("offset","Along-side offset",-10000,10000,function(v) link("offset",v) end,"Shift along the chosen side.")
     self.linkHint=grid:Block(UI:Label(grid,"",11,"muted"),30)
     grid:Section("order","Draw order")
-    number("zIndex","Z index",-1000,1000,function(v)self:Change({zIndex=math.floor(v)})end)
+    number("zIndex","Z index",-1000,1000,function(v)self:Change({zIndex=math.floor(v)})end,"Higher values appear in front.")
     UI:AttachTooltip(self.controls.zIndex,"Draw order","Higher values appear in front. A template root orders the entire stack; child slots order only inside it. Equal values use stable layout IDs. Position anchors do not change.")
     self.zHint=grid:Block(UI:Label(grid,"",11,"muted"),16)
     self.message=grid:Block(UI:Label(grid,"",12,"accent"),30)

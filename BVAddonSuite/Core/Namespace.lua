@@ -1,7 +1,7 @@
 local addonName, ns = ...
 
 ns.name = addonName
-ns.version = "0.8.88"
+ns.version = "0.8.89"
 ns.errors = {}
 ns.ready = false
 -- Shared, versioned extension namespace for the dependent addon packages.
@@ -26,7 +26,23 @@ end
 function ns:Print(message,prefix)
     if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage((prefix==false and "" or "|cff20f0a0BV|r ") .. tostring(message)) end
 end
-function ns:RequireRelease(package,expected)
+-- Dotted numeric versions ("0.8.89" < "0.8.100"): -1, 0 or 1.
+function ns.CompareVersions(a,b)
+    local x,y={},{}
+    for part in tostring(a or ""):gmatch("%d+") do x[#x+1]=tonumber(part) end
+    for part in tostring(b or ""):gmatch("%d+") do y[#y+1]=tonumber(part) end
+    for i=1,math.max(#x,#y) do
+        local p,q=x[i] or 0,y[i] or 0
+        if p~=q then return p<q and -1 or 1 end
+    end
+    return 0
+end
+-- Packages are versioned on their own (since 0.8.89). A package loads when its
+-- files match its own TOC version, the Core files match the Core TOC, Core
+-- offers the interface generation the package was built for (api) and Core is
+-- at least `minimum`. Otherwise it stays off with one message; saved data is
+-- never touched.
+function ns:RequireCore(package,own,minimum,api)
     local query=C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata
     local function version(name)
         if type(query)~="function" then return end
@@ -34,12 +50,22 @@ function ns:RequireRelease(package,expected)
         if ok and type(value)=="string" then return value end
     end
     local core,feature=version(self.name),version(package)
-    if self.apiVersion==1 and expected==self.version and core==self.version and feature==expected then return true end
+    local problem
+    if core~=self.version then
+        problem="the Core files ("..tostring(self.version)..") do not match the installed Core ("..tostring(core or "missing").."). Reinstall BV Addon Suite - Core."
+    elseif feature~=own then
+        problem="its files ("..tostring(own)..") do not match its installed version ("..tostring(feature or "missing").."). Reinstall "..package.."."
+    elseif api~=self.apiVersion then
+        problem=(type(api)=="number" and api<self.apiVersion) and "it was made for an older Core. Update "..package.."."
+            or "it needs a newer BV Addon Suite - Core. Update Core."
+    elseif self.CompareVersions(self.version,minimum)<0 then
+        problem="it needs BV Addon Suite - Core "..tostring(minimum).." or newer (installed: "..tostring(self.version).."). Update Core."
+    end
+    if not problem then return true end
     self.releaseWarnings=self.releaseWarnings or {}
     if not self.releaseWarnings[package] then
         self.releaseWarnings[package]=true
-        self:Print(package.." disabled: release mismatch. Core="..tostring(core or "missing")..", "..package.."="..tostring(feature or "missing")..
-            "; required "..expected..". Update all BV packages together. Saved data is preserved.")
+        self:Print(package.." "..tostring(feature or own).." is off: "..problem.." Saved data is preserved.")
     end
     return false
 end
