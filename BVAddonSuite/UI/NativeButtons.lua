@@ -96,8 +96,11 @@ function N.Place(buttons,host,size,spacing,perLine,vertical)
     for i,button in ipairs(buttons) do
         local line,pos=math.floor((i-1)/perLine),(i-1)%perLine
         local col,row=pos,line;if vertical then col,row=line,pos end
+        local x,y=col*(size+spacing),-row*(size+spacing)
+        -- Remembered so an outside move can be undone at once (see bar:Watch).
+        button.bvPlaced={host,x,y}
         button:ClearAllPoints();button:SetSize(size,size)
-        button:SetPoint("TOPLEFT",host,"TOPLEFT",col*(size+spacing),-row*(size+spacing))
+        button:SetPoint("TOPLEFT",host,"TOPLEFT",x,y)
     end
 end
 
@@ -244,14 +247,25 @@ function N:Bar(def)
         for _,e in ipairs(def.entries(cfg)) do if not e.hidden and e.button:IsShown() then n=n+1 end end
         return math.max(1,n)
     end
-    function bar:Extent(cfg,size)
+    -- Room around the buttons for the solid bar background. The layout element
+    -- includes it, so smart alignment and snapping use the visible edge.
+    function bar:Pad(cfg)
+        return (cfg.barBackground and not cfg.collapsed) and math.max(2,cfg.spacing) or 0
+    end
+    -- Size of the buttons alone (the host frame).
+    function bar:Inner(cfg,size)
         local count=self:Count(cfg)
         return N.Extent(count,size or cfg.size,cfg.spacing,cfg.collapsed and 1 or cfg.perLine,cfg.vertical)
+    end
+    function bar:Extent(cfg,size)
+        local w,h=self:Inner(cfg,size)
+        local pad=self:Pad(cfg)
+        return w+2*pad,h+2*pad
     end
     -- The size option leads. Only while the Layout Editor runs does the dragged
     -- width set the size; saving the layout writes it back to the option.
     function bar:SizeFromWidth(width,cfg)
-        return N.SizeForWidth(width,self:Count(cfg),cfg.spacing,cfg.collapsed and 1 or cfg.perLine,cfg.vertical,16,64)
+        return N.SizeForWidth(width-2*self:Pad(cfg),self:Count(cfg),cfg.spacing,cfg.collapsed and 1 or cfg.perLine,cfg.vertical,16,64)
     end
     function bar:SizeFor(rect,cfg)
         if ns.Layout.draft then return self:SizeFromWidth(rect.width,cfg) end
@@ -389,11 +403,20 @@ function N:Bar(def)
         button:HookScript("OnEnter",function() if bar.active then bar:Hover(true) end end)
         button:HookScript("OnLeave",function() if bar.active then bar:Hover(false) end end)
         -- Blizzard re-anchors its buttons on its own occasions (bag updates while
-        -- looting), not only in the hooked Layout: any outside SetPoint puts the
-        -- button back into our arrangement on the next frame, otherwise it drifts
-        -- away from the bar background until the next full arrange.
+        -- looting), not only in the hooked Layout. An outside SetPoint is undone
+        -- right away, before the frame is drawn (like ElvUI); waiting for the
+        -- next frame showed the button jumping. A full arrange follows next frame.
         if hooksecurefunc then
-            hooksecurefunc(button,"SetPoint",function() if bar.active and not bar.arranging then bar:Queue() end end)
+            hooksecurefunc(button,"SetPoint",function(b)
+                if not bar.active or bar.arranging or b.bvSnapping then return end
+                local placed=b.bvPlaced
+                if placed and placed[1] and placed[1]:IsShown() then
+                    b.bvSnapping=true
+                    b:ClearAllPoints();b:SetPoint("TOPLEFT",placed[1],"TOPLEFT",placed[2],placed[3])
+                    b.bvSnapping=nil
+                end
+                bar:Queue()
+            end)
         end
     end
     function bar:Raise(entries)
@@ -455,7 +478,9 @@ function N:Bar(def)
                 local stored=ns.Layout:Store()[def.layout]
                 if stored and math.abs(stored.width-w)>.5 then self:SyncWidth() else self.synced=true end
             end
-            self.host:ClearAllPoints();self.host:SetPoint("CENTER",UIParent,"CENTER",rect.x,rect.y);self.host:SetSize(w,h)
+            -- The buttons sit centred in the element; the background fills the margin.
+            local iw,ih=self:Inner(cfg,size)
+            self.host:ClearAllPoints();self.host:SetPoint("CENTER",UIParent,"CENTER",rect.x,rect.y);self.host:SetSize(iw,ih)
             self.host:EnableMouse(cfg.fade)
             local entries=def.entries(cfg);self.entries=entries
             -- Reparented buttons sit above their old Blizzard bar: it stays where it
@@ -550,7 +575,7 @@ function N:Bar(def)
         local b=self.backdrop
         b:SetShown(cfg.barBackground and not cfg.collapsed)
         if not b:IsShown() then return end
-        local pad=math.max(2,cfg.spacing)
+        local pad=self:Pad(cfg)
         b:ClearAllPoints();b:SetPoint("TOPLEFT",self.host,"TOPLEFT",-pad,pad);b:SetPoint("BOTTOMRIGHT",self.host,"BOTTOMRIGHT",pad,-pad)
         if owner~=self.host then
             local level=visible[1]:GetFrameLevel()

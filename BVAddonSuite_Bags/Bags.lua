@@ -1,11 +1,11 @@
 local package=...
 local ns=BVAddonSuiteCore
 if not ns or not ns.RequireCore then
-    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.90 or newer. Update Core; saved data is preserved.") end
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.91 or newer. Update Core; saved data is preserved.") end
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.8.90","0.8.90",1) then return end
+if not ns:RequireCore(package,"0.8.91","0.8.91",1) then return end
 local N=ns.NativeButtons
 
 -- Blizzard's bag buttons, backpack last (it sits at the right end natively).
@@ -38,15 +38,11 @@ local function entries()
     end
     return out
 end
--- Blizzard writes the free slot count on the backpack only on its own bag
--- events; ask it once after taking the buttons over (empty until a loading
--- screen otherwise).
-local function refreshFreeSlots()
-    local backpack=MainMenuBarBackpackButton
-    if type(backpack)=="table" and type(backpack.UpdateFreeSlots)=="function" then pcall(backpack.UpdateFreeSlots,backpack)
-    elseif type(MainMenuBarBackpackButton_UpdateFreeSlots)=="function" then pcall(MainMenuBarBackpackButton_UpdateFreeSlots) end
-end
 local function freeSlots()
+    if type(CalculateTotalNumberOfFreeBagSlots)=="function" then
+        local ok,free=pcall(CalculateTotalNumberOfFreeBagSlots)
+        if ok and type(free)=="number" then return tostring(free) end
+    end
     local containers=C_Container
     if not containers or not containers.GetContainerNumFreeSlots then return "" end
     local free=0
@@ -56,8 +52,32 @@ local function freeSlots()
     end
     return tostring(free)
 end
+local Bags
+-- Free slot count on the backpack, written by the module itself like ElvUI
+-- does: Blizzard writes it only on its own occasions and here cleared it again
+-- after looting. "Show free slots" switches it; off gives the text back.
+local function countText()
+    local backpack=MainMenuBarBackpackButton
+    local text=type(backpack)=="table" and (backpack.Count or MainMenuBarBackpackButtonCount)
+    if type(text)=="table" and type(text.SetText)=="function" then return text end
+end
+local function backpackCount()
+    local text=countText()
+    if not text or not Bags or not Bags.active then return end
+    if Bags:Config().showCount then
+        local free=freeSlots()
+        text:SetText(free~="" and "("..free..")" or "");text:Show()
+    else text:Hide() end
+end
+local function blizzardCount()
+    local backpack=MainMenuBarBackpackButton
+    local text=countText()
+    if text then text:Show() end
+    if type(backpack)=="table" and type(backpack.UpdateFreeSlots)=="function" then pcall(backpack.UpdateFreeSlots,backpack)
+    elseif type(MainMenuBarBackpackButton_UpdateFreeSlots)=="function" then pcall(MainMenuBarBackpackButton_UpdateFreeSlots) end
+end
 
-local Bags=N:Bar({
+Bags=N:Bar({
     id="bag_bar",layout="bv:bags",label="Bag Bar",anchor="BOTTOMRIGHT",x=-8,y=48,
     defaults={enabled=false,skin="obsidian",shape="square",size=30,spacing=4,perLine=8,vertical=false,
         fade=false,fadeAlpha=.25,collapsed=false,flyout="UP",showCount=true},
@@ -78,11 +98,18 @@ local Bags=N:Bar({
             if ToggleAllBags then ToggleAllBags() elseif OpenAllBags then OpenAllBags() end
         end},
     events={"BAG_UPDATE_DELAYED"},
-    onEvent=function(bar) bar:UpdateText() end,
+    onEvent=function(bar) bar:UpdateText();backpackCount() end,
     install=function(bar)
         -- BagsBar:Layout re-anchors the buttons; lay them out again right after.
         if BagsBar and type(BagsBar.Layout)=="function" then
             hooksecurefunc(BagsBar,"Layout",function() if bar.active then bar:Arrange() end end)
+        end
+        -- Blizzard's own update would put its text back over ours.
+        local backpack=MainMenuBarBackpackButton
+        if type(backpack)=="table" and type(backpack.UpdateFreeSlots)=="function" then
+            hooksecurefunc(backpack,"UpdateFreeSlots",function() backpackCount() end)
+        elseif type(MainMenuBarBackpackButton_UpdateFreeSlots)=="function" then
+            hooksecurefunc("MainMenuBarBackpackButton_UpdateFreeSlots",function() backpackCount() end)
         end
     end,
     restore=function()
@@ -99,7 +126,8 @@ local function expandNative(context)
 end
 ns.Modules:Register({id="bag_bar",OnEnable=function(context)
     expandNative(context);Bags:Enable(context)
-    C_Timer.NewTimer(0,refreshFreeSlots)
+    context:Defer(blizzardCount)
+    C_Timer.NewTimer(0,backpackCount)
 end})
 local page
 ns.Config:RegisterPage("bags",{title="Bag Bar",description="Skinned bag slots anywhere on screen, or a single bag button.",
@@ -113,8 +141,8 @@ ns.Config:RegisterPage("bags",{title="Bag Bar",description="Skinned bag slots an
                 p.flyout=p:Row("Bag slots open",ns.UI:Dropdown(g,170,{{value="UP",label="Upwards"},{value="DOWN",label="Downwards"},
                     {value="LEFT",label="To the left"},{value="RIGHT",label="To the right"}},function(value) cfg().flyout=value;changed() end),
                     "Direction in which the bag slots open from the single button.")
-                p.count=p:Row("Show free slots",ns.UI:Switch(g,true,function(value) cfg().showCount=value;changed() end),
-                    "Number of free bag slots on the single button.")
+                p.count=p:Row("Show free slots",ns.UI:Switch(g,true,function(value) cfg().showCount=value;changed();backpackCount() end),
+                    "Number of free bag slots on the backpack and on the single button.")
                 function p:RefreshExtra(c) self.collapsed:SetValue(c.collapsed);self.flyout:SetValue(c.flyout);self.count:SetValue(c.showCount) end
             end)
         end
