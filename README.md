@@ -8,11 +8,11 @@ This development version is undergoing in-game acceptance testing.
 
 | Folder | Version |
 | --- | --- |
-| `BVAddonSuite` | 0.8.89 |
+| `BVAddonSuite` | 0.8.90 |
 | `BVAddonSuite_AuraStudio` | 0.8.89 |
 | `BVAddonSuite_Experience` | 0.8.89 |
 | `BVAddonSuite_Reputation` | 0.8.89 |
-| `BVAddonSuite_Bags` | 0.8.89 |
+| `BVAddonSuite_Bags` | 0.8.90 |
 | `BVAddonSuite_MicroMenu` | 0.8.89 |
 | `BVAddonSuite_Loot` | 0.8.89 |
 
@@ -33,6 +33,7 @@ Copy the desired addon folders directly into your compatible WoW client's
 For AuraStudio alone, install the core and AuraStudio folders. For the full suite,
 install all seven. Do not add another enclosing directory around these folders.
 Modules can be updated one by one; keep Core at least at the version a module
+requires. Modules can be updated one by one; keep Core at least at the version a module
 requires. Preserve your existing SavedVariables when updating.
 
 ## License

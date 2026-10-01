@@ -1,11 +1,11 @@
 local package=...
 local ns=BVAddonSuiteCore
 if not ns or not ns.RequireCore then
-    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.89 or newer. Update Core; saved data is preserved.") end
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.90 or newer. Update Core; saved data is preserved.") end
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.8.89","0.8.89",1) then return end
+if not ns:RequireCore(package,"0.8.90","0.8.90",1) then return end
 local N=ns.NativeButtons
 
 -- Blizzard's bag buttons, backpack last (it sits at the right end natively).
@@ -37,6 +37,14 @@ local function entries()
         out[#out+1]={key="BagBarExpandToggle",button=BagBarExpandToggle,hidden=true,plain=true}
     end
     return out
+end
+-- Blizzard writes the free slot count on the backpack only on its own bag
+-- events; ask it once after taking the buttons over (empty until a loading
+-- screen otherwise).
+local function refreshFreeSlots()
+    local backpack=MainMenuBarBackpackButton
+    if type(backpack)=="table" and type(backpack.UpdateFreeSlots)=="function" then pcall(backpack.UpdateFreeSlots,backpack)
+    elseif type(MainMenuBarBackpackButton_UpdateFreeSlots)=="function" then pcall(MainMenuBarBackpackButton_UpdateFreeSlots) end
 end
 local function freeSlots()
     local containers=C_Container
@@ -89,7 +97,10 @@ local function expandNative(context)
     toggle:Click()
     context:Defer(function() if slot:IsShown() then toggle:Click() end end)
 end
-ns.Modules:Register({id="bag_bar",OnEnable=function(context) expandNative(context);Bags:Enable(context) end})
+ns.Modules:Register({id="bag_bar",OnEnable=function(context)
+    expandNative(context);Bags:Enable(context)
+    C_Timer.NewTimer(0,refreshFreeSlots)
+end})
 local page
 ns.Config:RegisterPage("bags",{title="Bag Bar",description="Skinned bag slots anywhere on screen, or a single bag button.",
     build=function(parent)

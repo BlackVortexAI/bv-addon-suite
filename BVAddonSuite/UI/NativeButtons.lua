@@ -33,7 +33,7 @@ function N:Capture(button)
     local r=self.records[button];if r then return r end
     r={parent=button:GetParent(),width=button:GetWidth(),height=button:GetHeight(),points={},
         scale=button.GetScale and button:GetScale() or 1,alpha=button:GetAlpha(),
-        mouse=button.IsMouseEnabled and button:IsMouseEnabled()}
+        mouse=button.IsMouseEnabled and button:IsMouseEnabled(),level=button.GetFrameLevel and button:GetFrameLevel()}
     for i=1,(button.GetNumPoints and button:GetNumPoints() or 0) do r.points[i]={button:GetPoint(i)} end
     self.records[button]=r;return r
 end
@@ -42,6 +42,7 @@ function N:Restore(button)
     local r=self.records[button];if not r then return end
     self.records[button]=nil
     if button:GetParent()~=r.parent then button:SetParent(r.parent) end
+    if r.level and button.SetFrameLevel then button:SetFrameLevel(r.level) end
     button:ClearAllPoints()
     for _,p in ipairs(r.points) do button:SetPoint(unpack(p)) end
     if r.width>0 and r.height>0 then button:SetSize(r.width,r.height) end
@@ -387,6 +388,29 @@ function N:Bar(def)
         button:HookScript("OnHide",changed)
         button:HookScript("OnEnter",function() if bar.active then bar:Hover(true) end end)
         button:HookScript("OnLeave",function() if bar.active then bar:Hover(false) end end)
+        -- Blizzard re-anchors its buttons on its own occasions (bag updates while
+        -- looting), not only in the hooked Layout: any outside SetPoint puts the
+        -- button back into our arrangement on the next frame, otherwise it drifts
+        -- away from the bar background until the next full arrange.
+        if hooksecurefunc then
+            hooksecurefunc(button,"SetPoint",function() if bar.active and not bar.arranging then bar:Queue() end end)
+        end
+    end
+    function bar:Raise(entries)
+        local origin
+        for _,e in ipairs(entries) do
+            if not e.hidden and N:Usable(e.button) then
+                local r=N.records[e.button]
+                origin=r and r.parent or e.button:GetParent()
+                if origin and origin~=self.host and origin~=self.flyout and origin~=self.parking then break end
+                origin=nil
+            end
+        end
+        if not origin or not origin.GetFrameLevel then return end
+        local strata=origin.GetFrameStrata and origin:GetFrameStrata()
+        if strata then self.host:SetFrameStrata(strata) end
+        self.host:SetFrameLevel(math.max(self.host:GetFrameLevel(),origin:GetFrameLevel()+10))
+        self.raisedAbove=origin
     end
     function bar:Borrow(e,parent)
         local b=e.button
@@ -406,6 +430,7 @@ function N:Bar(def)
         else
             if b:GetParent()~=parent then b:SetParent(parent) end
             if b.SetScale then b:SetScale(1) end
+            if b.SetFrameLevel and parent.GetFrameLevel then b:SetFrameLevel(parent:GetFrameLevel()+1) end
         end
         b.bvNativeShown=b:IsShown()
         local wanted={}
@@ -433,6 +458,9 @@ function N:Bar(def)
             self.host:ClearAllPoints();self.host:SetPoint("CENTER",UIParent,"CENTER",rect.x,rect.y);self.host:SetSize(w,h)
             self.host:EnableMouse(cfg.fade)
             local entries=def.entries(cfg);self.entries=entries
+            -- Reparented buttons sit above their old Blizzard bar: it stays where it
+            -- was and can take the mouse (bag slots were not clickable there).
+            if def.reparent~=false then self:Raise(entries) end
             local visible={}
             local target=cfg.collapsed and self.flyout or self.host
             for _,e in ipairs(entries) do
