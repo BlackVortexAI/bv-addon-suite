@@ -1,7 +1,7 @@
 local _,ns=...
 local Commands={aliases={}}
 ns.Commands=Commands
-local known={exp="BVAddonSuite_Experience",xp="BVAddonSuite_Experience",experience="BVAddonSuite_Experience",rep="BVAddonSuite_Reputation",reputation="BVAddonSuite_Reputation",aura="BVAddonSuite_AuraStudio",aurastudio="BVAddonSuite_AuraStudio",bags="BVAddonSuite_Bags",micro="BVAddonSuite_MicroMenu"}
+local known={exp="BVAddonSuite_Experience",xp="BVAddonSuite_Experience",experience="BVAddonSuite_Experience",rep="BVAddonSuite_Reputation",reputation="BVAddonSuite_Reputation",aura="BVAddonSuite_AuraStudio",aurastudio="BVAddonSuite_AuraStudio",bags="BVAddonSuite_Bags",micro="BVAddonSuite_MicroMenu",loot="BVAddonSuite_Loot"}
 function Commands:Register(alias,id,page,open)
     assert(not self.aliases[alias],"Duplicate command alias")
     self.aliases[alias]={id=id,page=page,open=open}

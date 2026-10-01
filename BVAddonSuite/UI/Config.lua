@@ -11,7 +11,7 @@ local categoryOrder={"design","core","enhancements"}
 local categoryLabels={design="Design & Layout",core="Core Services",enhancements="UI Enhancements"}
 local pageCategory={layout="design",appearance="core",profiles="core",core="core"}
 local titles={appearance="Global Settings",profiles="Profiles",core="Core Status"}
-local icons={appearance="spark",profiles="grid",core="info",aurastudio="tree",experience="plus",reputation="check",bags="folder",micromenu="grid"}
+local icons={appearance="spark",profiles="grid",core="info",aurastudio="tree",experience="plus",reputation="check",bags="folder",micromenu="grid",loot="spark"}
 local descriptions={appearance="Shared typography, surfaces and preferences for every BV module.",profiles="Independent configurations for your characters and activities.",core="Client and module diagnostics, captured on demand."}
 function Config:RegisterPage(id,definition)
     assert(not titles[id],"Duplicate configuration page")

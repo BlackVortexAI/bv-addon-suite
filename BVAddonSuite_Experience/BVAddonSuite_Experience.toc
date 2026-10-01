@@ -3,7 +3,7 @@
 ## Notes: Experience bar, rested XP, pace and level-up estimates. Requires BV Core.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.8.79
+## Version: 0.8.88
 ## Dependencies: BVAddonSuite
 
 Experience.lua

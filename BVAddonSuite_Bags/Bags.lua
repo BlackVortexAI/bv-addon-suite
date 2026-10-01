@@ -1,10 +1,10 @@
 local package=...
 local ns=BVAddonSuiteCore
 if not ns or not ns.RequireRelease then
-    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BVAddonSuite Core 0.8.79. Update all BV packages together; saved data is preserved.") end
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BVAddonSuite Core 0.8.88. Update all BV packages together; saved data is preserved.") end
     return
 end
-if not ns:RequireRelease(package,"0.8.79") then return end
+if not ns:RequireRelease(package,"0.8.88") then return end
 local N=ns.NativeButtons
 
 -- Blizzard's bag buttons, backpack last (it sits at the right end natively).

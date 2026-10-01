@@ -1,10 +1,10 @@
 local package=...
 local ns=BVAddonSuiteCore
 if not ns or not ns.RequireRelease then
-    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BVAddonSuite Core 0.8.79. Update all BV packages together; saved data is preserved.") end
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BVAddonSuite Core 0.8.88. Update all BV packages together; saved data is preserved.") end
     return
 end
-if not ns:RequireRelease(package,"0.8.79") then return end
+if not ns:RequireRelease(package,"0.8.88") then return end
 local Data,number=ns.ProgressData,ns.ProgressModel.Number
 local field=ns.ProgressOptions.Field
 function Data:Experience()

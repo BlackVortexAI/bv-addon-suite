@@ -1,6 +1,6 @@
 # BV Addon Suite
 
-Installable addon files for BV Addon Suite, version **0.8.79**.
+Installable addon files for BV Addon Suite, version **0.8.88**.
 This development version is undergoing in-game acceptance testing.
 
 ## Installation
@@ -14,9 +14,11 @@ Copy the desired addon folders directly into your compatible WoW client's
 - `BVAddonSuite_Reputation`: optional reputation module.
 - `BVAddonSuite_Bags`: optional bag bar module (disabled by default).
 - `BVAddonSuite_MicroMenu`: optional micro menu module (disabled by default).
+- `BVAddonSuite_Loot`: optional loot module: roll bars, loot monitor, roll results
+  and master loot window with roll requests (disabled by default, `/bv loot`).
 
 For AuraStudio alone, install the core and AuraStudio folders. For the full suite,
-install all six. Do not add another enclosing directory around these folders.
+install all seven. Do not add another enclosing directory around these folders.
 Preserve your existing SavedVariables when updating.
 
 ## License
