@@ -1,0 +1,17 @@
+## Interface: 16001
+## Title: BV Addon Suite - Combat Text
+## Notes: Floating combat text with own styles, anchors, nameplates and animations. Requires BV Core.
+## Author: BV
+## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
+## Version: 0.6.0
+## Dependencies: BVAddonSuite
+## SavedVariables: BVCombatTextDB
+
+CombatText.lua
+Format.lua
+Blizzard.lua
+Attribution.lua
+Sources.lua
+UI\Animation.lua
+UI\Display.lua
+Options.lua
