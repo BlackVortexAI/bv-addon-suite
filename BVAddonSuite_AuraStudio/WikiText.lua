@@ -53,9 +53,9 @@ A.WikiText={nodes={
         advanced="Operations: create, read, set, add, remove, clear, count, contains and sort (by insertion order, key, value or timestamp). Up to 64 entries, positions start at 1. Each change produces a new Dictionary. A Dictionary cannot be put into Memory.",
     },
     ["aura"]={
-        summary="Watches one buff or debuff on yourself and tells you whether it is there, how many stacks it has and how long it lasts.",
+        summary="Watches one buff or debuff on yourself and tells you whether it is there, how many stacks it has and how long it lasts. In combat it only works for auras tracked in the Cooldown Manager.",
         use="Example: show a warning icon when your armor buff is missing, or display the time left on your shield.",
-        advanced="Some aura data can be secret in combat. The Estimate outputs keep a best guess from earlier readable data; they are estimates, not recovered secret values. Icon media always shows the spell's artwork, even when the aura is missing.",
+        advanced="In combat, WoW Forever protects aura data: a buff or debuff only keeps updating in combat when it is tracked in Blizzard's Cooldown Manager (as a tracked buff or bar). Some aura data can be secret in combat. The Estimate outputs keep a best guess from earlier readable data; they are estimates, not recovered secret values. Icon media always shows the spell's artwork, even when the aura is missing.",
     },
     ["bar_duration"]={
         summary="Lets a bar run on the game's own timer, so it fills or empties smoothly by itself.",
@@ -753,9 +753,9 @@ A.WikiText={nodes={
         advanced="WoW sets target and focus only from your own click or key press on the button, never automatically from a trigger or timer, and the button cannot change in combat. To target by name use a Macro Action with /target Name or /focus Name. Focus needs game support. Target clicks follow the game's cursor spell behaviour.",
     },
     ["unit_aura"]={
-        summary="Watches one buff or debuff on a unit you choose (player, target, focus, party or raid slot and more).",
+        summary="Watches one buff or debuff on a unit you choose (player, target, focus, party or raid slot and more). In combat it only works for auras tracked in the Cooldown Manager.",
         use="Example: show your debuff on the target with its remaining time.",
-        advanced="Real Time drives a native countdown. Estimates are best guesses when data is secret, not recovered values.",
+        advanced="In combat, WoW Forever protects aura data: a buff or debuff only keeps updating in combat when it is tracked in Blizzard's Cooldown Manager (as a tracked buff or bar). Real Time drives a native countdown. Estimates are best guesses when data is secret, not recovered values.",
     },
     ["unit_cast"]={
         summary="Watches casting and channelling of a unit you choose.",

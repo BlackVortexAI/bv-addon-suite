@@ -3,7 +3,7 @@
 ## Notes: In-game node editor, typed graphs and isolated aura tests. Requires BV Core.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.8.89
+## Version: 0.8.90
 ## Dependencies: BVAddonSuite
 ## SavedVariables: BVSpellIndexTestDB, BVSpellIndexTestMetrics, BVUnitDiagnosticsDB
 
