@@ -8,14 +8,14 @@ This development version is undergoing in-game acceptance testing.
 
 | Folder | Version |
 | --- | --- |
-| `BVAddonSuite` | 0.8.91 |
+| `BVAddonSuite` | 0.8.93 |
 | `BVAddonSuite_AuraStudio` | 0.8.90 |
 | `BVAddonSuite_Experience` | 0.8.89 |
 | `BVAddonSuite_Reputation` | 0.8.89 |
 | `BVAddonSuite_Bags` | 0.8.91 |
 | `BVAddonSuite_MicroMenu` | 0.8.89 |
 | `BVAddonSuite_Loot` | 0.8.89 |
-| `BVAddonSuite_CombatText` | 0.6.0 |
+| `BVAddonSuite_CombatText` | 0.6.1 |
 
 ## Installation
 

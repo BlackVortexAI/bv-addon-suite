@@ -3,7 +3,7 @@
 ## Notes: Floating combat text with own styles, anchors, nameplates and animations. Requires BV Core.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.6.0
+## Version: 0.6.1
 ## Dependencies: BVAddonSuite
 ## SavedVariables: BVCombatTextDB
 

@@ -124,3 +124,42 @@ function Settings:Module(id)
     if type(modules[id]) ~= "table" then modules[id] = {} end
     return modules[id]
 end
+
+-- Client settings (CVars) a package turned off, with the values found before.
+-- The client keeps CVars after an addon is disabled or deleted, so the package
+-- reports them here; at login Core gives them back for every package that did
+-- not load (GitHub issue 1: Blizzard's damage numbers stayed off). Only values
+-- still at "0", the value the package set, are given back.
+Settings.cvarClaims = {}
+function Settings:HoldCVars(owner, values)
+    local guard = type(self.db.cvarGuard) == "table" and self.db.cvarGuard or {}
+    local kept = {}
+    for name, value in pairs(type(values) == "table" and values or {}) do
+        if type(name) == "string" and type(value) == "string" then kept[name] = value end
+    end
+    guard[owner] = next(kept) and kept or nil
+    self.db.cvarGuard = next(guard) and guard or nil
+end
+-- A package that loaded handles its own values.
+function Settings:ClaimCVars(owner) self.cvarClaims[owner] = true end
+function Settings:RestoreUnclaimedCVars()
+    local guard = self.db.cvarGuard
+    if type(guard) ~= "table" then return end
+    local get = C_CVar and C_CVar.GetCVar or GetCVar
+    local set = C_CVar and C_CVar.SetCVar or SetCVar
+    for owner, values in pairs(guard) do
+        if not self.cvarClaims[owner] then
+            local restored = {}
+            for name, value in pairs(type(values) == "table" and values or {}) do
+                local ok, current = pcall(get, name)
+                if ok and current == "0" and value ~= "0" and pcall(set, name, value) then restored[#restored + 1] = name end
+            end
+            guard[owner] = nil
+            if #restored > 0 then
+                table.sort(restored)
+                ns:Print(tostring(owner) .. " is not loaded: restored the game settings it had turned off (" .. table.concat(restored, ", ") .. ").")
+            end
+        end
+    end
+    self.db.cvarGuard = next(guard) and guard or nil
+end

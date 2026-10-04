@@ -115,7 +115,7 @@ function Editor:Build(parent,kind)
     b:Section("visibility","Visibility")
     field(b,"Hide when inactive / at maximum","hideInactive",false,"toggle")
     field(b,"Hide native Blizzard artwork","hideBlizzard",false,"toggle",nil,nil,nil,
-        "Native XP hiding is not working reliably on the current test client. A fix is pending.")
+        "Hides Blizzard's own bar while this bar is shown (on by default). If Blizzard's bar still shows on your client, please report it.")
     local text=pages.text
     local list=UI:Panel(text,190,397,"panel",6,.5); p.fieldList=list
     local listTitle=at(UI:Label(list,"FIELDS",11,"accent",true),list,10,8)

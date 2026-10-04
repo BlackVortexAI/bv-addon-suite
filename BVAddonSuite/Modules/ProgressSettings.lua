@@ -33,6 +33,9 @@ function Options:Get(kind)
     config.background = hex(config.background, "100E12E6")
     config.restedColor = hex(config.restedColor, "8A78ED99")
     if type(config.hideInactive) ~= "boolean" then config.hideInactive = true end
+    -- 0.8.93: Blizzard's own bar is hidden by default (GitHub issue 1). Older
+    -- versions stored false for every profile without asking; switch once.
+    if config.hideBlizzardDefault ~= 2 then config.hideBlizzard, config.hideBlizzardDefault = true, 2 end
     config.hideBlizzard = config.hideBlizzard == true
     config.showRested = config.showRested ~= false
     if type(config.fields) ~= "table" or #config.fields == 0 then config.fields = self:DefaultFields(kind) end

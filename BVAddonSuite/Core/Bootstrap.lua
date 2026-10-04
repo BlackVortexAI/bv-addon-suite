@@ -1,9 +1,20 @@
 local addonName, ns = ...
 local lifecycle = {}
 
+local cvarGuard = {}
+local function restoreCVars()
+    if not (InCombatLockdown and InCombatLockdown()) then ns.Settings:RestoreUnclaimedCVars();return end
+    ns.Events:Subscribe(cvarGuard, "PLAYER_REGEN_ENABLED", function()
+        ns.Events:Release(cvarGuard)
+        ns.Settings:RestoreUnclaimedCVars()
+    end)
+end
+
 local function login()
     ns.Modules:Reconcile()
     ns.UI.MinimapLauncher:Initialize()
+    -- Every package has loaded by now; game settings of missing ones go back.
+    ns:Call("cvar-guard", restoreCVars)
 end
 
 local function initialize()
