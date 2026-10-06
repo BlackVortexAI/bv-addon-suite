@@ -104,7 +104,9 @@ end
 
 -- Chat lines from global strings; direct model calls where a string is missing.
 function Sim:Chat(key,fallback,...)
-    local fmt=_G[key]
+    -- The template without its loot history link (L.RollFormat): the line
+    -- then reads like the client's after the parser removed the link.
+    local fmt=L.RollFormat(_G[key])
     if type(fmt)=="string" then R:Loot(L.Format(fmt,...)) elseif fallback then fallback() end
 end
 function Sim:SystemRoll(name,value)

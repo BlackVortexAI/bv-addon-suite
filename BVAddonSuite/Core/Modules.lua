@@ -66,7 +66,10 @@ function Modules:SetEnabled(id, enabled)
         -- Explicit user retry is allowed after a fault; no automatic retry loop.
         if record.state == "faulted" then record.state = "disabled" end
         self:Start(record)
-    else self:Stop(record) end
+    else
+        self:Stop(record)
+        if ns.Tutorial then ns.Tutorial:Recheck() end
+    end
 end
 
 function Modules:Reconcile()

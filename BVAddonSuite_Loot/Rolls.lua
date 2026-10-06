@@ -132,9 +132,20 @@ function R:TimeLeft(roll)
     end
     return math.max(0,(roll.ends or now())-now())
 end
+-- With results as a tooltip at the roll bar (0.8.90) the bar is where the
+-- overview lives: bars always stay after the own choice, and a finished
+-- roll keeps its bar for resultsLinger seconds so the result can be read.
+function R:Tooltip()
+    local cfg=L:Config()
+    return cfg.results and cfg.resultsMode=="tooltip"
+end
 function R:Visible(roll)
-    if roll.done then return false end
-    local keep=L:Config().rollKeep
+    local tooltip=self:Tooltip()
+    if roll.done then
+        if not (tooltip and roll.finished and now()-roll.finished<=L:Config().resultsLinger) then return false end
+        return roll.kind~="bv" or roll.target==true
+    end
+    local keep=L:Config().rollKeep or tooltip
     if roll.closed and not keep then return false end
     if roll.kind=="bv" then return roll.target==true and (roll.mine==nil or keep) end
     return true
@@ -148,6 +159,10 @@ function R:Finish(roll,reason)
         if top and top.choice~="pass" and top.value then roll.winner=top.name end
     end
     if roll.kind=="bv" and roll.owner==L.Me() and reason~="remote" then L.Comm:Send("E",roll.id,roll.winner or "") end
+    -- Tooltip mode: the bar goes once its linger time is over.
+    if self:Tooltip() then
+        roll.timer=C_Timer.NewTimer(L:Config().resultsLinger+.05,function() roll.timer=nil;R:Changed(roll) end)
+    end
     self:Changed(roll)
     L:Emit("RollFinished",roll)
     self:Prune()
@@ -272,12 +287,14 @@ function R:FindNative(link,name,stage)
 end
 function R:Loot(text,replay)
     if type(text)~="string" or L.Secret(text) or not text:find("|H",1,true) then return false end
+    -- Without the leading loot history link (modern clients), see L.RollFormat.
+    text=L.RollText(text)
     for _,row in ipairs(SELF_SELECTED) do
-        local ok,a=L.Match(_G[row[1]],text)
+        local ok,a=L.Match(L.RollFormat(_G[row[1]]),text)
         if ok then local roll=self:FindNative(a[1],L.Me(),"choice");if roll then self:SetChoice(roll,L.Me(),row[2],nil,nil,"chat") end;return true end
     end
     for _,row in ipairs(ROLLED) do
-        local ok,a=L.Match(_G[row[1]],text)
+        local ok,a=L.Match(L.RollFormat(_G[row[1]]),text)
         if ok then
             local name=who(a[3])
             local roll=self:FindNative(a[2],name,"value")
@@ -286,7 +303,7 @@ function R:Loot(text,replay)
         end
     end
     for _,row in ipairs(SELECTED) do
-        local ok,a=L.Match(_G[row[1]],text)
+        local ok,a=L.Match(L.RollFormat(_G[row[1]]),text)
         if ok then
             local name=who(a[1])
             local roll=self:FindNative(a[2],name,"choice")
@@ -294,11 +311,11 @@ function R:Loot(text,replay)
             return true
         end
     end
-    local ok,a=L.Match(LOOT_ROLL_YOU_WON,text)
+    local ok,a=L.Match(L.RollFormat(LOOT_ROLL_YOU_WON),text)
     if ok then local roll=self:FindNative(a[1],nil,"won");if roll then roll.winner=L.Me();self:Finish(roll,"won") end;return true end
-    ok,a=L.Match(LOOT_ROLL_WON,text)
+    ok,a=L.Match(L.RollFormat(LOOT_ROLL_WON),text)
     if ok then local roll=self:FindNative(a[2],nil,"won");if roll then roll.winner=who(a[1]);self:Finish(roll,"won") end;return true end
-    ok,a=L.Match(LOOT_ROLL_ALL_PASSED,text)
+    ok,a=L.Match(L.RollFormat(LOOT_ROLL_ALL_PASSED),text)
     if ok then local roll=self:FindNative(a[1],nil,"won");if roll then roll.allPassed=true;self:Finish(roll,"passed") end;return true end
     return false
 end

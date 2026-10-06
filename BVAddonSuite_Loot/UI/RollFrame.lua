@@ -38,9 +38,18 @@ function F:Bar(index)
     if bar then return bar end
     bar=W.Owned(CreateFrame("Frame",nil,self.anchor.frame));bar:Hide();bar:EnableMouse(true)
     bar.bg=bar:CreateTexture(nil,"BACKGROUND");bar.bg:SetColorTexture(0,0,0,0)
-    -- The whole bar (name, timer) shows the item tooltip, not only the icon.
-    bar:SetScript("OnEnter",function(owner) F:ItemEnter(owner,bar.roll) end)
-    bar:SetScript("OnLeave",function(owner) W:HideTooltip(owner) end)
+    -- The whole bar (name, timer) shows the item tooltip, not only the icon;
+    -- with results as "tooltip" it shows the roll overview instead (the icon
+    -- keeps the item tooltip).
+    bar:SetScript("OnEnter",function(owner)
+        local cfg=L:Config()
+        if cfg.results and cfg.resultsMode=="tooltip" and bar.roll and not bar.roll.preview then
+            -- A failure says so in chat instead of showing nothing.
+            local ok,err=pcall(L.Results.ShowTip,L.Results,owner,bar.roll)
+            if not ok then L:Print("Roll overview failed: "..tostring(err)) end
+        else F:ItemEnter(owner,bar.roll) end
+    end)
+    bar:SetScript("OnLeave",function(owner) W:HideTooltip(owner);L.Results:HideTip(owner) end)
     bar.item=W:ItemIcon(bar,30)
     bar.item:SetScript("OnEnter",function(owner) F:ItemEnter(owner,bar.roll) end)
     bar.item:EnableMouse(true)
@@ -116,9 +125,9 @@ function F:Paint(bar,roll,cfg)
             button:Show()
         else button.option=nil;button:Hide() end
     end
-    local kind=cfg.rollInfo and L.ItemKind(info)
-    bar.bvKind:SetText(kind or "");bar.stats:SetText(cfg.rollInfo and roll.link and L.ItemStats(roll.link) or "")
-    bar.bvKind:SetShown(kind~=nil);bar.stats:SetShown(cfg.rollInfo)
+    local kind=cfg.rollKind and L.ItemKind(info) or nil
+    bar.bvKind:SetText(kind or "");bar.stats:SetText(cfg.rollStats and roll.link and L.ItemStats(roll.link) or "")
+    bar.bvKind:SetShown(kind~=nil);bar.stats:SetShown(cfg.rollStats)
     self:Layout(bar,cfg)
     self:Tick(bar)
 end
@@ -144,6 +153,10 @@ function F:Sync()
         local bar=(roll or self.bars[index]) and self:Bar(index)
         if roll then self:Paint(bar,roll,cfg);bar:Show();items[#items+1]=bar
         elseif bar then bar.roll=nil;bar:Hide() end
+        -- The overview tooltip follows its bar: another roll or no bar any more.
+        if bar and L.Results.tipOwner==bar then
+            if bar.roll and bar:IsShown() then L.Results:ShowTip(bar,bar.roll) else L.Results:HideTip(bar) end
+        end
     end
     self.anchor:Arrange(items)
     self:Clock(#items>0)

@@ -36,61 +36,13 @@ function S:Values(entry)
 end
 local function call(f,...) if type(f)~="function" then return nil end;local ok,v=pcall(f,...);if ok and readable(v) then return v end end
 
--- Whose numbers (per content type). UNIT_COMBAT names no attacker, so "own"
--- can only mean "on enemies fighting you": you are on their threat list, they
--- target you, or they are your target. Group: the same for any group member.
--- Unreadable answers count as fighting (shown rather than lost).
-local function check(f,...)
-    if type(f)~="function" then return nil end
-    local ok,v=pcall(f,...)
-    if not ok or L.Secret(v) then return "unknown" end
-    return v
-end
-function S:Involved(unit,who)
-    -- Cast on within the last 10 seconds counts as fighting you.
-    if who=="player" and L.Attribution:Recent(unit) then return true end
-    local threat=check(UnitThreatSituation,who,unit)
-    if threat=="unknown" then return nil end
-    if threat~=nil then return true end
-    local targets=check(UnitIsUnit,unit.."target",who)
-    if targets=="unknown" then return nil end
-    if targets==true then return true end
-    if who=="player" and check(UnitIsUnit,unit,"target")==true then return true end
-    return false
-end
-function S:GroupUnits()
-    local list={}
-    local raid=check(IsInRaid)==true
-    local n=check(raid and GetNumGroupMembers or GetNumSubgroupMembers)
-    if type(n)~="number" then return list end
-    for i=1,math.min(n,40) do list[#list+1]=(raid and "raid" or "party")..i end
-    return list
-end
--- "mine": fights you; "group": fights you or the group (fighting the group but
--- not you is foreign); "all": everything, foreign when not fighting you.
-function S:Scope(unit)
-    local scope=L:Config().scope[L.ContentType()]
-    local mine=self:Involved(unit,"player")
-    if mine~=false then
-        if mine==nil then count("involvement unknown") end
-        return true,false
-    end
-    if scope=="mine" then count("skip: not fighting you");return false end
-    if scope=="group" then
-        local any=false
-        for _,member in ipairs(self:GroupUnits()) do
-            if self:Involved(unit,member)~=false then any=true;break end
-        end
-        if not any then count("skip: not fighting your group");return false end
-    end
-    return true,true
-end
-
 function S:Kind(unit)
     if type(unit)~="string" then return nil end
     if unit=="player" then return "player" end
     if unit:match("^nameplate%d+$") then return "plate" end
     if unit=="target" then
+        -- You as your target: the player event covers it.
+        if call(UnitIsUnit,"target","player")==true then return nil end
         -- Covered by its nameplate event when the target has one shown.
         if C_NamePlate and C_NamePlate.GetNamePlateForUnit and call(C_NamePlate.GetNamePlateForUnit,"target") then return nil end
         return "plate"
@@ -98,20 +50,29 @@ function S:Kind(unit)
     return nil
 end
 -- One UNIT_COMBAT event to a display entry (nil when nothing is shown).
--- enemy: overrides the hostility check (simulation).
-function S:Entry(unit,action,flagText,amount,school,enemy)
+-- enemy: overrides the hostility check (simulation). credit (Log.lua): nil
+-- when the Combat Log is not usable, "line"/"tick" for a line of yours,
+-- false for none. Who did a hit on an enemy is decided in Origin.lua; here
+-- only its answer is applied.
+function S:Entry(unit,action,flagText,amount,school,enemy,credit)
     local kind=self:Kind(unit)
     if not kind then count("skip: unit not used");return nil end
     if not readable(action) then count("skip: action secret");return nil end
-    if kind=="plate" and not enemy and call(UnitCanAttack,"player",unit)~=true then count("skip: not hostile");return nil end
-    local foreign=false
+    -- Units other than you: enemies (damage, avoidance) or friends (heals).
+    local friendly=kind=="plate" and not enemy and call(UnitCanAttack,"player",unit)~=true
+    if friendly and action~="HEAL" then count("skip: not hostile");return nil end
+    if kind=="plate" and not friendly and action=="HEAL" then count("skip: enemy heal");return nil end
+    local origin,show,petSpell="mine","full",nil
     if kind=="plate" and not enemy then
-        local show
-        show,foreign=self:Scope(unit)
-        if not show then return nil end
+        local evidence,relation
+        if friendly then origin,evidence,relation=L.Origin:OfHeal(unit,credit)
+        else origin,evidence,relation,petSpell=L.Origin:Of(unit,credit,F.School(school)) end
+        count("origin "..origin.." ("..evidence..(credit=="tick" and ", tick" or "")..")")
+        show=L.Origin:Show(origin,relation)
+        if not show then count("skip: "..origin..", "..relation);return nil end
     end
     local crit=readable(flagText) and flagText=="CRITICAL"
-    local entry={unit=unit,crit=crit,incoming=kind=="player",foreign=foreign}
+    local entry={unit=unit,crit=crit,incoming=kind=="player",origin=origin,foreign=show=="dim"}
     local cfg=L:Config()
     if not readable(amount) then count("amount secret") end
     if action=="WOUND" then
@@ -121,13 +82,15 @@ function S:Entry(unit,action,flagText,amount,school,enemy)
         local r,g,b=F.SchoolColor(school)
         entry.r,entry.g,entry.b=r,g,b
         entry.school=F.School(school)
-        if cfg.spellGuess and kind=="plate" and not entry.foreign then entry.spell=L.Attribution:Spell(unit,false,entry.school) end
+        if cfg.spellGuess and kind=="plate" and origin=="mine" then entry.spell=L.Attribution:Spell(unit,false,entry.school,credit=="tick" and "tick" or nil) end
+        -- Your pet's spell is evidence, not a guess: its icon and {spell} always.
+        if origin=="pet" then entry.spell=petSpell end
     elseif action=="HEAL" then
-        if kind~="player" then count("skip: enemy heal");return nil end
         if readable(amount) and (type(amount)~="number" or amount<=0) then count("skip: no amount");return nil end
-        entry.category="heal"
+        -- On you: incoming heal; on others: outgoing heal at their nameplate.
+        entry.category=kind=="player" and "heal" or "outheal"
         entry.number=F.Number(amount,cfg.numbers)
-        if cfg.spellGuess and cfg.iconHeals then entry.spell=L.Attribution:Spell("player",true) end
+        if cfg.spellGuess and cfg.iconHeals and origin=="mine" then entry.spell=L.Attribution:Spell(kind=="player" and "player" or unit,true) end
     elseif AVOID[action] then
         entry.category="miss"
         entry.word=AVOID[action]
@@ -144,12 +107,40 @@ end
 function S:Handle(unit,...)
     count("events")
     if type(unit)=="string" and not L.Secret(unit) then count("unit "..(unit:match("^(nameplate)%d+$") or unit)) end
+    -- One hit, two tokens: as a nameplate disappears (an enemy fleeing out of
+    -- range), "target" can repeat a nameplate's event in the same frame
+    -- (Florian's trace 2026-10-05). Same frame, action, amount and school:
+    -- the same hit. Secret values cannot be compared and are kept.
+    local action,_,amount,school=...
+    if readable(action) and readable(amount) and readable(school) then
+        local now=GetTime()
+        if type(unit)=="string" and unit:match("^nameplate%d+$") then
+            self.lastPlate={time=now,action=action,amount=amount,school=school}
+        elseif unit=="target" then
+            local p=self.lastPlate
+            if p and p.time==now and p.action==action and p.amount==amount and p.school==school then
+                count("skip: target repeats nameplate");return nil
+            end
+        end
+    end
+    -- Hits on enemies wait for the end of their frame while Combat Log lines
+    -- arrive (a tick's line comes right behind it).
+    if L.Log:Holds(unit,...) then
+        local action,flagText,amount,school=...
+        local label=string.format("%s %s s%s%s",unit,readable(amount) and tostring(amount) or "?",readable(school) and tostring(school) or "?",
+            readable(flagText) and flagText~="" and " "..flagText or "")
+        L.Log:Queue(function(credit) S:Process(unit,action,flagText,amount,school,nil,credit) end,label,unit,school)
+        return nil
+    end
+    return self:Process(unit,...)
+end
+function S:Process(unit,...)
     local ok,entry=pcall(self.Entry,self,unit,...)
     if not ok then count("error");self.lastError=tostring(entry);return nil end
     if not entry then return nil end
     local shown,item=pcall(L.Display.Show,L.Display,entry)
     if not shown then count("error");self.lastError=tostring(item);return nil end
-    count(item and ("shown "..entry.category..(item.plate and " (nameplate)" or "")..(entry.foreign and " foreign" or "")) or "skip: category off")
+    count(item and ("shown "..entry.category..(item.plate and " (nameplate)" or "")..(entry.foreign and " dimmed" or "")) or "skip: category off")
     return entry
 end
 function S:Report()
@@ -157,9 +148,10 @@ function S:Report()
     for key in pairs(self.stats) do keys[#keys+1]=key end
     table.sort(keys)
     local record=L.ns.Modules.records[L.ID]
-    L:Print("module "..record.state..", content "..L.ContentType()..", scope "..L:Config().scope[L.ContentType()]
+    L:Print("module "..record.state..", content "..L.ContentType()..", whose numbers "..L:Config().whose[L.ContentType()]
         ..", Blizzard at you "..(L:Config().hideBlizzardSelf and "hidden" or "shown")..", at enemies "..(L:Config().hideBlizzard and "hidden" or "shown")
         ..", texts on screen "..#L.Display.active..", nameplate CVar nameplateShowEnemies="..tostring(C_CVar and C_CVar.GetCVar and select(2,pcall(C_CVar.GetCVar,"nameplateShowEnemies"))))
+    L.Log:Report()
     if #keys==0 then L:Print("No UNIT_COMBAT event received yet.") end
     for _,key in ipairs(keys) do L:Print(key..": "..self.stats[key]) end
     if self.lastError then L:Print("last error: "..self.lastError) end

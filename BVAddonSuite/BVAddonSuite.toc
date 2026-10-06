@@ -3,7 +3,7 @@
 ## Notes: Shared UI, media, profiles and layout editor. Install feature addons separately.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.8.93
+## Version: 0.8.94
 ## OptionalDeps: Masque
 ## SavedVariables: BVAddonSuiteDB, BVSpellIndexDB, BVRecordingDB
 
@@ -25,6 +25,7 @@ Core\IconCatalog.lua
 Core\Settings.lua
 Core\Modules.lua
 Core\Commands.lua
+Core\Tutorial.lua
 Core\Media.lua
 Core\GraphValues.lua
 Core\PlayerChat.lua
@@ -86,6 +87,7 @@ UI\PlayerChat.lua
 UI\TransferDialog.lua
 UI\ActionEditor.lua
 UI\DiagnosticReport.lua
+UI\TutorialWindow.lua
 UI\PerformanceSampler.lua
 UI\MinimapLauncher.lua
 UI\ProgressBar.lua

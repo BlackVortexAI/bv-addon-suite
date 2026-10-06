@@ -139,8 +139,45 @@ function S:Relevant(roll)
     if roll.kind=="bv" then return roll.target==true or roll.owner==L.Me() end
     return #roll.names>0 or roll.winner~=nil or roll.allPassed==true
 end
+-- Mode "tooltip" (0.8.90): no cards; the same overview card as a tooltip at
+-- the mouse while it is over a roll bar (RollFrame), updated live. It
+-- follows the cursor with a short ticker that only runs while it is shown
+-- (this project allows no per-frame update scripts).
+local TIP_STEP,TIP_GAP=.03,16
+function S:PlaceTip()
+    local c=self.tip
+    if not (c and c.frame:IsShown()) then return end
+    local x,y=GetCursorPosition()
+    local scale=c.frame:GetEffectiveScale()
+    c.frame:ClearAllPoints()
+    c.frame:SetPoint("TOPLEFT",UIParent,"BOTTOMLEFT",x/scale+TIP_GAP,y/scale-TIP_GAP)
+end
+function S:ShowTip(owner,roll)
+    if not roll then return end
+    local c=self.tip
+    if not c then
+        c=self:Card(UIParent);c.tipCard=true
+        c.frame:EnableMouse(false);c.frame:SetFrameStrata("TOOLTIP");c.frame:SetClampedToScreen(true)
+        self.tip=c
+    end
+    c.roll,c.bvWidth=roll,L:Config().resultsWidth
+    self:Paint(c);c.close:Hide()
+    c.fader:Stop();c.frame:SetAlpha(1);c.frame:Show()
+    self.tipOwner=owner
+    self:PlaceTip()
+    if not self.tipTicker then self.tipTicker=C_Timer.NewTicker(TIP_STEP,function() S:PlaceTip() end) end
+end
+function S:HideTip(owner)
+    if not self.tip or owner and self.tipOwner~=owner then return end
+    self.tip.frame:Hide();self.tip.roll=nil;self.tipOwner=nil
+    if self.tipTicker then self.tipTicker:Cancel();self.tipTicker=nil end
+end
 function S:Add(roll,preview)
     if not self.anchor or not L:Config().results and not preview then return end
+    if L:Config().resultsMode=="tooltip" and not preview then
+        if self.tip and self.tip.roll==roll then self:Paint(self.tip);self.tip.close:Hide() end
+        return nil
+    end
     for _,c in ipairs(self.cards) do
         if c.roll==roll then
             self:Paint(c)
@@ -255,7 +292,7 @@ function S:Create()
     self.anchor=W:Anchor({layout="bv:lootresults",label="Loot Results",screen="TOPRIGHT",x=-260,y=-260,
         width=function() return L:Config().resultsWidth end,height=function() return HEADER+ROW+10 end,
         grow=function() return L:Config().resultsGrow end,spacing=function() return 6 end,
-        enabled=function() return L:Config().results end,
+        enabled=function() return L:Config().results and L:Config().resultsMode~="tooltip" end,
         resized=function(width)
             if ns.Layout.draft then return end
             L:Config().resultsWidth=math.floor(width+.5)
@@ -272,10 +309,11 @@ function S:Enable(context)
     end)
     -- A card appears with the first answer and updates live until the end.
     L:On("RollUpdated",self,function(roll)
+        if S.tip and S.tip.roll==roll then S:Paint(S.tip);S.tip.close:Hide() end
         for _,c in ipairs(S.cards) do if c.roll==roll then S:Paint(c);S.anchor:Arrange(S:Frames());return end end
         if not roll.done and #roll.names>0 and S:Relevant(roll) then S:Add(roll) end
     end)
-    context:Defer(function() L:Off(self);S:Clear() end)
+    context:Defer(function() L:Off(self);S:Clear();S:HideTip() end)
     W:Refresh()
 end
 -- The layout element exists from load on, so the Layout Editor knows it.

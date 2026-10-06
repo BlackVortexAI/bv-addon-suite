@@ -7,6 +7,7 @@ local UI,D=ns.UI,ns.DesignSystem.Metrics
 function L:Changed()
     if not self:Active() then return end
     self.Blizzard:Apply()
+    self.Log:Update()
 end
 
 -- Simulation: a short fight against the target (or the anchors without one).
@@ -37,6 +38,23 @@ function Sim:Run()
         end)
     end
 end
+-- Messages: {delay, category, core text, kind}.
+local MESSAGES={
+    {.1,"notice","+Combat","combat start"},{.9,"buff","+Power Word: Fortitude","gain"},{1.3,"power","+250 Mana","power"},
+    {1.6,"debuff","+Curse of Weakness","gain"},{2.2,"notice","Overpower!","proc"},{2.6,"buff","-Power Word: Fortitude","fade"},
+    {2.9,"notice","Stormwind +25","reputation"},{3.2,"notice","-Combat","combat end"},
+}
+local runMessages=Sim.Run
+function Sim:Run()
+    runMessages(self)
+    if not L:Active() then return end
+    local serial=self.serial
+    for _,step in ipairs(MESSAGES) do
+        C_Timer.NewTimer(step[1],function()
+            if serial==self.serial and L:Active() then L.Notices:Show(step[2],step[3],step[4]) end
+        end)
+    end
+end
 function Sim:Stop() self.serial=(self.serial or 0)+1 end
 
 -- Settings page -----------------------------------------------------------------------
@@ -52,18 +70,33 @@ for i=1,L.CUSTOM_COUNT do CUSTOMS[i]={value=i,label="Custom "..i} end
 local MIRRORS={{value="none",label="As designed"},{value="x",label="Mirrored sideways"},{value="y",label="Upside down"},{value="xy",label="Both"}}
 local EASES={{value="NONE",label="Linear"},{value="IN",label="Ease in (slow start)"},{value="OUT",label="Ease out (slow end)"},{value="IN_OUT",label="Ease in and out"}}
 local POSITIONS={{value="nameplate",label="At the nameplate"},{value="outgoing",label="Outgoing anchor"},
-    {value="incoming",label="Incoming anchor"},{value="auto",label="Where it happened"}}
-local SCOPES={{value="mine",label="Fighting me"},{value="group",label="Fighting my group"},{value="all",label="All enemies"}}
-local SCOPE_TEXT={world={"Open world","Outside instances."},pvp={"Battlegrounds & arenas","Against players: enemies targeting you or your group, or your target."},
+    {value="incoming",label="Incoming anchor"},{value="notice",label="Notification anchor"},{value="auto",label="Where it happened"}}
+local PETS={{value="mine",label="As mine"},{value="dimmed",label="Dimmed"},{value="hidden",label="Hidden"}}
+local SCOPES={{value="mine",label="Only mine"},{value="dimmed",label="Mine, others dimmed"},{value="all",label="All, full color"}}
+local SCOPE_TEXT={world={"Open world","Outside instances."},pvp={"Battlegrounds & arenas","Against players."},
     dungeon={"Dungeons","Five-player dungeons and scenarios."},raid={"Raids","Raid instances."}}
-local SCOPE_NOTE=" The game does not say who hit an enemy: \"Fighting me\" shows all numbers on enemies that fight you (threat list or target), including those of others."
+local SCOPE_NOTE=" \"Only mine\": your hits. \"Mine, others dimmed\": also hits of others on enemies fighting you or your group (pet, group members, Thorns), in the color and opacity below. \"All, full color\": every number on enemies. Which hits are yours: with the Combat Log set up (below) the game's own report of your actions, otherwise every hit on an enemy that fights you counts as yours."
 local AFFIX_NOTE=" Placeholders: {school} damage type, {spell} your spell (experimental guess, see the Experimental tab), {name} the unit that was hit. A field whose placeholder has no value is left out. The game does not name the attacker. At most 24 characters."
 local ICONS={{value="left",label="Left of the number"},{value="right",label="Right of the number"},{value="off",label="Off"}}
 local CATEGORY_TEXT={
     outgoing={"Outgoing damage","Damage enemies take. The event names no attacker, so in a group this includes the damage of others."},
     incoming={"Incoming damage","Damage you take."},
     heal={"Incoming heals","Heals you receive."},
+    outheal={"Outgoing heals","Heals on others: at their nameplate (friendly nameplates must be shown) or your outgoing anchor. Whose heals: as set under \"Whose numbers\"."},
     miss={"Misses and avoidance","Miss, dodge, parry and similar: yours at the enemy, the enemy's at you."},
+    buff={"Buffs on you","Buffs you gain (+Name) and lose (-Name), as the game reports them for its own combat text."},
+    debuff={"Debuffs on you","Debuffs you gain (+Name) and lose (-Name)."},
+    buffgiven={"Buffs you give","Your buffs on your friendly target, at its nameplate (or your outgoing anchor). Shown when the buff landed: out of combat Combat Text checks the target's buffs. In combat buffs cannot be read; there only spells already seen landing as a buff are shown. Off by default."},
+    power={"Power gains","Mana, rage, energy and other power you gain from spells and effects, e.g. +250 Mana."},
+    notice={"Notifications","Combat start and end, reputation, honor and procs such as Overpower!"},
+}
+local SWITCH_TEXT={
+    gains={"Show gained","Shows the aura when you get it."},
+    fades={"Show faded","Shows the aura when it ends."},
+    combat={"Combat start and end","+Combat and -Combat when you enter and leave combat."},
+    reputation={"Reputation","Faction name and the reputation you gained or lost."},
+    honor={"Honor","Honor you gain."},
+    procs={"Procs","Abilities that become usable, e.g. Overpower! or Revenge!"},
 }
 local page
 local function build(parent)
@@ -90,23 +123,54 @@ local function build(parent)
     row("numbers","Numbers",UI:Dropdown(g,190,NUMBERS,set("numbers")),"How amounts are written.")
     row("outline","Outline",UI:Dropdown(g,190,OUTLINES,set("outline")),"Outline of all combat texts.")
     g:Row("Position",UI:Button(g,"Open Layout Editor",170,function() ns.LayoutEditor:Open("bv:combattext_outgoing") end),
-        {help="Outgoing and incoming anchors are movable elements. Texts start in the middle of the anchor."})
+        {help="Outgoing, incoming and notification anchors are movable elements. Texts start in the middle of the anchor."})
+    if ns.Tutorial and ns.Tutorial.Open then
+        g:Row("Guide",UI:Button(g,"Show guide",170,function() ns.Tutorial:Open(L.GUIDE_ID) end),
+            {help="Step by step: what Combat Text needs (Combat Log, its filter) and what the main settings do. Shown once when the module is first turned on."})
+    end
     g:Row("Simulation",UI:Button(g,"Test combat text",170,function() Sim:Run() end),
-        {help="A short fake fight: hits, crits, heals and avoidance. Uses your target's nameplate when there is one."})
+        {help="A short fake fight: hits, crits, heals, avoidance, auras, power and notifications. Uses your target's nameplate when there is one."})
     g:Section("scope","Whose numbers")
     local scopeControls={}
     for _,kind in ipairs(L.CONTENT_TYPES) do
         local text=SCOPE_TEXT[kind]
-        scopeControls[kind]=g:Row(text[1],UI:Dropdown(g,190,SCOPES,function(value) cfg().scope[kind]=value end),{help=text[2]..SCOPE_NOTE})
+        scopeControls[kind]=g:Row(text[1],UI:Dropdown(g,190,SCOPES,function(value) cfg().whose[kind]=value end),{help=text[2]..SCOPE_NOTE})
     end
-    row("foreignTint","Other values in own color",UI:Switch(g,true,set("foreignTint")),
-        "Numbers on enemies that do not fight you (with \"Fighting my group\" or \"All enemies\") use the color below.")
-    row("foreignColor","Color of other values",UI:ColorInput(g,150,set("foreignColor")),"Used when \"Other values in own color\" is on.",{width=150})
-    row("foreignAlpha","Opacity of other values",UI:InlineSlider(g,190,.1,1,.05,"x%.2f",set("foreignAlpha")),
-        "Numbers on enemies that do not fight you are drawn with this opacity (1 = solid).")
+    row("pet","Your pet",UI:Dropdown(g,190,PETS,set("pet")),
+        "Hits Combat Text knows as your pet's: a spell your pet just cast whose damage type matches the hit (e.g. the imp's Firebolt), with that spell's icon. As mine: like your hits. Dimmed: in the color and opacity of others. Hidden: not shown. Your pet's melee is not told apart yet.")
+    row("foreignTint","Others in own color",UI:Switch(g,true,set("foreignTint")),
+        "With \"Mine, others dimmed\": hits of others use the color below instead of their damage type color.")
+    row("foreignColor","Color of others",UI:ColorInput(g,150,set("foreignColor")),"Used when \"Others in own color\" is on.",{width=150})
+    row("foreignAlpha","Opacity of others",UI:InlineSlider(g,190,.1,1,.05,"x%.2f",set("foreignAlpha")),
+        "With \"Mine, others dimmed\": hits of others are drawn with this opacity (1 = solid).")
+    -- Combat Log signal (Log.lua): status and the two setup steps, checked live.
+    g:Section("combatlog","Your hits from the Combat Log")
+    local logRows={}
+    page.logRows=logRows
+    local function info(title,help)
+        local label=UI:Label(g,"",13,"text",false)
+        g:Row(title,label,{width=440,help=help})
+        return label
+    end
+    logRows.state=info("Status","WoW Forever does not say who hit an enemy. The Combat Log tab still reports when you did something, so Combat Text can tell your hits from others' (\"Whose numbers\" above) and a damage-over-time tick from a fresh hit. Used only when both steps below are done; otherwise every hit on an enemy fighting you counts as yours.")
+    logRows.opened=info("1. Open the Combat Log","The game reports your actions only after the Combat Log tab in your chat was shown once since login or /reload. Click that tab once (and back), or the Start button at the top of the screen.")
+    logRows.filter=info("2. Combat Log filter","The filter selected on the Combat Log tab decides which actions are reported. It must take only yours: WoW's default \"My actions\" does. With \"Pet\" ticked too, your pet's hits count as yours. To check or change it: right-click the Combat Log tab, Settings, select the filter, Message Sources, \"Done By\": \"Me\", and \"Pet\" if you like, nothing else. Message types do not matter. Combat Text reads this filter and never changes it.")
+    row("logSignal","Use the Combat Log",UI:Switch(g,true,set("logSignal")),
+        "Off: every hit on an enemy fighting you counts as yours.")
+    row("logButton","Start button",UI:Switch(g,true,set("logButton")),
+        "Shows a button at the top of the screen until the Combat Log tab was opened. It opens the tab for a moment and switches back. A macro with /click BVCombatTextLogStart does the same.")
+    function page:RefreshLog()
+        local s=L.Log:Status()
+        local G=L.Log
+        local ok,bad="|cff40d060","|cffff6060"
+        logRows.state:SetText((s.state=="active" or s.state=="waiting") and ok..G.STATE_TEXT[s.state].."|r" or s.state=="off" and G.STATE_TEXT.off or bad..G.STATE_TEXT[s.state].."|r")
+        logRows.opened:SetText(s.opened and ok.."Done|r" or bad.."Not yet since login|r")
+        local name=s.filterName and "\""..s.filterName.."\" " or ""
+        logRows.filter:SetText((G.USABLE[s.filter] and ok or bad)..name..G.FILTER_TEXT[s.filter].."|r")
+    end
     g:Section("icons","Spell guess (experimental)")
     row("spellGuess","Guess the spell",UI:Switch(g,false,set("spellGuess")),
-        "The game does not say which spell hit. When on, the module guesses from your own casts: the channel you are casting, your last spell and your damage-over-time debuffs on the enemy. It learns each spell's damage type and tick rhythm from the hits; a spell is named only when exactly one fits the hit's damage type and timing, otherwise nothing. Physical hits while you auto attack count as auto attack. Used for icons and {spell}. Note: in combat WoW Forever protects aura data; only auras tracked in Blizzard's Cooldown Manager stay readable, so DoTs are recognised by their tick rhythm instead of the debuff.")
+        "The game does not say which spell hit. When on, the module guesses from your own casts: the channel you are casting, your last spell and your damage-over-time debuffs on the enemy. It learns each spell's damage type and tick rhythm from the hits (until then the damage type named in the spell's description counts); a spell is named only when exactly one fits the hit's damage type and timing, otherwise nothing. Physical hits while you auto attack count as auto attack. Used for icons and {spell}. Note: in combat WoW Forever protects aura data; only auras tracked in Blizzard's Cooldown Manager stay readable, so DoTs are recognised by their tick rhythm instead of the debuff.")
     row("icons","Icons",UI:Dropdown(g,190,ICONS,set("icons")),"Where the spell icon appears. Only with \"Guess the spell\" on.")
     g:Row("Learned spell data",UI:Button(g,"Forget",120,function() L.Attribution:Forget();L:Print("Learned damage types and tick rhythms cleared.") end),
         {help="The spell guess remembers each spell's damage type and tick rhythm. Clear it after something wrong was learned (e.g. a talent changed a spell's school)."})
@@ -193,6 +257,10 @@ local function build(parent)
         srow("crit","Crit size",UI:InlineSlider(g,190,1,3,.1,"x%.1f",sset("crit")),"Crits are this much larger.")
         srow("color","Color",UI:ColorInput(g,150,sset("color")),"Text color.",{width=150})
         if name=="outgoing" then srow("school","School colors",UI:Switch(g,true,sset("school")),"Fire orange, frost blue and so on instead of the color above.") end
+        local defaults=L.CATEGORY_DEFAULTS[name]
+        for _,key in ipairs(L.CATEGORY_SWITCHES) do
+            if defaults[key]~=nil then srow(key,SWITCH_TEXT[key][1],UI:Switch(g,true,sset(key)),SWITCH_TEXT[key][2]) end
+        end
         if name=="outgoing" or name=="incoming" then
             srow("label","Damage type text",UI:Switch(g,false,sset("label")),"Adds the damage type after the number, e.g. \"1234 Fire\", in its color. Missing when the game hides the type.")
         end
@@ -213,8 +281,9 @@ local function build(parent)
     end
     -- Tabs in the settings window header: which sections each one shows.
     local TABS={
-        {id="general",label="General",sections={"module","scope","schools"}},
-        {id="categories",label="Categories",sections={"cat_outgoing","cat_incoming","cat_heal","cat_miss"}},
+        {id="general",label="General",sections={"module","scope","combatlog","schools"}},
+        {id="categories",label="Combat",sections={"cat_outgoing","cat_incoming","cat_heal","cat_outheal","cat_miss"}},
+        {id="messages",label="Auras & messages",sections={"cat_buff","cat_debuff","cat_buffgiven","cat_power","cat_notice"}},
         {id="animations",label="Animations",sections={"custom"}},
         {id="experimental",label="Experimental",sections={"icons"}},
     }
@@ -242,9 +311,10 @@ local function build(parent)
     function page:Refresh()
         local c=L:Config()
         self:RefreshCustom()
+        self:RefreshLog()
         self.enabled:SetValue(ns.Settings:Module(L.ID).enabled==true)
         for key,control in pairs(controls) do if control.SetValue then control:SetValue(c[key]) end end
-        for kind,control in pairs(scopeControls) do control:SetValue(c.scope[kind]) end
+        for kind,control in pairs(scopeControls) do control:SetValue(c.whose[kind]) end
         for bit,control in pairs(schoolControls) do control:SetValue(c.schoolColors[bit]) end
         for name,list in pairs(styleControls) do
             for key,control in pairs(list) do if control.SetValue then control:SetValue(c.categories[name][key]) end end
@@ -269,7 +339,7 @@ L.commands.blizzard=function(action)
         ..(L:Active() and "" or " (module off: all shown)").." - /bv sct blizzard [hide|show]")
 end
 L.commands.debug=function(action)
-    if action=="reset" then L.Sources.stats={};L.Sources.lastError=nil;L:DB().spellTrace=nil;L:Print("Counters and spell trace reset.");return end
+    if action=="reset" then L.Sources.stats={};L.Sources.lastError=nil;L:DB().spellTrace=nil;L:DB().logTrace=nil;L:Print("Counters, spell and log traces reset.");return end
     if action=="spells" then
         -- Last decisions of the spell guess: id:fit:school:interval:base per candidate.
         local list=L:DB().spellTrace or {}

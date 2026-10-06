@@ -15,6 +15,7 @@ local function owned(frame) if ns.ExternalFrames then ns.ExternalFrames:MarkOwne
 local ANCHORS={
     {key="outgoing",layout="bv:combattext_outgoing",label="Combat Text: Outgoing",x=260,y=60},
     {key="incoming",layout="bv:combattext_incoming",label="Combat Text: Incoming",x=-260,y=60},
+    {key="notice",layout="bv:combattext_notice",label="Combat Text: Notifications",x=0,y=200},
 }
 local LANES={0,-36,36,-18,18}
 for _,def in ipairs(ANCHORS) do

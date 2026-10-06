@@ -55,7 +55,7 @@ end})
 local QUALITY={}
 for q=0,5 do QUALITY[#QUALITY+1]={value=q,label=_G["ITEM_QUALITY"..q.."_DESC"] or ({"Poor","Common","Uncommon","Rare","Epic","Legendary"})[q+1]} end
 local GROW={{value="UP",label="Upwards"},{value="DOWN",label="Downwards"}}
-local MODES={{value="toast",label="Fade out (toast)"},{value="sticky",label="Stay until closed"}}
+local MODES={{value="toast",label="Fade out (toast)"},{value="sticky",label="Stay until closed"},{value="tooltip",label="Tooltip at the roll bar"}}
 local page
 local function build(parent)
     page=UI:Panel(parent,880,600,"surface");UI:HideSurface(page)
@@ -63,6 +63,8 @@ local function build(parent)
     local controls={}
     local function cfg() return L:Config() end
     local function set(key) return function(value) cfg()[key]=value;L:Changed() end end
+    -- Settings that change which others apply: the page follows at once.
+    local function setAndRefresh(key) return function(value) cfg()[key]=value;L:Changed();if page then page:Refresh() end end end
     local function row(key,title,control,help,opts)
         opts=opts or {};opts.help=opts.help or help
         controls[key]=g:Row(title,control,opts)
@@ -84,8 +86,9 @@ local function build(parent)
     g:Section("rolls","Roll bars")
     switch("rolls","Show roll bars","Group loot rolls and roll requests as bars.")
     switch("hideBlizzard","Hide Blizzard roll frames","Takes effect when the module starts (reload or off/on).")
-    switch("rollInfo","Item kind and stats","Item kind and primary stats to the left of the bar.")
-    switch("rollKeep","Keep bar after choosing","Otherwise the bar closes once you chose; results follow.")
+    switch("rollKind","Item kind","Item kind (e.g. Leather, Two-Hand Sword) to the left of the bar.")
+    switch("rollStats","Item stats","Primary stats of the item (e.g. Strength | Stamina) to the left of the bar.")
+    switch("rollKeep","Keep bar after choosing","Otherwise the bar closes once you chose; results follow. Always on while roll results are shown as a tooltip at the roll bar.")
     switch("rollQualityBar","Bar in item quality color","Timer bar in the item's quality color; off uses the bar color below.")
     row("rollBarColor","Bar color",UI:ColorInput(g,150,set("rollBarColor")),"Used when the quality color is off.",{width=150})
     slider("rollHeight","Bar height",20,48,1,"%d px","Height of a roll bar including the item name; the icon and buttons scale with it.")
@@ -103,9 +106,10 @@ local function build(parent)
     slider("monitorMax","Toasts at most",1,15,1,"%d","The oldest toast makes room when this many are shown.")
     dropdown("monitorGrow","New toasts push",GROW,"Newest toast sits at the anchor; older ones move this way.")
     g:Section("results","Roll results")
-    switch("results","Show results","A ranked card per finished roll (native and requested rolls).")
-    dropdown("resultsMode","Results",MODES,"Fade out after the time below, or stay until closed with X.")
+    row("results","Show results",UI:Switch(g,false,setAndRefresh("results")),"A ranked card per finished roll (native and requested rolls).")
+    row("resultsMode","Results",UI:Dropdown(g,190,MODES,setAndRefresh("resultsMode")),"Fade out after the time below, stay until closed with X, or no cards at all: the overview shows while the mouse is over a roll bar (the item icon keeps the item tooltip). Older results: /bv loot last.")
     slider("resultsDuration","Show for",3,120,1,"%d s","Toast mode only. Hovering keeps a card.")
+    slider("resultsLinger","Keep finished bars",3,120,1,"%d s","Tooltip mode only: a finished roll keeps its bar this long, so the final result with the winner shows on hover.")
     slider("resultsMax","Cards at most",1,10,1,"%d","The oldest card makes room when this many are shown. /bv loot last shows older ones.")
     slider("resultsRows","Players per card",1,10,1,"%d","Ranked players listed on a card; the rest is counted as \"+n more\".")
     dropdown("resultsGrow","More cards",GROW,"Direction in which further cards stack from the newest one.")
@@ -122,10 +126,17 @@ local function build(parent)
         local height=g:Arrange(width)+8
         D.Height(self,height);return height
     end
+    page.controls=controls
     function page:Refresh()
         local c=L:Config()
         self.enabled:SetValue(ns.Settings:Module(L.ID).enabled==true)
         for key,control in pairs(controls) do if control.SetValue then control:SetValue(c[key]) end end
+        -- Results as a tooltip at the roll bar: bars always stay after the
+        -- own choice (shown on and greyed out, not hidden, so the page does
+        -- not jump); "Keep finished bars" only applies there.
+        local tooltip=L.Rolls:Tooltip()
+        if tooltip then controls.rollKeep:SetValue(true);controls.rollKeep:Disable() else controls.rollKeep:Enable() end
+        if tooltip then controls.resultsLinger:Enable() else controls.resultsLinger:Disable() end
     end
     page:Arrange(880);page:Refresh()
     return page

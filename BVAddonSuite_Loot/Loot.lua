@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.8.89","0.8.89",1) then return end
+if not ns:RequireCore(package,"0.8.90","0.8.89",1) then return end
 -- Shared state of the loot package. Files below fill L (package-private table):
 -- Rolls (data), RollFrame/Monitor/Results (views), Master (window), Sim.
 L.ns=ns
@@ -16,19 +16,24 @@ L.override={} -- Simulation replaces single Blizzard calls here; never _G.
 
 L.DEFAULTS={enabled=false,
     -- Roll bars (native group loot and BV roll requests).
-    rolls=true,rollWidth=330,rollHeight=30,rollSpacing=6,rollGrow="UP",rollMax=8,rollInfo=true,rollKeep=false,
+    -- rollKind/rollStats (0.8.90): item kind and primary stats left of the
+    -- bar, each on its own; until 0.8.89 one switch, rollInfo (taken over).
+    rolls=true,rollWidth=330,rollHeight=30,rollSpacing=6,rollGrow="UP",rollMax=8,rollKind=true,rollStats=true,rollKeep=false,
     rollQualityBar=true,rollBarColor="3D7BD9FF",hideBlizzard=true,
     -- Loot monitor toasts.
     monitor=true,monitorSelf=true,monitorGroup=true,monitorMoney=true,monitorSelfQuality=0,monitorGroupQuality=2,
     monitorDuration=6,monitorMax=8,monitorWidth=270,monitorGrow="UP",
     -- Roll results.
     results=true,resultsMode="toast",resultsDuration=15,resultsMax=5,resultsRows=5,resultsWidth=290,resultsGrow="DOWN",
+    -- Tooltip mode: seconds a finished roll keeps its bar (0.8.90).
+    resultsLinger=20,
     -- Master loot window and roll requests.
     master=true,masterAutoOpen=true,masterRollTime=30,masterOptions="need_greed",masterAnnounce=false,acceptRequests=true,
     -- Custom roll of the master looter: reason text and symbol.
     customEnabled=false,customText="",customSymbol="star",customAfter=""}
 local GROW={UP=true,DOWN=true}
-local MODES={toast=true,sticky=true}
+-- tooltip (0.8.90): no cards; the overview shows on hovering a roll bar.
+local MODES={toast=true,sticky=true,tooltip=true}
 local function num(value,default,low,high,integer)
     if type(value)~="number" or value~=value then value=default end
     value=math.max(low,math.min(high,value))
@@ -37,8 +42,9 @@ local function num(value,default,low,high,integer)
 end
 function L:Config()
     local cfg=ns.Settings:Module(self.ID)
+    if cfg.rollKind==nil and cfg.rollInfo~=nil then cfg.rollKind,cfg.rollStats=cfg.rollInfo==true,cfg.rollInfo==true end
     for key,value in pairs(self.DEFAULTS) do if cfg[key]==nil then cfg[key]=value end end
-    for _,key in ipairs({"rolls","rollInfo","rollKeep","rollQualityBar","hideBlizzard","monitor","monitorSelf","monitorGroup",
+    for _,key in ipairs({"rolls","rollKind","rollStats","rollKeep","rollQualityBar","hideBlizzard","monitor","monitorSelf","monitorGroup",
         "monitorMoney","results","master","masterAutoOpen","masterAnnounce","acceptRequests","customEnabled"}) do cfg[key]=cfg[key]==true end
     if L.CleanCustom then cfg.customText,cfg.customSymbol=L.CleanCustom(cfg.customText,cfg.customSymbol) end
     if type(cfg.customAfter)~="string" or not (cfg.customAfter=="" or L.OPTIONS[cfg.customAfter]) or cfg.customAfter=="pass" then cfg.customAfter="" end
@@ -49,6 +55,7 @@ function L:Config()
     cfg.monitorWidth=num(cfg.monitorWidth,270,180,500,true)
     cfg.resultsDuration=num(cfg.resultsDuration,15,3,120);cfg.resultsMax=num(cfg.resultsMax,5,1,10,true)
     cfg.resultsRows=num(cfg.resultsRows,5,1,10,true);cfg.resultsWidth=num(cfg.resultsWidth,290,200,500,true)
+    cfg.resultsLinger=num(cfg.resultsLinger,20,3,120,true)
     cfg.masterRollTime=num(cfg.masterRollTime,30,10,120,true)
     for _,key in ipairs({"rollGrow","monitorGrow","resultsGrow"}) do if not GROW[cfg[key]] then cfg[key]=self.DEFAULTS[key] end end
     if not MODES[cfg.resultsMode] then cfg.resultsMode="toast" end
@@ -148,6 +155,20 @@ function L.Match(fmt,text)
     local args={}
     for index,position in ipairs(order) do args[position]=captures[index] end
     return true,args
+end
+-- Modern clients start loot roll lines with a loot history link, e.g.
+-- LOOT_ROLL_NEED = "|HlootHistory:%d|h[Loot]|h: %s has selected Need for: %s"
+-- (Florian's client 2026-10-06 prints "[Loot]: %s has selected Need for: %s").
+-- Its number is no part of the line's meaning but shifts every argument, so
+-- the leading link is removed from the template and from the chat line
+-- before they are matched; lines without it pass unchanged.
+function L.RollFormat(fmt)
+    if type(fmt)~="string" then return fmt end
+    return (fmt:gsub("^|H[^|]*|h%[[^%]]*%]|h:?%s*","",1))
+end
+function L.RollText(text)
+    if type(text)~="string" or L.Secret(text) then return text end
+    return (text:gsub("^|H[^|]*|h%[[^%]]*%]|h:?%s*","",1))
 end
 -- string.format with positional arguments (the client supports them; the
 -- simulation builds chat lines from the same global strings).

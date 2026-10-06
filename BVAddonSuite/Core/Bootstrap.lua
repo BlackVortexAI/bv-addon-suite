@@ -15,6 +15,8 @@ local function login()
     ns.UI.MinimapLauncher:Initialize()
     -- Every package has loaded by now; game settings of missing ones go back.
     ns:Call("cvar-guard", restoreCVars)
+    -- Guides of packages not finished yet (Core/Tutorial.lua).
+    ns:Call("tutorial", function() ns.Tutorial:Offer() end)
 end
 
 local function initialize()

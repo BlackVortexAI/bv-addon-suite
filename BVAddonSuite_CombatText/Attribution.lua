@@ -7,7 +7,7 @@ if not L.ready then return end
 -- with their tick rhythm (no aura reads: protected), your auto attack. Learned per spell:
 -- damage school and tick interval. Without a unique answer there is no icon
 -- rather than a wrong guess; it can still be wrong when others hit too.
-local A={castWindow=4,tickWindow=7,recentWindow=10,keepWindow=30,keepSpells=6,plates={},casts={}}
+local A={castWindow=4,tickWindow=7,recentWindow=10,keepWindow=30,keepSpells=6,plates={},casts={},petCasts={}}
 L.Attribution=A
 A.MELEE,A.AUTO_SHOT,A.SHOOT=6603,75,5019
 
@@ -72,6 +72,8 @@ local function autoAttacking()
         return ok and readable(class) and class=="HUNTER" and A.AUTO_SHOT or A.SHOOT
     end
 end
+-- Your running auto attack (melee, wand, auto shot) or nil; also Log.lua.
+A.AutoAttacking=autoAttacking
 -- Your DoTs on this unit: the cast entries {id, time = applied, tick = last
 -- recognised tick} still running by their rhythm. Auras on enemies are
 -- protected on Forever (Florian 2026-10-02; AuraStudio reads its own auras
@@ -114,11 +116,35 @@ local function current()
     return db
 end
 function A:Schools() return stored("spellSchools") end
+-- Until a hit teaches a spell's school: the school its description names
+-- ("... 100 Shadow damage", German "Schattenschaden"; idea from ForeverCrit,
+-- research 2026-10-03). Only a single named school counts. Kept for the
+-- session only, never stored as learned. A secret or not yet loaded
+-- description is asked again later.
+A.described={}
+function A:DescribedSchool(id)
+    local known=self.described[id]
+    if known~=nil then return known or nil end
+    local text=call(C_Spell and C_Spell.GetSpellDescription or GetSpellDescription,id)
+    if type(text)~="string" or text=="" then return nil end
+    local found=false
+    for bit in pairs(L.Format.SCHOOLS) do
+        local name=L.Format.SchoolName(bit)
+        if name and text:find(name,1,true) then
+            if found then found=false;break end
+            found=bit
+        end
+    end
+    self.described[id]=found
+    return found or nil
+end
+-- Learned school first, else the described one.
+function A:SchoolOf(id) return self:Schools()[id] or self:DescribedSchool(id) end
 function A:Intervals() current();return stored("spellIntervals") end
 function A:Gaps() current();return stored("spellGaps") end
 -- "dot": first hit well after the cast (no direct damage); "direct" otherwise.
 function A:Kinds() current();return stored("spellKinds") end
-function A:Forget() local db=L:DB();db.spellSchools,db.spellIntervals,db.spellGaps,db.spellKinds={},{},{},{};db.spellDataVersion=A.DATA_VERSION end
+function A:Forget() local db=L:DB();db.spellSchools,db.spellIntervals,db.spellGaps,db.spellKinds={},{},{},{};db.spellDataVersion=A.DATA_VERSION;A.described={} end
 -- Diagnosis: the last decisions as short lines in BVCombatTextDB.spellTrace
 -- (spell ids, schools, rhythm, unit tokens, times; no names or amounts).
 A.TRACE_MAX=200
@@ -177,7 +203,9 @@ end
 -- otherwise nothing rather than a wrong guess.
 -- Physical hits while you auto attack your target are the swing unless a
 -- physical spell's rhythm fits.
-function A:Spell(unit,heal,school)
+-- hint "tick" (Log.lua: your Combat Log line came right behind the hit): a
+-- DoT or channel tick, so neither a fresh direct hit nor the swing.
+function A:Spell(unit,heal,school,hint)
     local now=GetTime()
     local recent=self.lastSpell and now-self.lastTime<=self.castWindow and self.lastSpell or nil
     if heal then return recent end
@@ -206,11 +234,11 @@ function A:Spell(unit,heal,school)
         -- a direct one (pure DoTs) or a learned rhythm. A direct-damage spell
         -- (Fireball) must not claim unrelated hits after its own.
         local ticking=state and (state.first==nil or state.first>A.DIRECT or intervals[self.lastSpell]~=nil)
-        if age<=self.castWindow or (ticking and age<=self.tickWindow) then
+        if (age<=self.castWindow or (ticking and age<=self.tickWindow)) and (hint~="tick" or ticking and kinds[self.lastSpell]~="direct") then
             -- Direct hit right after the cast; a ticking spell by its rhythm
             -- ("maybe" until learned); otherwise late for a direct hit.
             local pure=kinds[self.lastSpell]=="dot"
-            local direct=age<=A.DIRECT and not pure
+            local direct=age<=A.DIRECT and not pure and hint~="tick"
             local fit=direct and "yes" or ticking and rhythm(base(state),intervals[self.lastSpell],now) or "no"
             add(self.lastSpell,fit,state,not direct and ticking and intervals[self.lastSpell]~=nil)
         end
@@ -218,22 +246,25 @@ function A:Spell(unit,heal,school)
     local dots={}
     ownDots(casts,intervals,kinds,now,dots)
     for _,state in ipairs(dots) do add(state.id,rhythm(base(state),intervals[state.id],now),state,intervals[state.id]~=nil) end
-    -- Damage type first: a learned other school cannot have caused this hit.
+    -- Damage type first: a learned (or described) other school cannot have
+    -- caused this hit.
+    for _,c in ipairs(list) do c.school=self:SchoolOf(c.id) end
     local left={}
     for _,c in ipairs(list) do
-        if not (school and schools[c.id] and schools[c.id]~=school) then left[#left+1]=c end
+        if not (school and c.school and c.school~=school) then left[#left+1]=c end
     end
-    local auto=school==1 and self:IsTarget(unit) and autoAttacking() or nil
+    local auto=hint~="tick" and school==1 and self:IsTarget(unit) and autoAttacking() or nil
     local function note(result)
         local parts={}
         for _,c in ipairs(list) do
             local st=c.state
-            parts[#parts+1]=string.format("%d:%s:s%s:i%s:b%s%s",c.id,c.fit,tostring(schools[c.id] or "?"),
+            -- s32: learned school, sd32: from the description.
+            parts[#parts+1]=string.format("%d:%s:s%s:i%s:b%s%s",c.id,c.fit,schools[c.id] and tostring(schools[c.id]) or c.school and "d"..c.school or "?",
                 intervals[c.id] and string.format("%.2f",intervals[c.id]) or "?",
                 st and string.format("%.2f",st.tick or st.time) or "-",
-                (school and schools[c.id] and schools[c.id]~=school) and "(school)" or "")
+                (school and c.school and c.school~=school) and "(school)" or "")
         end
-        self:Trace(string.format("hit %s s%s [%s] -> %s",tostring(unit),tostring(school or "?"),table.concat(parts," "),tostring(result)))
+        self:Trace(string.format("hit %s s%s%s [%s] -> %s",tostring(unit),tostring(school or "?"),hint and " "..hint or "",table.concat(parts," "),tostring(result)))
     end
     local pick
     -- One left: taken, unless its learned rhythm says it is not due.
@@ -252,7 +283,7 @@ function A:Spell(unit,heal,school)
     end
     -- A physical hit while auto attacking is the swing, unless a known
     -- physical spell's rhythm fits; the swing never teaches a spell.
-    if auto and not (pick and schools[pick.id]==1 and pick.fit=="yes") then note("auto");return auto end
+    if auto and not (pick and pick.school==1 and pick.fit=="yes") then note("auto");return auto end
     note(pick and pick.id or (#left>1 and "ambiguous" or "none"))
     if not pick then
         if #left>1 then L.Sources.Count("spell: ambiguous") end
@@ -264,6 +295,59 @@ function A:Spell(unit,heal,school)
     if pick.state then self:Ticked(pick.id,pick.state,now) end
     return pick.id
 end
+-- Your pet's spells (UNIT_SPELLCAST_SUCCEEDED for "pet"): a hit within 2 s
+-- whose school is the spell's (learned or named in its description) is the
+-- pet's, one hit per cast. Spells without a damage school in their
+-- description (Torment, ...) never match, so a swing gets no spell. The imp's
+-- Firebolt lands up to about 1 s after the cast (Florian's trace 2026-10-05).
+A.PET_WINDOW=2
+function A:PetCast(spellID)
+    if not readable(spellID) or type(spellID)~="number" then return end
+    local now=GetTime()
+    local list=self.petCasts
+    for i=#list,1,-1 do if list[i].used or now-list[i].time>self.PET_WINDOW then table.remove(list,i) end end
+    list[#list+1]={id=spellID,time=now}
+    self:Trace("pet cast "..spellID)
+end
+-- take: the hit is given to the cast (it then names no further hit).
+function A:PetSpell(school,take)
+    if not school then return nil end
+    local now=GetTime()
+    for _,cast in ipairs(self.petCasts) do
+        if not cast.used and now-cast.time<=self.PET_WINDOW and self:SchoolOf(cast.id)==school then
+            if take then cast.used=true end
+            return cast.id
+        end
+    end
+end
+-- Your pet's melee: a physical hit fits when there is no other pet hit in
+-- the last 6 s (a first swing) or it lands on the pet's swing beat:
+-- UnitAttackSpeed("pet"), else the last gap measured (voidwalker 2.0 s,
+-- jitter about 0.1 s, Florian's traces 2026-10-05). Alone every such hit
+-- fits; in a group the beat keeps a member's swings apart.
+A.PET_TOLERANCE,A.PET_FORGET=.3,6
+function A:PetExists()
+    local ok,v=pcall(UnitExists,"pet")
+    return ok and v==true and not L.Secret(v)
+end
+function A:PetMeleeFits(grouped)
+    if not grouped then return true end
+    local last=self.petMelee
+    local now=GetTime()
+    if not last or now-last>self.PET_FORGET then return true end
+    local speed=call(UnitAttackSpeed,"pet")
+    if type(speed)~="number" or speed<=0 then speed=self.petGap end
+    if not speed then return true end
+    local n=math.max(1,math.floor((now-last)/speed+.5))
+    return math.abs(now-(last+n*speed))<=self.PET_TOLERANCE
+end
+function A:PetMelee()
+    local now=GetTime()
+    if self.petMelee and now-self.petMelee>=1 and now-self.petMelee<=self.PET_FORGET then self.petGap=now-self.petMelee end
+    self.petMelee=now
+    self:Trace("pet melee")
+    return self.MELEE
+end
 function A.Icon(spellID)
     if not spellID then return nil end
     local texture=call(C_Spell and C_Spell.GetSpellTexture or GetSpellTexture,spellID)
@@ -271,8 +355,10 @@ function A.Icon(spellID)
 end
 
 function A:Enable(context)
-    self.plates,self.casts,self.lastSpell,self.lastTime,self.channel={},{},nil,nil,nil
-    context:Subscribe("UNIT_SPELLCAST_SUCCEEDED",function(_,unit,_,spellID) if unit=="player" then A:Cast(spellID) end end)
+    self.plates,self.casts,self.lastSpell,self.lastTime,self.channel,self.petCasts={},{},nil,nil,nil,{}
+    context:Subscribe("UNIT_SPELLCAST_SUCCEEDED",function(_,unit,_,spellID)
+        if unit=="player" then A:Cast(spellID) elseif unit=="pet" then A:PetCast(spellID) end
+    end)
     -- A channel ticks for its whole duration, not only in the 4 s after it starts.
     context:Subscribe("UNIT_SPELLCAST_CHANNEL_START",function(_,unit,_,spellID)
         if unit=="player" and readable(spellID) then A.channel,A.channelState=spellID,{time=GetTime()};A:Trace("channel start "..spellID) end
