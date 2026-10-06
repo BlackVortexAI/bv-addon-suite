@@ -90,6 +90,16 @@ function N:Update(messageType)
     if not category then return nil end
     return self:Show(category,core,kind)
 end
+-- Your killing blow (0.7.2): PARTY_KILL names the attacker, readable for you
+-- (signal probe 2026-10-07: 3 of 3). Your pet's kills do not count.
+function N:Kill(attacker)
+    if not L:Config().categories.notice.kills then return nil end
+    if not readable(attacker) then L.Sources.Count("kill: attacker secret");return nil end
+    local ok,me=pcall(UnitGUID,"player")
+    if not ok or not readable(me) or attacker~=me then return nil end
+    local text=type(KILLING_BLOW)=="string" and KILLING_BLOW or "Killing Blow"
+    return self:Show("notice",join(text,"!"),"killing blow")
+end
 -- Combat start and end (Blizzard: ENTERING_COMBAT / LEAVING_COMBAT texts).
 function N:Combat(entering)
     if not L:Config().categories.notice.combat then return nil end
@@ -120,6 +130,7 @@ function N:Enable(context)
     for _,event in ipairs({"UNIT_ENTERED_VEHICLE","UNIT_EXITED_VEHICLE"}) do
         pcall(context.Subscribe,context,event,function(_,unit) if unit=="player" then N:SetActiveUnit() end end)
     end
+    pcall(context.Subscribe,context,"PARTY_KILL",function(_,attacker) pcall(N.Kill,N,attacker) end)
     context:Subscribe("PLAYER_REGEN_DISABLED",function() pcall(N.Combat,N,true) end)
     context:Subscribe("PLAYER_REGEN_ENABLED",function() pcall(N.Combat,N,false) end)
 end

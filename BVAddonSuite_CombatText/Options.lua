@@ -104,6 +104,7 @@ local SWITCH_TEXT={
     reputation={"Reputation","Faction name and the reputation you gained or lost."},
     honor={"Honor","Honor you gain."},
     procs={"Procs","Abilities that become usable, e.g. Overpower! or Revenge!"},
+    kills={"Killing blows","Killing Blow! when your own hit kills an enemy. Your pet's kills do not count."},
 }
 local page
 local function build(parent)
@@ -161,7 +162,12 @@ local function build(parent)
     end
     logRows.state=info("Status","WoW Forever does not say who hit an enemy. The Combat Log tab still reports when you did something, so Combat Text can tell your hits from others' (\"Whose numbers\" above) and a damage-over-time tick from a fresh hit. Used only when both steps below are done; otherwise every hit on an enemy fighting you counts as yours.")
     logRows.opened=info("1. Open the Combat Log","The game reports your actions only after the Combat Log tab in your chat was shown once since login or /reload. Click that tab once (and back), or the Start button at the top of the screen.")
-    logRows.filter=info("2. Combat Log filter","The filter selected on the Combat Log tab decides which actions are reported. It must take only yours: WoW's default \"My actions\" does. With \"Pet\" ticked too, your pet's hits count as yours. To check or change it: right-click the Combat Log tab, Settings, select the filter, Message Sources, \"Done By\": \"Me\", and \"Pet\" if you like, nothing else. Message types do not matter. Combat Text reads this filter and never changes it.")
+    logRows.filter=info("2. Combat Log filter","The filter selected on the Combat Log tab decides which actions are reported. Simplest: WoW's default \"My actions\" (only yours). Better: the button \"Set up BV filter\" below, which tells your pet's hits apart by its own colour. Any other filter works when its line colours tell you apart (\"Entire Line: By Source\", your colour used by no one else); with \"Pet\" ticked and the same colour, your pet's hits count as yours. Combat Text reads the filter and changes it only when you click that button.")
+    logRows.colours=info("Line colours","Each Combat Log line comes in the colour of its source. With your own colour (and your pet's) used by no one else, Combat Text tells your lines, your pet's and others' apart, whatever else the filter shows.")
+    g:Row("Own filter",UI:Button(g,"Set up BV filter",170,function() L.LogFilter:Confirm() end),
+        {help="Adds the Combat Log filter \"BV Combat Text\" (your actions and your pet's, your pet in orange), selects it and reloads the interface (you are asked first). Out of combat only; open the Combat Log tab once before. Your other filters stay as they are. The filter list is shared by all characters of your account. The filter must stay selected: the Start button or the status display selects it again with one click."})
+    row("statusDisplay","Status display",UI:Switch(g,false,set("statusDisplay")),
+        "A small box that shows whether the Combat Log, its filter and the line colours are in order; a click puts them right. Details in its tooltip; move it in the Layout Editor (top left by default).")
     row("logSignal","Use the Combat Log",UI:Switch(g,true,set("logSignal")),
         "Off: every hit on an enemy fighting you counts as yours.")
     row("logButton","Start button",UI:Switch(g,true,set("logButton")),
@@ -174,6 +180,12 @@ local function build(parent)
         logRows.opened:SetText(s.opened and ok.."Done|r" or bad.."Not yet since login|r")
         local name=s.filterName and "\""..s.filterName.."\" " or ""
         logRows.filter:SetText((G.USABLE[s.filter] and ok or bad)..name..G.FILTER_TEXT[s.filter].."|r")
+        local c=G.colours
+        logRows.colours:SetText(not c and "not readable yet"
+            or not c.byLine and bad.."not used: \"Entire Line: By Source\" is off|r"
+            or not c.meUnique and bad.."not used: your colour is also someone else's|r"
+            or c.petUnique and ok.."yours and your pet's told apart|r"
+            or ok.."yours told apart; your pet has your colour|r")
     end
     g:Section("icons","Spell guess (experimental)")
     row("spellGuess","Guess the spell",UI:Switch(g,false,set("spellGuess")),

@@ -82,7 +82,7 @@ function G:FilterState()
     end
     return state,name
 end
-G.USABLE={mine=true,minepet=true}
+G.USABLE={mine=true,minepet=true,colour=true}
 -- Checked at most every 2 s (the player may change it at any time).
 function G:FilterOK()
     local t=now()
@@ -90,6 +90,11 @@ function G:FilterOK()
         self.checked=t
         local ok,state,name=pcall(self.FilterState,self)
         if not ok then state,name="unknown",nil end
+        -- 0.7.2: lines told apart by colour (LogFilter.lua). A filter that
+        -- also takes others, or your pet in its own colour, still works.
+        local okC,colours=pcall(L.LogFilter.Colours,L.LogFilter)
+        self.colours=okC and colours or nil
+        if self.colours and L.LogFilter:Usable(self.colours) and (state=="others" or (state=="minepet" and self.colours.petUnique)) then state="colour" end
         if state~=self.filter then
             self.filter,self.filterName=state,name
             self:Trace("filter "..state..(name and " ("..name..")" or ""))
@@ -133,16 +138,27 @@ function G:Trace(text)
     while #list>self.TRACE_MAX do table.remove(list,1) end
 end
 
-function G:Line(_,_,_,_,order)
+function G:Line(_,r,g,b,order)
     -- History replayed when the window refills (also at login) is not new.
     local oldest=Enum and Enum.CombatLogMessageOrder and Enum.CombatLogMessageOrder.Oldest
     if oldest~=nil and readable(order) and order==oldest then count("log: history line");return end
-    self.seq=self.seq+1
     local t=now()
-    self.lines[#self.lines+1]={time=t,seq=self.seq}
+    -- Told apart by colour: yours, your pet's; others' lines are not used.
+    local owner
+    if self.filter=="colour" and self.colours then
+        owner=L.LogFilter:Classify(r,g,b,self.colours)
+        if not owner then
+            self.last=t
+            count("log: line of others")
+            if not self.started then self.started=true;self:Keep();self:Update();refresh() end
+            return
+        end
+    end
+    self.seq=self.seq+1
+    self.lines[#self.lines+1]={time=t,seq=self.seq,owner=owner}
     self.last=t
-    count("log: line")
-    self:Trace("line #"..self.seq)
+    count(owner=="pet" and "log: line of your pet" or "log: line")
+    self:Trace("line #"..self.seq..(owner and " "..owner or ""))
     if not self.started then self.started=true;self:Keep();self:Update();refresh() end
     self:Trim(t)
 end
@@ -160,7 +176,7 @@ end
 function G:Queue(run,label,unit,school)
     self.seq=self.seq+1
     local swing=L.Attribution.AutoAttacking()~=nil and "auto" or nil
-    if not swing and self.filter=="minepet" then
+    if not swing and (self.filter=="minepet" or self.filter=="colour") then
         local ok,pet=pcall(UnitExists,"pet")
         if ok and pet==true and not L.Secret(pet) then swing="pet" end
     end
@@ -182,6 +198,8 @@ function G:Claim(hit)
     local line=after or same or earlier
     if not line then return false end
     line.used=true
+    -- A line in your pet's colour: your pet's (Origin: its spell or swing).
+    if line.owner=="pet" then return "petswing",line end
     -- A line ahead of the hit taken for your pet's swing (Origin: pet melee).
     if line==earlier and hit.swing=="pet" then return "petswing",line end
     return after and "tick" or "line",line
@@ -221,16 +239,24 @@ end
 -- AnyUp and AnyDown: the game runs a macro button on one of them (setting
 -- ActionButtonUseKeyDown). Protected: created, changed and hidden only out
 -- of combat. Named, so a macro can do the same: /click BVCombatTextLogStart.
+-- 0.7.2: with the BV filter set up but another one selected, the same
+-- click also selects ours through its quick button above the Combat Log
+-- (Blizzard's own button, so the filter is applied untainted).
 function G:Macro()
     local current=SELECTED_CHAT_FRAME
     local name
     if current and current.GetName then local ok,v=pcall(current.GetName,current);if ok and readable(v) then name=v end end
-    if name==self.TAB then return "/click ChatFrame1Tab\n/click "..self.TAB.."Tab" end
-    return "/click "..self.TAB.."Tab\n/click "..(name or "ChatFrame1").."Tab"
+    local quick=L.LogFilter:QuickButton()
+    local choose=quick and "\n/click "..quick or ""
+    if name==self.TAB then return "/click ChatFrame1Tab\n/click "..self.TAB.."Tab"..choose end
+    return "/click "..self.TAB.."Tab"..choose.."\n/click "..(name or "ChatFrame1").."Tab"
 end
+-- Until the Combat Log was opened since login, and while the BV filter is
+-- set up but not selected.
 function G:Wanted()
     if self.stopped or not (L:Active() and L:Config().logSignal and L:Config().logButton) then return false end
-    return not self.started and _G[self.TAB.."Tab"]~=nil
+    if _G[self.TAB.."Tab"]==nil then return false end
+    return not self.started or L.LogFilter:QuickButton()~=nil
 end
 function G:CreateButton()
     self.button=L.LogButton.Create(self.BUTTON)
@@ -240,6 +266,7 @@ end
 function G:Update()
     if locked() then self.pending=true;return end
     self.pending=nil
+    if L.StatusDisplay then L.StatusDisplay:Update() end
     local want=self:Wanted()
     local b=self.button
     if want and not b then b=self:CreateButton() end
@@ -260,6 +287,14 @@ function G:Hook()
     end)
     -- Blizzard turns the lines off as the window hides; turn them back on.
     window:HookScript("OnHide",function() if L:Active() then G:Keep() end end)
+    self:HookQuick()
+end
+-- A filter chosen on the quick bar: the button's macro and look follow
+-- (Blizzard_CombatLog loads on demand: again on its ADDON_LOADED).
+function G:HookQuick()
+    if self.quickHooked or type(_G.Blizzard_CombatLog_QuickButton_OnClick)~="function" or not hooksecurefunc then return end
+    self.quickHooked=true
+    hooksecurefunc("Blizzard_CombatLog_QuickButton_OnClick",function() if L:Active() then G.checked=nil;G:Update() end end)
 end
 
 -- What the player sees (settings page, /bv sct debug): the overall state and
@@ -270,6 +305,7 @@ G.FILTER_TEXT={
     others="also takes others (\"Done By\" has more than \"Me\" and \"Pet\"): not used",
     empty="takes nothing: not used",
     unknown="not readable yet (open the Combat Log once)",
+    colour="lines told apart by colour: yours, your pet's, others' not used",
 }
 function G:Status()
     self.checked=nil

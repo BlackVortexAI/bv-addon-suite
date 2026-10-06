@@ -20,6 +20,11 @@ S.Count=count
 
 local AVOID={MISS="Miss",DODGE="Dodge",PARRY="Parry",BLOCK="Block",RESIST="Resist",IMMUNE="Immune",ABSORB="Absorb",EVADE="Evade",DEFLECT="Deflect",REFLECT="Reflect"}
 S.AVOID=AVOID
+-- A hit of 0 with one of these flags: nothing got through (fully absorbed,
+-- blocked or resisted), shown as that word (idea: BattleText Forever 1.2.2).
+-- A 0 without a flag is the empty half of a two-part blow and stays hidden.
+local WHOLE={ABSORB="Absorb",BLOCK="Block",BLOCK_REDUCED="Block",RESIST="Resist"}
+S.WHOLE=WHOLE
 local function readable(v) return v~=nil and not L.Secret(v) end
 -- Values for {school} {spell} {name}; names and spells may be secret strings.
 local function spellName(id)
@@ -77,8 +82,14 @@ function S:Entry(unit,action,flagText,amount,school,enemy,credit)
     local entry={unit=unit,crit=crit,incoming=kind=="player",origin=origin,foreign=show=="dim"}
     local cfg=L:Config()
     if not readable(amount) then count("amount secret") end
-    if action=="WOUND" then
-        if readable(amount) and (type(amount)~="number" or amount<=0) then count("skip: no amount");return nil end
+    local whole=action=="WOUND" and readable(amount) and amount==0 and readable(flagText) and WHOLE[flagText]
+    if whole then
+        entry.category="miss"
+        entry.word=whole
+    elseif action=="WOUND" then
+        if readable(amount) and (type(amount)~="number" or amount<=0) then
+            count(amount==0 and "skip: 0 without a flag (two-part blow)" or "skip: no amount");return nil
+        end
         entry.category=kind=="player" and "incoming" or "outgoing"
         entry.number=F.Number(amount,cfg.numbers)
         local r,g,b=F.SchoolColor(school)

@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.7.1","0.8.91",1) then return end
+if not ns:RequireCore(package,"0.7.2","0.8.91",1) then return end
 -- Combat text module. Everything specific to it lives in this package, never
 -- in Core, so Core stays free for fixes.
 L.ns=ns
@@ -44,7 +44,7 @@ L.CATEGORY_DEFAULTS={
     buffgiven={enabled=false,anchor="nameplate",animation="up",size=16,color="66E07AFF",school=false,prefix="",suffix="",duration=1.8,distance=60,crit=1},
     power={anchor="incoming",animation="up",size=15,color="5AA0FFFF",school=false,prefix="",suffix="",duration=1.4,distance=60,crit=1},
     notice={anchor="notice",animation="pop",size=22,color="FFD100FF",school=false,prefix="",suffix="",duration=2,distance=40,crit=1,
-        combat=true,reputation=true,honor=true,procs=true},
+        combat=true,reputation=true,honor=true,procs=true,kills=true},
 }
 -- Staggered output (0.7.1, UI/Display.lua): texts of a category that come
 -- together one after another (staggerDelay ms apart) and a line apart
@@ -60,7 +60,7 @@ end
 -- options only there.
 L.CRIT_CATEGORIES={outgoing=true,incoming=true,heal=true,outheal=true}
 -- Switches of the message categories (only where the defaults have them).
-L.CATEGORY_SWITCHES={"gains","fades","combat","reputation","honor","procs"}
+L.CATEGORY_SWITCHES={"gains","fades","combat","reputation","honor","procs","kills"}
 L.DEFAULTS={enabled=false,hideBlizzard=true,hideBlizzardSelf=true,plates=true,numbers="short",font="inherit",outline="OUTLINE",
     -- Numbers on enemies not fighting you: own color (optional) and transparency.
     foreignTint=true,foreignColor="A0A0A0FF",foreignAlpha=.6,
@@ -71,6 +71,8 @@ L.DEFAULTS={enabled=false,hideBlizzard=true,hideBlizzardSelf=true,plates=true,nu
     -- Combat Log lines as evidence of your hits (Log.lua, Origin.lua): use
     -- them, show the Start button.
     logSignal=true,logButton=true,
+    -- Status display of all sources, movable, click fixes (0.7.2). Off by default.
+    statusDisplay=false,
     -- Hits told apart as your pet's (Origin.lua): "mine" (as yours), "dimmed", "hidden".
     pet="mine"}
 -- Whose numbers at enemies, per content type (Origin.lua): "mine" (only
@@ -108,7 +110,7 @@ function L:Config()
     if type(cfg.foreignColor)~="string" or not cfg.foreignColor:match("^%x%x%x%x%x%x%x%x$") then cfg.foreignColor="A0A0A0FF" end
     if cfg.icons~="off" and cfg.icons~="left" and cfg.icons~="right" then cfg.icons="left" end
     cfg.iconSize=num(cfg.iconSize,1,.5,2);cfg.iconHeals=cfg.iconHeals==true;cfg.spellGuess=cfg.spellGuess==true
-    cfg.logSignal=cfg.logSignal==true;cfg.logButton=cfg.logButton==true
+    cfg.logSignal=cfg.logSignal==true;cfg.logButton=cfg.logButton==true;cfg.statusDisplay=cfg.statusDisplay==true
     if cfg.pet~="mine" and cfg.pet~="dimmed" and cfg.pet~="hidden" then cfg.pet="mine" end
     if type(cfg.schoolColors)~="table" then cfg.schoolColors={} end
     for bit,hex in pairs(L.Format.SCHOOLS) do
@@ -174,9 +176,13 @@ ns.Modules:Register({id=L.ID,OnEnable=function(context)
     L.Attribution:Enable(context)
     L.Sources:Enable(context)
     L.Log:Enable(context)
+    L.LogFilter:Enable(context)
+    L.StatusDisplay:Enable(context)
     L.Notices:Enable(context)
     L.Given:Enable(context)
-    -- The guide, once, when the module is first turned on (Core 0.8.94+).
+    -- The guide, once, when the module is first turned on (Core 0.8.94+);
+    -- the filter guide for players who finished an older one (Guide.lua).
+    if L.GuideSync then pcall(L.GuideSync) end
     if L.GUIDE_ID and ns.Tutorial and ns.Tutorial.Offer then ns.Tutorial:Offer(L.GUIDE_ID) end
 end})
 

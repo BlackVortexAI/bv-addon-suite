@@ -66,14 +66,16 @@ end
 -- attack. In a group the pet's swing beat must fit too (Attribution).
 -- Without the Combat Log a hit counts as yours only with evidence of your
 -- own: you cast on the enemy in the last 10 s, a DoT of yours still runs on
--- it, or it is your target while you channel or auto attack. Threat and unit
+-- it, it is your target while you channel or auto attack, or a physical hit
+-- on your target right after your own swing (PLAYER_SWING, 0.7.2). Threat and unit
 -- comparisons may be secret on Forever (ShouldUnitThreatStateBeSecret,
 -- ShouldUnitComparisonBeSecret); such an "unknown" made NPCs' hits on a mob
 -- show as yours in full (Florian 2026-10-06). Now they are others' in your
 -- fight: dimmed.
-function O:Yours(unit)
+function O:Yours(unit,school)
     local A=L.Attribution
     if A:Recent(unit) or A:Running(unit) then return true end
+    if school==1 and A:IsTarget(unit) and A:SwingFits(true) then L.Sources.Count("evidence: your swing");return true end
     return (A.channel~=nil or A.AutoAttacking()~=nil) and A:IsTarget(unit)
 end
 function O:Of(unit,credit,school)
@@ -101,7 +103,7 @@ function O:Of(unit,credit,school)
     end
     if A:PetSpell(school) then return pet() end
     if physical and relation=="you" and not A.AutoAttacking() and A:PetMeleeFits(grouped) then return melee("fight") end
-    if relation=="you" and self:Yours(unit) then return "mine","fight",relation end
+    if relation=="you" and self:Yours(unit,school) then return "mine","fight",relation end
     if relation=="you" then L.Sources.Count("origin unsure: not yours without evidence") end
     return "others","fight",relation
 end

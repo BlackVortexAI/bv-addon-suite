@@ -91,6 +91,20 @@ local function autoAttacking()
 end
 -- Your running auto attack (melee, wand, auto shot) or nil; also Log.lua.
 A.AutoAttacking=autoAttacking
+-- Your own swing (0.7.2): PLAYER_SWING comes in the frame of your swing's
+-- Combat Log line, its hit 0.45-0.55 s later (signal probe 2026-10-07,
+-- spread 0.2-1.0 s); readable without the Combat Log. One swing vouches for
+-- one physical hit in SWING_MIN..SWING_MAX after it.
+A.SWING_MIN,A.SWING_MAX=.15,1
+function A:Swing() self.swing,self.swingUsed=GetTime(),false end
+-- take: the hit uses the swing up.
+function A:SwingFits(take)
+    if not self.swing or self.swingUsed then return false end
+    local age=GetTime()-self.swing
+    if age<self.SWING_MIN or age>self.SWING_MAX then return false end
+    if take then self.swingUsed=true end
+    return true
+end
 -- Your DoTs on this unit: the cast entries {id, time = applied, tick = last
 -- recognised tick} still running by their rhythm. Auras on enemies are
 -- protected on Forever (Florian 2026-10-02; AuraStudio reads its own auras
@@ -442,6 +456,9 @@ function A:Enable(context)
     context:Subscribe("UNIT_SPELLCAST_CHANNEL_START",function(_,unit,_,spellID)
         if unit=="player" and readable(spellID) then A.channel,A.channelState=spellID,{time=GetTime()};A:Trace("channel start "..spellID) end
     end)
+    -- Unknown on a client without it: no swing evidence, nothing else changes.
+    self.swing,self.swingUsed=nil,nil
+    pcall(context.Subscribe,context,"PLAYER_SWING",function() A:Swing() end)
     context:Subscribe("UNIT_SPELLCAST_CHANNEL_STOP",function(_,unit) if unit=="player" then A:Trace("channel stop "..tostring(A.channel));A.channel,A.channelState=nil,nil end end)
     -- "target" holds casts on the current target without a nameplate only.
     context:Subscribe("PLAYER_TARGET_CHANGED",function() A.casts.target=nil end)

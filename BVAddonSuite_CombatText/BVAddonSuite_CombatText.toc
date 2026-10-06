@@ -3,7 +3,7 @@
 ## Notes: Floating combat text with own styles, anchors, nameplates and animations. Requires BV Core.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.7.1
+## Version: 0.7.2
 ## Dependencies: BVAddonSuite
 ## SavedVariables: BVCombatTextDB
 
@@ -16,10 +16,13 @@ Attribution.lua
 Origin.lua
 Sources.lua
 Log.lua
+LogFilter.lua
 Notices.lua
 Given.lua
 UI\Animation.lua
 UI\Display.lua
 UI\LogButton.lua
+UI\FilterDialog.lua
+UI\StatusDisplay.lua
 Options.lua
 Guide.lua
