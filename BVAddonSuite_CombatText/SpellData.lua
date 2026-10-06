@@ -6,7 +6,7 @@ if not L.ready then return end
 -- rhythm and duration before any hit taught them. Data: SpellDB.lua,
 -- generated from the client's own tables (tools/build_spell_data.py), every
 -- rank of class, pet, racial and on-use item spells. Entry format
--- "school;flags;period;duration":
+-- "school;flags;period;duration;speed":
 --   school   school mask of its damage ("" when the weapon decides: wands)
 --   flags    d direct damage, p periodic damage, h heals anyone, s heals
 --            only the caster (drains, food), o heals periodically,
@@ -14,16 +14,17 @@ if not L.ready then return end
 --            on impact)
 --   period   seconds between ticks (damage, else heal)
 --   duration seconds it lasts at most
+--   speed    flight speed in yards per second (0.7.3; travelling spells)
 -- Not listed: unknown, the learned data decides.
 local S={cache={}}
 L.SpellData=S
 
 local function parse(text)
-    local school,flags,period,duration=text:match("^([^;]*);([^;]*);([^;]*);([^;]*)$")
+    local school,flags,period,duration,speed=text:match("^([^;]*);([^;]*);([^;]*);([^;]*);?([^;]*)$")
     if not flags then return false end
     local function has(c) return flags:find(c,1,true)~=nil end
     return {school=tonumber(school),direct=has("d"),periodic=has("p"),heal=has("h") and "any" or has("s") and "self" or nil,
-        hot=has("o"),channel=has("c"),noDamage=has("n"),travels=has("t"),period=tonumber(period),duration=tonumber(duration)}
+        hot=has("o"),channel=has("c"),noDamage=has("n"),travels=has("t"),period=tonumber(period),duration=tonumber(duration),speed=tonumber(speed)}
 end
 -- The parsed entry, else nil.
 function S:Entry(id)
@@ -63,6 +64,11 @@ end
 function S:Travels(id)
     local entry=self:Entry(id)
     return entry~=nil and entry.travels
+end
+-- Flight speed (yards per second) of a travelling spell, else nil.
+function S:Speed(id)
+    local entry=self:Entry(id)
+    return entry and entry.travels and entry.speed or nil
 end
 function S:Duration(id)
     local entry=self:Entry(id)

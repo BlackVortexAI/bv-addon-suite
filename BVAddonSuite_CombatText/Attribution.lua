@@ -50,7 +50,7 @@ function A:Cast(spellID)
         self.lastSpell,self.lastTime=spellID,now
         -- A spell that never deals damage (a curse, a buff) leaves the hit to
         -- the cast before it (a Shadow Bolt still flying).
-        if SD:CanDamage(spellID)~=false then self.lastHit,self.lastHitTime=spellID,now end
+        if SD:CanDamage(spellID)~=false then self.lastHit,self.lastHitTime,self.lastHitFlight=spellID,now,nil end
     end
     -- Heals: the last one, and those over time (HoTs, drains, food) while
     -- they last.
@@ -65,6 +65,13 @@ function A:Cast(spellID)
         end
     end
     if call(UnitCanAttack,"player","target")~=true then self:Trace("cast "..spellID.." (no hostile target)");return end
+    -- A travelling spell (0.7.3): its hit lands distance / speed later. The
+    -- distance to the target as a band from range checks gives the window.
+    if spellID==self.lastHit then
+        local f=self:Flight(spellID,"target")
+        self.lastHitFlight=f
+        if f then self:Trace(string.format("flight %d %s-%s yd: %.2f-%s s",spellID,tostring(f.min),tostring(f.max or "?"),f.early,f.late and string.format("%.2f",f.late) or "?")) end
+    end
     local keys={"target",self:TargetToken()}
     self:Trace("cast "..spellID.." on "..tostring(keys[2] or "target only"))
     for _,key in ipairs(keys) do
@@ -80,6 +87,19 @@ function A:Recent(unit)
     local list=self.casts[unit]
     if (not list or not list[1]) and self:IsTarget(unit) then list=self.casts.target end
     return list~=nil and list[1]~=nil and GetTime()-list[1].time<=self.recentWindow
+end
+-- Flight window {early, late} in seconds for a travelling spell cast on unit
+-- now, or nil (not travelling, distance unknown). Margins: the game's delay
+-- before the hit is shown (early) and server and animation time (late).
+A.FLIGHT_EARLY,A.FLIGHT_LATE=.15,.45
+function A:Flight(spellID,unit)
+    local speed=L.SpellData:Speed(spellID)
+    if not speed or speed<=0 or not L.Range then return nil end
+    local ok,band=pcall(L.Range.Band,L.Range,unit,spellID)
+    if not ok or type(band)~="table" or band.status~="estimated" then return nil end
+    local early=math.max(0,(band.min or 0)/speed-self.FLIGHT_EARLY)
+    local late=band.max and band.max/speed+self.FLIGHT_LATE or nil
+    return {early=early,late=late,min=band.min,max=band.max}
 end
 local function autoAttacking()
     local current=C_Spell and C_Spell.IsCurrentSpell or IsCurrentSpell
@@ -328,9 +348,23 @@ function A:Spell(unit,heal,school,hint)
             -- ("maybe" until learned); otherwise late for a direct hit.
             local pure=kind(self.lastHit)=="dot"
             local direct=age<=A.DIRECT and not pure and hint~="tick"
-            local fit,sure="no",false
-            if direct then fit="yes" elseif ticking then fit,sure=beat(self.lastHit,state) end
-            add(self.lastHit,fit,state,sure)
+            -- A travelling spell with a known distance: its hit only inside
+            -- its flight window, and then certain either way.
+            -- Too early is certain; too late may still be a tick (Fireball).
+            local flight=not pure and hint~="tick" and self.lastHitFlight
+            local early,outside=false,false
+            if flight then
+                early=age<flight.early
+                local late=flight.late~=nil and age>flight.late
+                direct=not early and not late
+                outside=early or (late and not ticking)
+            end
+            -- Certainly outside its flight window: not a candidate at all.
+            if not outside then
+                local fit,sure="no",false
+                if direct then fit="yes" elseif ticking and not early then fit,sure=beat(self.lastHit,state) end
+                add(self.lastHit,fit,state,sure)
+            end
         end
     end
     local dots={}

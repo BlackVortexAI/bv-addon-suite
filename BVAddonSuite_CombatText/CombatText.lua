@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.7.2","0.8.91",1) then return end
+if not ns:RequireCore(package,"0.7.3","0.8.91",1) then return end
 -- Combat text module. Everything specific to it lives in this package, never
 -- in Core, so Core stays free for fixes.
 L.ns=ns
@@ -174,6 +174,7 @@ ns.Modules:Register({id=L.ID,OnEnable=function(context)
     L.Display:Enable(context)
     L.Blizzard:Enable(context)
     L.Attribution:Enable(context)
+    if L.Range then pcall(L.Range.Preload,L.Range) end
     L.Sources:Enable(context)
     L.Log:Enable(context)
     L.LogFilter:Enable(context)
