@@ -11,7 +11,9 @@ local F=L.Format
 local S={}
 L.Sources=S
 -- Diagnosis (/bv sct debug): what arrived and why something was not shown.
--- Only counts and Blizzard's own event kinds, no names or amounts.
+-- Only counts and Blizzard's own event kinds, no names or amounts. Since
+-- 0.7.1 also in BVCombatTextDB.stats, counted from login (or /reload), so a
+-- fight can be checked after logging out.
 S.stats={}
 local function count(key) S.stats[key]=(S.stats[key] or 0)+1 end
 S.Count=count
@@ -140,7 +142,7 @@ function S:Process(unit,...)
     if not entry then return nil end
     local shown,item=pcall(L.Display.Show,L.Display,entry)
     if not shown then count("error");self.lastError=tostring(item);return nil end
-    count(item and ("shown "..entry.category..(item.plate and " (nameplate)" or "")..(entry.foreign and " dimmed" or "")) or "skip: category off")
+    count(item and ((item.queued and "staggered " or "shown ")..entry.category..(item.plate and " (nameplate)" or "")..(entry.foreign and " dimmed" or "")) or "skip: category off")
     return entry
 end
 function S:Report()
@@ -157,5 +159,11 @@ function S:Report()
     if self.lastError then L:Print("last error: "..self.lastError) end
 end
 function S:Enable(context)
+    if not self.saved then
+        self.saved=true
+        local db=L:DB()
+        db.stats=self.stats
+        db.statsSince=type(time)=="function" and time() or nil
+    end
     context:Subscribe("UNIT_COMBAT",function(_,...) S:Handle(...) end)
 end

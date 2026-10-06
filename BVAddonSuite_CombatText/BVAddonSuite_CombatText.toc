@@ -3,13 +3,15 @@
 ## Notes: Floating combat text with own styles, anchors, nameplates and animations. Requires BV Core.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.7.0
+## Version: 0.7.1
 ## Dependencies: BVAddonSuite
 ## SavedVariables: BVCombatTextDB
 
 CombatText.lua
 Format.lua
 Blizzard.lua
+SpellDB.lua
+SpellData.lua
 Attribution.lua
 Origin.lua
 Sources.lua

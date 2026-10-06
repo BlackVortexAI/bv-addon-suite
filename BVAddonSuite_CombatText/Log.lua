@@ -309,6 +309,14 @@ function G:Force()
     self:Trace("force "..(ok and "ok" or "error"))
     L:Print(ok and "Combat log lines switched on without the Combat Log tab (test). Fight, then /bv sct debug." or "Failed: "..tostring(err))
 end
+-- Once per login (or /reload): the first fight without Combat Log lines
+-- says so; until then whose hit it is is only estimated.
+function G:Hint()
+    if self.hinted or self.started or not (L:Active() and L:Config().logSignal) then return end
+    self.hinted=true
+    count("log: hint shown")
+    L:Print("Combat Log signal not set up since login: open the Combat Log tab once or click the Start button. Until then, whose hit it is is only estimated (others' hits are dimmed without evidence of yours).")
+end
 L.commands.log=function(rest)
     if rest=="force" then G:Force() else G:Report() end
 end
@@ -321,7 +329,10 @@ function G:Enable(context)
     if not ok then count("log: event missing") end
     -- The macro can change only out of combat: refreshed as a fight starts
     -- (still unlocked) and after it.
-    context:Subscribe("PLAYER_REGEN_DISABLED",function() if G.button or G:Wanted() then G:Update() end end)
+    context:Subscribe("PLAYER_REGEN_DISABLED",function()
+        if G.button or G:Wanted() then G:Update() end
+        G:Hint()
+    end)
     context:Subscribe("PLAYER_REGEN_ENABLED",function() if G.pending or G.button then G:Update() end end)
     self:Hook()
     self.ticker=C_Timer.NewTicker(self.KEEP,function() G:Keep() end)

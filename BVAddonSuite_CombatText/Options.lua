@@ -61,7 +61,11 @@ function Sim:Stop() self.serial=(self.serial or 0)+1 end
 local NUMBERS={{value="short",label="Short (12.3k)"},{value="full",label="Full (12,345)"},{value="plain",label="Plain (12345)"}}
 local OUTLINES={{value="OUTLINE",label="Outline"},{value="THICKOUTLINE",label="Thick outline"},{value="",label="None"}}
 local PRESETS={{value="up",label="Scroll up"},{value="down",label="Scroll down"},{value="fountain",label="Fountain (arc)"},
-    {value="rain",label="Rain (falls)"},{value="pop",label="Pop (crit style)"}}
+    {value="rain",label="Rain (falls)"},{value="pop",label="Pop (crit style)"},
+    {value="curveright",label="Curve right"},{value="curveleft",label="Curve left"},{value="curveup",label="Curve up"},
+    {value="curvedown",label="Curve down"},{value="arc",label="High arc (throw)"},{value="slideright",label="Slide right"},
+    {value="slideleft",label="Slide left"},{value="wave",label="Wave (sways up)"},{value="bounce",label="Bounce"},
+    {value="slam",label="Slam (lands hard)"},{value="shake",label="Shake"},{value="zoom",label="Zoom (grows, fades)"}}
 local ANIMATIONS={}
 for _,option in ipairs(PRESETS) do ANIMATIONS[#ANIMATIONS+1]=option end
 for i=1,L.CUSTOM_COUNT do ANIMATIONS[#ANIMATIONS+1]={value="custom"..i,label="Custom "..i} end
@@ -69,6 +73,9 @@ local CUSTOMS={}
 for i=1,L.CUSTOM_COUNT do CUSTOMS[i]={value=i,label="Custom "..i} end
 local MIRRORS={{value="none",label="As designed"},{value="x",label="Mirrored sideways"},{value="y",label="Upside down"},{value="xy",label="Both"}}
 local EASES={{value="NONE",label="Linear"},{value="IN",label="Ease in (slow start)"},{value="OUT",label="Ease out (slow end)"},{value="IN_OUT",label="Ease in and out"}}
+-- Vertical easing (0.7.1): its own, so a part bends; "SAME" follows Easing.
+local EASES_Y={{value="SAME",label="Same as easing"}}
+for _,option in ipairs(EASES) do EASES_Y[#EASES_Y+1]=option end
 local POSITIONS={{value="nameplate",label="At the nameplate"},{value="outgoing",label="Outgoing anchor"},
     {value="incoming",label="Incoming anchor"},{value="notice",label="Notification anchor"},{value="auto",label="Where it happened"}}
 local PETS={{value="mine",label="As mine"},{value="dimmed",label="Dimmed"},{value="hidden",label="Hidden"}}
@@ -223,6 +230,9 @@ local function build(parent)
     ec.a=g:Row("Opacity",UI:InlineSlider(g,190,0,1,.05,"%.2f",field("a")),{help="0 is invisible, 1 solid."})
     ec.ease=g:Row("Easing to here",UI:Dropdown(g,190,EASES,field("ease")),
         {help="How the movement from the previous point to this one runs. Not used for point 1."})
+    ec.easeY=g:Row("Vertical easing",UI:Dropdown(g,190,EASES_Y,function(value)
+        keys()[edit.point].easeY=value~="SAME" and value or nil;changedKeys()
+    end),{help="Up and down movement on its own easing: with Linear sideways and Ease out here, the text flies a curve instead of a straight line."})
     g:Row("Preview",UI:Button(g,"Play",120,function() if L:Active() then L.Display:Preview(edit.index,false) else L:Print("Turn the module on first (/bv sct on).") end end),
         {help="Plays this custom animation at the outgoing anchor with the outgoing style (module must be on)."})
     g:Row("",UI:Button(g,"Play as crit",120,function() if L:Active() then L.Display:Preview(edit.index,true) end end),
@@ -237,6 +247,7 @@ local function build(parent)
         ec.t:SetValue(math.floor(k.t*100+.5))
         for _,key in ipairs({"x","y","s","a"}) do ec[key]:SetValue(k[key]) end
         ec.ease:SetValue(k.ease)
+        ec.easeY:SetValue(k.easeY or "SAME")
     end
     for _,name in ipairs(L.CATEGORY_ORDER) do
         local text=CATEGORY_TEXT[name]
@@ -254,7 +265,7 @@ local function build(parent)
         srow("animation","Animation",UI:Dropdown(g,190,ANIMATIONS,sset("animation")),"Movement of the text: a preset or one of your custom animations. Crits start with an extra pop.")
         srow("mirror","Direction",UI:Dropdown(g,190,MIRRORS,sset("mirror")),"Flips the animation, e.g. a scroll up becomes a scroll down, a fountain to the right goes left.")
         srow("size","Font size",UI:InlineSlider(g,190,8,64,1,"%d",sset("size")),"Size of normal hits.")
-        srow("crit","Crit size",UI:InlineSlider(g,190,1,3,.1,"x%.1f",sset("crit")),"Crits are this much larger.")
+        if L.CRIT_CATEGORIES[name] then srow("crit","Crit size",UI:InlineSlider(g,190,1,3,.1,"x%.1f",sset("crit")),"Crits are this much larger.") end
         srow("color","Color",UI:ColorInput(g,150,sset("color")),"Text color.",{width=150})
         if name=="outgoing" then srow("school","School colors",UI:Switch(g,true,sset("school")),"Fire orange, frost blue and so on instead of the color above.") end
         local defaults=L.CATEGORY_DEFAULTS[name]
@@ -272,12 +283,15 @@ local function build(parent)
         end
         affix("prefix","Prefix","Text in front of every "..(name=="miss" and "message" or "number")..".")
         affix("suffix","Suffix","Text after every "..(name=="miss" and "message" or "number")..".")
-        if name~="miss" then
+        if L.CRIT_CATEGORIES[name] then
             affix("critPrefix","Crit prefix","Extra text in front of crits only, outside the prefix.")
             affix("critSuffix","Crit suffix","Extra text after crits only, outside the suffix.")
         end
         srow("duration","Duration",UI:InlineSlider(g,190,.3,5,.1,"%.1f s",sset("duration")),"How long the text stays on screen.")
         srow("distance","Distance",UI:InlineSlider(g,190,0,300,5,"%d px",sset("distance")),"How far the text travels.")
+        srow("stagger","Stagger",UI:Switch(g,true,sset("stagger")),"Texts that come together are shown one after another and a line apart, so they never overlap.")
+        srow("staggerDelay","Stagger delay",UI:InlineSlider(g,190,0,1000,10,"%d ms",sset("staggerDelay")),"Time between two staggered texts.")
+        srow("staggerSpacing","Stagger spacing",UI:InlineSlider(g,190,0,100,1,"%d px",sset("staggerSpacing")),"Distance to the text before while it is still on screen.")
     end
     -- Tabs in the settings window header: which sections each one shows.
     local TABS={
@@ -339,7 +353,7 @@ L.commands.blizzard=function(action)
         ..(L:Active() and "" or " (module off: all shown)").." - /bv sct blizzard [hide|show]")
 end
 L.commands.debug=function(action)
-    if action=="reset" then L.Sources.stats={};L.Sources.lastError=nil;L:DB().spellTrace=nil;L:DB().logTrace=nil;L:Print("Counters, spell and log traces reset.");return end
+    if action=="reset" then L.Sources.stats={};L:DB().stats=L.Sources.stats;L.Sources.lastError=nil;L:DB().spellTrace=nil;L:DB().logTrace=nil;L:Print("Counters, spell and log traces reset.");return end
     if action=="spells" then
         -- Last decisions of the spell guess: id:fit:school:interval:base per candidate.
         local list=L:DB().spellTrace or {}

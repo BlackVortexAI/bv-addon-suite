@@ -64,6 +64,18 @@ end
 -- the default filter a physical hit without a line of yours; without the
 -- Combat Log a physical hit on an enemy fighting you while you do not auto
 -- attack. In a group the pet's swing beat must fit too (Attribution).
+-- Without the Combat Log a hit counts as yours only with evidence of your
+-- own: you cast on the enemy in the last 10 s, a DoT of yours still runs on
+-- it, or it is your target while you channel or auto attack. Threat and unit
+-- comparisons may be secret on Forever (ShouldUnitThreatStateBeSecret,
+-- ShouldUnitComparisonBeSecret); such an "unknown" made NPCs' hits on a mob
+-- show as yours in full (Florian 2026-10-06). Now they are others' in your
+-- fight: dimmed.
+function O:Yours(unit)
+    local A=L.Attribution
+    if A:Recent(unit) or A:Running(unit) then return true end
+    return (A.channel~=nil or A.AutoAttacking()~=nil) and A:IsTarget(unit)
+end
 function O:Of(unit,credit,school)
     local relation=self:Relation(unit)
     local A=L.Attribution
@@ -89,7 +101,9 @@ function O:Of(unit,credit,school)
     end
     if A:PetSpell(school) then return pet() end
     if physical and relation=="you" and not A.AutoAttacking() and A:PetMeleeFits(grouped) then return melee("fight") end
-    return relation=="you" and "mine" or "others","fight",relation
+    if relation=="you" and self:Yours(unit) then return "mine","fight",relation end
+    if relation=="you" then L.Sources.Count("origin unsure: not yours without evidence") end
+    return "others","fight",relation
 end
 
 -- A heal on a friendly unit other than you. Evidence: a Combat Log line of
@@ -102,7 +116,8 @@ function O:OfHeal(unit,credit)
     if check(UnitIsUnit,unit,"target")==true or check(UnitInParty,unit)==true or (raid~=nil and raid~=false and raid~="unknown") then relation="group" end
     if credit~=nil then return credit and "mine" or "others","log",relation end
     local A=L.Attribution
-    local recent=A.lastTime~=nil and GetTime()-A.lastTime<=A.castWindow
+    -- A cast that cannot heal someone else (Immolate, Drain Life) is no evidence.
+    local recent=A.lastTime~=nil and GetTime()-A.lastTime<=A.castWindow and A:CanHeal(A.lastSpell,false)~=false
     return recent and "mine" or "others","cast",relation
 end
 

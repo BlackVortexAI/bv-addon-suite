@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.7.0","0.8.91",1) then return end
+if not ns:RequireCore(package,"0.7.1","0.8.91",1) then return end
 -- Combat text module. Everything specific to it lives in this package, never
 -- in Core, so Core stays free for fixes.
 L.ns=ns
@@ -46,6 +46,19 @@ L.CATEGORY_DEFAULTS={
     notice={anchor="notice",animation="pop",size=22,color="FFD100FF",school=false,prefix="",suffix="",duration=2,distance=40,crit=1,
         combat=true,reputation=true,honor=true,procs=true},
 }
+-- Staggered output (0.7.1, UI/Display.lua): texts of a category that come
+-- together one after another (staggerDelay ms apart) and a line apart
+-- (staggerSpacing px) while the ones before are on screen. On by default for
+-- messages, auras and power; damage and heals spread by fountain and plates.
+L.STAGGER_ON={buff=true,debuff=true,buffgiven=true,power=true,notice=true}
+for name,d in pairs(L.CATEGORY_DEFAULTS) do
+    d.stagger=L.STAGGER_ON[name]==true
+    d.staggerDelay=250
+    d.staggerSpacing=math.floor(d.size*1.3+.5)
+end
+-- Only damage and heals can be critical (UNIT_COMBAT's CRITICAL flag): crit
+-- options only there.
+L.CRIT_CATEGORIES={outgoing=true,incoming=true,heal=true,outheal=true}
 -- Switches of the message categories (only where the defaults have them).
 L.CATEGORY_SWITCHES={"gains","fades","combat","reputation","honor","procs"}
 L.DEFAULTS={enabled=false,hideBlizzard=true,hideBlizzardSelf=true,plates=true,numbers="short",font="inherit",outline="OUTLINE",
@@ -79,7 +92,8 @@ function L.ContentType()
     return "world"
 end
 local function num(v,default,low,high) if type(v)~="number" or v~=v then v=default end;return math.max(low,math.min(high,v)) end
-local ANIMATIONS={up=true,down=true,fountain=true,rain=true,pop=true,custom1=true,custom2=true,custom3=true}
+local ANIMATIONS={up=true,down=true,fountain=true,rain=true,pop=true,custom1=true,custom2=true,custom3=true,
+    curveright=true,curveleft=true,curveup=true,curvedown=true,arc=true,slideright=true,slideleft=true,wave=true,bounce=true,slam=true,shake=true,zoom=true}
 local MIRRORS={none=true,x=true,y=true,xy=true}
 -- Three editable custom animations; the defaults start from presets.
 L.CUSTOM_COUNT=3
@@ -139,6 +153,9 @@ function L:Config()
         for _,key in ipairs(L.CATEGORY_SWITCHES) do if defaults[key]~=nil then c[key]=c[key]~=false end end
         c.size=num(c.size,defaults.size,8,64);c.duration=num(c.duration,defaults.duration,.3,5)
         c.distance=num(c.distance,defaults.distance,0,300);c.crit=num(c.crit,defaults.crit,1,3)
+        c.stagger=c.stagger==true
+        c.staggerDelay=math.floor(num(c.staggerDelay,defaults.staggerDelay,0,1000)+.5)
+        c.staggerSpacing=math.floor(num(c.staggerSpacing,defaults.staggerSpacing,0,100)+.5)
         if type(c.color)~="string" or not c.color:match("^%x%x%x%x%x%x%x%x$") then c.color=defaults.color end
         -- Prefix/suffix (also only for crits) with {school} {spell} {name}.
         for _,key in ipairs({"prefix","suffix","critPrefix","critSuffix"}) do c[key]=L.Format.CleanAffix(c[key],defaults[key] or "") end

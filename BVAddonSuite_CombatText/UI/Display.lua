@@ -6,7 +6,7 @@ if not L.ready then return end
 local ns=L.ns
 local D=ns.DesignSystem.Metrics
 local A=L.Animation
-local Display={pool={},active={},anchors={},moving={},maxActive=40,step=1/30}
+local Display={pool={},active={},anchors={},moving={},queues={},generation=0,maxActive=40,step=1/30}
 L.Display=Display
 
 local function owned(frame) if ns.ExternalFrames then ns.ExternalFrames:MarkOwned(frame) end;return frame end
@@ -84,7 +84,11 @@ function Display:Release(item)
     item.plate,item.plateFrame=nil,nil
     self.pool[#self.pool+1]=item
 end
-function Display:Clear() while #self.active>0 do self:Release(self.active[1]) end end
+-- Clearing also drops staggered texts still waiting.
+function Display:Clear()
+    while #self.active>0 do self:Release(self.active[1]) end
+    self.generation=self.generation+1;self.queues={}
+end
 
 -- Nameplate frame of a unit, or nil when none is shown or it is forbidden.
 function Display:Plate(unit)
@@ -105,7 +109,7 @@ function Display:Move()
     for item,m in pairs(self.moving) do
         local x,y=A:Offset(m.keys,(now-m.start)/m.duration)
         item.frame:ClearAllPoints()
-        if not pcall(item.frame.SetPoint,item.frame,"BOTTOM",m.plate,"TOP",x*m.distance,y*m.distance) then self.moving[item]=nil
+        if not pcall(item.frame.SetPoint,item.frame,"BOTTOM",m.plate,"TOP",x*m.distance,y*m.distance+(m.offset or 0)) then self.moving[item]=nil
         else any=true end
     end
     if not any and self.ticker then self.ticker:Cancel();self.ticker=nil end
@@ -121,7 +125,46 @@ end
 
 -- Shows one text. entry: {category, text, crit, school r/g/b, unit}.
 -- override: style used instead of the category's (animation preview).
+-- A staggered category may show it later: returns Display.QUEUED then.
 function Display:Show(entry,override)
+    local style=override or L:Config().categories[entry.category]
+    if not style or not style.enabled then return nil end
+    if not override and style.stagger then return self:Stagger(entry,style) end
+    return self:Place(entry,override)
+end
+-- Staggered output (0.7.1): per category and place (anchor, or the unit at
+-- its nameplate) one text every staggerDelay ms; each takes the lowest line
+-- not held by a text still on screen, staggerSpacing px apart against the
+-- animation's direction (below for texts that rise). A flood of more than
+-- STAGGER_MAX waiting texts is shown without further delay.
+Display.STAGGER_MAX,Display.STAGGER_LINES=12,8
+Display.QUEUED={queued=true}
+function Display:Stagger(entry,style)
+    local key=entry.category..":"..tostring((style.anchor=="nameplate" or style.anchor=="auto") and entry.unit or style.anchor)
+    local q=self.queues[key]
+    if not q then q={next=0,pending=0,lines={}};self.queues[key]=q end
+    local now=GetTime()
+    local start=math.max(now,q.next)
+    if q.pending>=self.STAGGER_MAX then start=now end
+    q.next=start+style.staggerDelay/1000
+    local function run()
+        local t=GetTime()
+        local line=0
+        while line<self.STAGGER_LINES-1 and q.lines[line] and q.lines[line]>t do line=line+1 end
+        q.lines[line]=t+style.duration
+        entry.staggerLine=line
+        return self:Place(entry)
+    end
+    if start<=now then return run() end
+    q.pending=q.pending+1
+    local generation=self.generation
+    C_Timer.NewTimer(start-now,function()
+        q.pending=q.pending-1
+        if generation==self.generation and L:Active() then run() end
+    end)
+    return self.QUEUED
+end
+function Display:Place(entry,override)
     local cfg=L:Config()
     local style=override or cfg.categories[entry.category]
     if not style or not style.enabled then return nil end
@@ -166,6 +209,12 @@ function Display:Show(entry,override)
     local keys=A:Keys(style,entry.crit,jitter,custom and custom.keys)
     local distance=D.ToNative(style.distance)
     local x,y=(keys[1].x or 0)*distance,(keys[1].y or 0)*distance
+    -- Staggered: its line, against the direction the text moves.
+    local offset=0
+    if entry.staggerLine and entry.staggerLine>0 then
+        offset=entry.staggerLine*D.ToNative(style.staggerSpacing)*((keys[#keys].y or 0)>0 and -1 or 1)
+    end
+    y=y+offset
     frame:ClearAllPoints()
     if plate and not pcall(frame.SetPoint,frame,"BOTTOM",plate,"TOP",x,y) then
         frame:ClearAllPoints();plate=nil
@@ -173,11 +222,12 @@ function Display:Show(entry,override)
     end
     if plate then
         item.plate,item.plateFrame=entry.unit,plate
-        self.moving[item]={keys=keys,start=GetTime(),duration=style.duration,distance=distance,plate=plate}
+        self.moving[item]={keys=keys,start=GetTime(),duration=style.duration,distance=distance,plate=plate,offset=offset}
         self:StartMoving()
     else
         anchor=anchor or (anchorKey~="nameplate" and anchorKey~="auto" and self.anchors[anchorKey]) or (entry.incoming and self.anchors.incoming) or self.anchors.outgoing
-        local lane=(style.animation~="fountain" and style.animation~="rain") and anchor:NextLane() or 0
+        -- Staggered texts keep one column; others spread over a few lanes.
+        local lane=(not entry.staggerLine and style.animation~="fountain" and style.animation~="rain") and anchor:NextLane() or 0
         frame:SetPoint("CENTER",anchor.frame,"CENTER",x+D.ToNative(lane),y)
     end
     frame:SetFrameLevel(10+(#self.active%40))

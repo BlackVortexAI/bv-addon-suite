@@ -15,7 +15,7 @@ This development version is undergoing in-game acceptance testing.
 | `BVAddonSuite_Bags` | 0.8.91 |
 | `BVAddonSuite_MicroMenu` | 0.8.89 |
 | `BVAddonSuite_Loot` | 0.8.90 |
-| `BVAddonSuite_CombatText` | 0.7.0 |
+| `BVAddonSuite_CombatText` | 0.7.1 |
 
 ## Installation
 
