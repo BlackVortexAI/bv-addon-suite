@@ -615,6 +615,17 @@ function P.Issues(s,result,spots,order,cut,loop)
     end
     local points=result.points
     local n=#points
+    -- Drops higher than "Short drops" allows (no way round them was found).
+    local mode=G:Config().cliffs
+    if mode~="always" then
+        for j=2,n do
+            local a,b=spots[j-1],spots[j]
+            if a and b and points[j].drop and not points[j].gap then
+                local wall,fall=Grid.LineWall(s,a[1],a[2],b[1],b[2])
+                if (wall==2 or wall==3) and fall and fall>Grid.SAFEDROP then add("highdrop",b[1],b[2],fall) end
+            end
+        end
+    end
     local run,runKind,runX,runY=0,nil,nil,nil
     local function close()
         if runKind and run>=(P.ISSUERUN[runKind] or 0) then add(runKind,runX,runY,run) end

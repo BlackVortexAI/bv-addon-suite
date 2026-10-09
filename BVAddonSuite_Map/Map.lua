@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.2.2","0.8.96",1) then return end
+if not ns:RequireCore(package,"0.2.3","0.8.96",1) then return end
 -- Map package (docs/map-quest-concept.md, own package by Florian's choice on
 -- 2026-10-08): coordinates, transparency while moving, map size and position,
 -- waypoints. Blizzard's map is never replaced; other map addons keep working.

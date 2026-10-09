@@ -287,28 +287,49 @@ function R.TerrainCell(s,x,y)
     local f=s.terrain
     return ns.MapTerrain.Cell(f.a[f.iy]+y*f.dy,f.a[f.ix]+x*f.dx)
 end
+-- Fall heights (Florian 2026-10-09: "Short drops" judged by the coarse
+-- heights let high cliffs pass): per wall the height of its steep face as
+-- a class (data layers falls/falls2, three bits per direction), read here
+-- as the class's upper bound in yards.
+R.FALLS={4,6,8,12,16,20,30,60}
+local FALLLAYER={[1]={"falls",0},[64]={"falls",3},[65]={"falls2",0},[63]={"falls2",3}}
+function R.FallOf(instance,gx1,gy1,gx2,gy2)
+    local dx,dy=gx2-gx1,gy2-gy1
+    if dy<0 or (dy==0 and dx<0) then gx1,gy1,dx,dy=gx2,gy2,-dx,-dy end
+    local which=FALLLAYER[dy*64+dx]
+    if not which then return nil end
+    local col,row=math.floor(gx1/64),math.floor(gy1/64)
+    local codes=ns.MapTerrain:Codes(instance,col,row,which[1])
+    if not codes then return nil end
+    local class=math.floor((codes[(gy1-row*64)*64+(gx1-col*64)+1] or 0)/2^which[2])%8
+    return R.FALLS[class+1]
+end
+-- The wall between two space points and, for a wall, its fall height
+-- (nil without fall data).
 function R.Wall(s,ax,ay,bx,by)
     local T=ns.MapTerrain
     if not (type(s.terrain)=="table" and s.terrain.a and T.Wall) then return 0 end
     local gx1,gy1=R.TerrainCell(s,ax,ay)
     local gx2,gy2=R.TerrainCell(s,bx,by)
     if gx1==gx2 and gy1==gy2 then return 0 end
-    return T:Wall(s.terrain.instance,gx1,gy1,gx2,gy2)
+    local wall=T:Wall(s.terrain.instance,gx1,gy1,gx2,gy2)
+    if wall==0 then return 0 end
+    return wall,R.FallOf(s.terrain.instance,gx1,gy1,gx2,gy2)
 end
 -- The walls on a line, sampled every 2 yards (the route cells and the
 -- terrain cells do not line up; a slanted step may cross two terrain edges).
 function R.LineWall(s,ax,ay,bx,by)
     local n=math.max(1,math.ceil(R.Yards(s,ax,ay,bx,by)/2))
-    local up,down=false,false
+    local up,down,fall=false,false,nil
     local lx,ly=ax,ay
     for i=1,n do
         local px,py=ax+(bx-ax)*i/n,ay+(by-ay)*i/n
-        local wall=R.Wall(s,lx,ly,px,py)
+        local wall,height=R.Wall(s,lx,ly,px,py)
         if wall==1 or wall==3 then up=true end
-        if wall==2 or wall==3 then down=true end
+        if wall==2 or wall==3 then down=true;if height then fall=math.max(fall or 0,height) end end
         lx,ly=px,py
     end
-    return (up and 1 or 0)+(down and 2 or 0)
+    return (up and 1 or 0)+(down and 2 or 0),fall
 end
 -- The wall between two route cells (cached per pair).
 function R.CellWall(s,cx,cy,nx,ny)
@@ -318,21 +339,27 @@ function R.CellWall(s,cx,cy,nx,ny)
     if wall==nil then
         local ax,ay=R.Center(s,cx,cy)
         local bx,by=R.Center(s,nx,ny)
-        wall=R.LineWall(s,ax,ay,bx,by)
+        local fall
+        wall,fall=R.LineWall(s,ax,ay,bx,by)
         s.walls[key]=wall
+        if fall then s.falls=s.falls or {};s.falls[key]=fall end
     end
-    return wall
+    return wall,s.falls and s.falls[key]
 end
 function R.Step(s,cx,cy,nx,ny,cost,goal)
     if not s.terrain then return cost end
     local from,to=R.Height(s,cx,cy),R.Height(s,nx,ny)
     if not (from and to) then return cost end
-    local wall=R.CellWall(s,cx,cy,nx,ny)
-    -- A wall up (or a ridge) is never climbed; a wall down is a drop.
+    local wall,fall=R.CellWall(s,cx,cy,nx,ny)
+    -- A wall up (or a ridge) is never climbed; a wall down is a drop, short
+    -- by its fall height from the fine heights (the coarse ones where the
+    -- data has none).
     if wall==1 or wall==3 then return nil end
     if wall==2 then
         local mode=G:Config().cliffs
-        if mode=="always" or (mode=="safe" and from-to<=R.SAFEDROP) then return cost*1.5 end
+        if mode=="always" or (mode=="safe" and (fall or (from-to))<=R.SAFEDROP) then return cost*1.5 end
+        -- Known to be higher than a short drop: never ("never down a mountain").
+        if mode=="safe" and fall then return nil end
         return cost*R.SLOPE[4]
     end
     local cliff=s.steep[ny*s.cols+nx] or math.abs(to-from)>R.MAXRISE

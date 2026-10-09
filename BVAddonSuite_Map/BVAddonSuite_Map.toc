@@ -3,7 +3,7 @@
 ## Notes: Coordinates, transparency while moving, map size and waypoints (TomTom-compatible). Requires BV Core.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.2.2
+## Version: 0.2.3
 ## Dependencies: BVAddonSuite
 ## OptionalDeps: TomTom
 

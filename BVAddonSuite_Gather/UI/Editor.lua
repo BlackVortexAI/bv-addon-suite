@@ -1692,6 +1692,7 @@ E.ISSUES={
     enemy={"Enemy base","The way passes an enemy base. Paint No-go to go round it, or a transition for a way past it."},
     risk={"High risk area","The way crosses your high-risk area: no other way was found. Paint Preferred where it is safe to pass."},
     detour={"Long way round","Two stops close together lie far apart on foot. If there is a shortcut (a ramp, a bridge, a tunnel), paint Preferred along it or add a transition."},
+    highdrop={"High drop","The way jumps down further than \"Short drops\" allows: no other way was found. If there is a path down, paint Preferred along it; with Slow Fall set \"Down cliffs\" to Always."},
     gap={"No way found","No way between these stops in the terrain data. Plan it by hand: Preferred ground or a transition, then Calculate again."},
     cut={"Left out","The stops here cannot be reached (and left again). If there is a way up, paint Preferred along it or add a transition."},
 }
@@ -1708,7 +1709,7 @@ function E:DrawIssues()
             local info=issue and E.ISSUES[issue.kind]
             if not info then return end
             local rows={}
-            if issue.yards and issue.kind~="cut" then rows[#rows+1]={issue.kind=="detour" and "Extra way" or "Length",issue.yards.." yd"} end
+            if issue.yards and issue.kind~="cut" then rows[#rows+1]={issue.kind=="detour" and "Extra way" or issue.kind=="highdrop" and "Fall up to" or "Length",issue.yards.." yd"} end
             if issue.kind=="cut" and issue.yards then rows[#rows+1]={"Nodes",tostring(issue.yards)} end
             UI:ShowTooltip(self,info[1],{tag="Difficult spot",tagColor=E.ISSUECOLOR,rows=rows,text=info[2]})
         end)

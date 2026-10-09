@@ -112,6 +112,9 @@ end
 function W:Restore()
     local view,map=self.view,P:WorldMap()
     if not (P:Config().rememberZoom and view and map and map.SetMapID) then return end
+    -- Not in combat: setting the map's zoom from here could block a
+    -- protected call of the map's own code (pins in combat).
+    if InCombatLockdown and InCombatLockdown() then return end
     if view.player~=P.Call("C_Map.GetBestMapForUnit","player") then self.view=nil;return end
     if map:GetMapID()~=view.mapID then pcall(map.SetMapID,map,view.mapID) end
     local scroll=map.ScrollContainer

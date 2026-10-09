@@ -3,7 +3,7 @@
 ## Notes: Herbs, ore, fishing pools and treasure on the world map and the minimap; GatherMate2 import. Requires BV Core.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.1.3
+## Version: 0.1.4
 ## Dependencies: BVAddonSuite
 ## OptionalDeps: GatherMate2
 ## SavedVariables: BVGatherDB

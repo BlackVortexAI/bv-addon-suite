@@ -5,6 +5,10 @@ if not P.ready then return end
 -- The map builds its zoom levels for each map (CreateZoomLevels, from the
 -- map's art layers); after that, levels beyond the closest one are added.
 -- The art only grows, so it gets softer: 2x is fine, 4x clearly blurred.
+-- Our levels are not Blizzard's own: read by the map's code in combat they
+-- block a protected call (Florian 2026-10-09: ADDON_ACTION_BLOCKED,
+-- SetPassThroughButtons, opening the map in combat). So none in combat: the
+-- levels go when combat starts and come back after it.
 local Z={}
 P.Zoom=Z
 Z.STEPS={x2={1.5,2},x4={1.5,2,3,4}}
@@ -18,12 +22,28 @@ function Z.Available()
 end
 -- After Blizzard built the levels: ours on top of the closest one.
 function Z:Extend(scroll)
+    if InCombatLockdown and InCombatLockdown() then return end
     local steps=P:Active() and self.STEPS[P:Config().extraZoom]
     local levels=scroll.zoomLevels
     if not (steps and type(levels)=="table" and #levels>0) then return end
     local last=levels[#levels]
     if type(last)~="table" or type(last.scale)~="number" then return end
+    scroll.bvExtra=#levels
     for _,factor in ipairs(steps) do levels[#levels+1]={scale=last.scale*factor,layerIndex=last.layerIndex} end
+end
+-- Combat starts: our levels out again (Blizzard's stay untouched).
+function Z:Strip()
+    local _,scroll=self:Scroll()
+    local levels=scroll and scroll.zoomLevels
+    local keep=scroll and scroll.bvExtra
+    if not (type(levels)=="table" and keep) then return end
+    for i=#levels,keep+1,-1 do levels[i]=nil end
+    scroll.bvExtra=nil
+end
+-- Combat over: ours again on the levels the map has now.
+function Z:Restore()
+    local _,scroll=self:Scroll()
+    if scroll and not scroll.bvExtra and type(scroll.zoomLevels)=="table" then self:Extend(scroll) end
 end
 -- A changed setting: the open map builds its levels again; a zoom past the
 -- new limit comes back to it.
@@ -37,6 +57,7 @@ function Z:Apply()
     local want=P:Active() and P:Config().extraZoom or "off"
     if want==self.applied then return end
     self.applied=want
+    if InCombatLockdown and InCombatLockdown() then return end
     if not (map:IsShown() and scroll.zoomLevels) then return end
     if not pcall(scroll.CreateZoomLevels,scroll) then return end
     if scroll.GetCanvasScale and scroll.GetScaleForMaxZoom and scroll.InstantPanAndZoom then
@@ -52,4 +73,7 @@ end
 function Z:Enable(context)
     self.applied=nil
     self:Apply()
+    pcall(context.Subscribe,context,"PLAYER_REGEN_DISABLED",function() Z:Strip() end)
+    pcall(context.Subscribe,context,"PLAYER_REGEN_ENABLED",function() Z:Restore() end)
+    context:Defer(function() Z:Strip() end)
 end
