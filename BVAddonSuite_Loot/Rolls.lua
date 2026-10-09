@@ -79,9 +79,33 @@ function R:List()
     return out
 end
 function R:Changed(roll) L:Emit("RollUpdated",roll) end
+-- One player, one entry: a source that gives only the first name and one
+-- that gives "First Last" mean the same player when that is unambiguous.
+function R:Resolve(roll,name)
+    if roll.choices[name] then return name end
+    local first=L.FirstName(name)
+    if first then
+        local bare=roll.choices[first]
+        if bare then
+            roll.choices[first]=nil;roll.choices[name]=bare;bare.name=name
+            for index,other in ipairs(roll.names) do if other==first then roll.names[index]=name end end
+            if roll.winner==first then roll.winner=name end
+        end
+        return name
+    end
+    local match
+    for other in pairs(roll.choices) do
+        if L.FirstName(other)==name then
+            if match then return name end
+            match=other
+        end
+    end
+    return match or name
+end
 function R:SetChoice(roll,name,choice,value,class,source)
     name=L.Short(name)
     if not roll or not name then return end
+    name=self:Resolve(roll,name)
     if choice and not L.OPTIONS[choice] then return end
     local entry=roll.choices[name]
     if not entry then entry={name=name};roll.choices[name]=entry;roll.names[#roll.names+1]=name end
@@ -154,6 +178,8 @@ function R:Finish(roll,reason)
     if not roll or roll.done then return end
     roll.done,roll.finished,roll.reason=true,now(),reason
     cancel(roll)
+    -- The winner by the same name as its entry (first name vs. "First Last").
+    if roll.winner then roll.winner=self:Resolve(roll,roll.winner) end
     if not roll.winner and reason~="cancelled" then
         local top=self:Ranking(roll)[1]
         if top and top.choice~="pass" and top.value then roll.winner=top.name end

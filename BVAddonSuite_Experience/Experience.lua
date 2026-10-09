@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.8.89","0.8.89",1) then return end
+if not ns:RequireCore(package,"0.8.91","0.8.95",1) then return end
 local Data,number=ns.ProgressData,ns.ProgressModel.Number
 local field=ns.ProgressOptions.Field
 function Data:Experience()
@@ -24,6 +24,33 @@ function Data:Experience()
         rested = math.max(0, rested), capped = capped, disabled = IsXPUserDisabled and IsXPUserDisabled() or false }
 end
 
+
+-- Level-up notification on Core's notification stage (0.8.90, Core 0.8.95).
+ns.Stage:Register({id="levelup",label="Level up",priority=3,hold=5,
+    description="Your new level and how long the last one took. Shown while the Experience Bar module is on.",
+    sample={title="Level 35",subtitle="Level 34 took 1h 12m"}})
+
+-- Blizzard's own level-up display came at the same time as ours (Florian
+-- 2026-10-08). While our level-up type is on, Blizzard's is hidden for a
+-- few seconds after a level-up: the classic LevelUpDisplay frame and, on
+-- clients with the event toasts, the toast shown then.
+local blizzard={quietUntil=0}
+local function ours() return ns.Stage.types.levelup~=nil and ns.Stage:TypeConfig("levelup").enabled==true end
+local function quiet() return GetTime()<blizzard.quietUntil and ours() end
+local function hookBlizzard()
+    if blizzard.hooked then return end
+    blizzard.hooked=true
+    local display=rawget(_G,"LevelUpDisplay")
+    if display and display.HookScript then display:HookScript("OnShow",function(own) if quiet() then own:Hide() end end) end
+    local toasts=rawget(_G,"EventToastManagerFrame")
+    if toasts and type(toasts.DisplayToast)=="function" then
+        hooksecurefunc(toasts,"DisplayToast",function(own)
+            if not quiet() then return end
+            if type(own.CloseActiveToasts)=="function" then pcall(own.CloseActiveToasts,own) else own:Hide() end
+        end)
+    end
+end
+ns.ExperienceLevelUp=blizzard
 
 ns.ProgressBars:Register({
     kind="experience", label="Experience Bar", description="Progress, pace and time to your next level.",
@@ -46,6 +73,22 @@ ns.ProgressBars:Register({
     newSession=ns.ProgressModel.NewSession, observe=ns.ProgressModel.Observe,
     clockTokens={"{eta}","{rate}","{levelTime}"},
     onEnable=function(context,state)
+        -- The old level's time comes from the session before the next XP update.
+        hookBlizzard()
+        context:Subscribe("PLAYER_LEVEL_UP",function(_,level)
+            if not number(level) then return end
+            blizzard.quietUntil=GetTime()+6
+            -- Already on screen (it can come first): gone.
+            local display=rawget(_G,"LevelUpDisplay")
+            if ours() and display and display.IsShown and display:IsShown() then display:Hide() end
+            local subtitle
+            local ok,values=pcall(ns.ProgressModel.Values,state.snapshot,state.session,GetTime())
+            if ok and type(values)=="table" and values.levelTime and values.levelTime~="—" then
+                subtitle="Level "..(level-1).." took "..values.levelTime
+            end
+            -- Never let the notification disturb the bar.
+            pcall(ns.Stage.Show,ns.Stage,"levelup",{title="Level "..level,subtitle=subtitle or "A new level"})
+        end)
         context:Subscribe("TIME_PLAYED_MSG",function(_,_,levelSeconds)
             if number(levelSeconds) then
                 state.session.playedBase,state.session.playedAt=levelSeconds,GetTime()

@@ -63,11 +63,11 @@ function M:Toast()
     local t=table.remove(self.pool)
     if t then return t end
     t={}
-    local f=W.Owned(UI:Panel(self.anchor.frame,270,HEIGHT,"canvas"));t.frame=f;f:Hide();f:EnableMouse(true)
+    local f=W.Owned(UI:GamePanel(L.ID,self.anchor.frame,270,HEIGHT,"canvas",nil,function() return L:Config().panelOpacity/100 end));t.frame=f;f:Hide();f:EnableMouse(true)
     t.stripe=f:CreateTexture(nil,"ARTWORK");D.Point(t.stripe,"TOPLEFT",f,"TOPLEFT",0,0);D.Point(t.stripe,"BOTTOMLEFT",f,"BOTTOMLEFT",0,0);D.Width(t.stripe,3)
-    t.item=W:ItemIcon(f,32);UI:Place(t.item,f,7,4);t.item:EnableMouse(false)
-    t.name=UI:Label(f,"",13,false,true);t.name:SetWordWrap(false)
-    t.sub=UI:Label(f,"",11,false);t.sub:SetWordWrap(false);t.sub:SetTextColor(.82,.8,.78)
+    t.item=W:ItemIcon(f,32,true);UI:Place(t.item,f,7,4);t.item:EnableMouse(false)
+    t.name=UI:GameLabel(L.ID,f,"",13,false,true);t.name:SetWordWrap(false)
+    t.sub=UI:GameLabel(L.ID,f,"",11,false);t.sub:SetWordWrap(false);t.sub:SetTextColor(.82,.8,.78)
     t.fader=W:Fader(f)
     f:SetScript("OnEnter",function(owner) if t.data and t.data.link then W:ItemTooltip(owner,{link=t.data.link,itemID=t.data.itemID,source="monitor",player=t.data.looter}) end end)
     f:SetScript("OnLeave",function(owner) W:HideTooltip(owner) end)
@@ -79,6 +79,9 @@ function M:Toast()
 end
 function M:Paint(t)
     local data,w=t.data,self.anchor:Width()
+    local familyID,family=L:Family()
+    -- The quality stripe belongs to the BV look; WoW and Clean show quality by the icon border.
+    t.stripe:SetShown(family.stripe==true)
     D.Size(t.frame,w,HEIGHT)
     UI:Place(t.name,t.frame,46,5);D.Size(t.name,w-52,16)
     UI:Place(t.sub,t.frame,46,22);D.Size(t.sub,w-52,14)
@@ -96,8 +99,9 @@ function M:Paint(t)
     t.name:SetText((info.name or linkName(data.link) or "?")..(data.count>1 and ("  x"..data.count) or ""));t.name:SetTextColor(r,g,b)
     t.stripe:SetColorTexture(r,g,b,1)
     local parts={}
+    if data.self and family.receive then parts[#parts+1]="You receive loot" end
     if not data.self then parts[#parts+1]=L.Colored(data.looter,data.class) end
-    if info.level and info.level>1 and (info.classID==2 or info.classID==4) then parts[#parts+1]=(ITEM_LEVEL_ABBR or "iLvl").." "..info.level end
+    if info.level and info.level>1 and (info.classID==2 or info.classID==4) then parts[#parts+1]=ns.Styles:LevelText(familyID,info.level) end
     local kind=L.ItemKind(info)
     if kind then parts[#parts+1]=kind end
     t.sub:SetText(table.concat(parts,"  ·  "))
@@ -142,6 +146,8 @@ function M:InfoReceived()
     for _,t in ipairs(self.toasts) do if t.data then self:Paint(t) end end
 end
 function M:Clear() for i=#self.toasts,1,-1 do self:Release(self.toasts[i]) end end
+-- The style family changed: shown toasts take the new look at once.
+function M:Repaint() for _,t in ipairs(self.toasts) do if t.data then self:Paint(t) end end end
 
 function M:Preview(on)
     self:Clear()

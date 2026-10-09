@@ -3,7 +3,7 @@
 ## Notes: Loot roll bars, loot monitor, roll results and a master loot window with roll requests. Requires BV Core.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.8.90
+## Version: 0.8.92
 ## Dependencies: BVAddonSuite
 
 Loot.lua

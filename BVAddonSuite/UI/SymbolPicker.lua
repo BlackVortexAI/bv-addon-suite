@@ -1,8 +1,11 @@
 -- Symbol picker (Lucide set): search field and a scrolling grid. Choosing
--- calls back with the symbol name; nothing is written here.
+-- calls back with the symbol name; nothing is written here. All of Lucide
+-- since 2026-10-08: without a search the hand-picked set shows, a search
+-- covers every symbol and shows at most MAX hits (frames and atlas pages
+-- are only created for what is shown).
 local _,ns=...
 local UI,D=ns.UI,ns.DesignSystem.Metrics
-local CELL,COLUMNS=44,8
+local CELL,COLUMNS,MAX=44,8,240
 function UI:SymbolPicker(parent,width)
     local panel=CreateFrame("Frame",nil,parent);D.Size(panel,width,470)
     panel.search=UI:Input(panel,width-20);UI:Place(panel.search,panel,0,0)
@@ -21,9 +24,11 @@ function UI:SymbolPicker(parent,width)
     end
     function panel:Refresh()
         local query=(self.search:GetText() or ""):lower():gsub("^%s+",""):gsub("%s+$","")
-        local shown=0
-        for _,name in ipairs(ns.Symbols:List()) do
-            if query=="" or name:find(query,1,true) then
+        local shown,matches=0,0
+        local list,curated=ns.Symbols:List(),ns.Symbols:Curated()
+        for index,name in ipairs(list) do
+            if (query=="" and index<=curated) or (query~="" and name:find(query,1,true)) then matches=matches+1 end
+            if matches>shown and shown<MAX then
                 shown=shown+1;local b=button(shown);b.symbol=name
                 local path,l,r,t,bottom=ns.Symbols:Coords(name,26)
                 b.glyph:SetTexture(path);b.glyph:SetTexCoord(l,r,t,bottom);b.glyph:SetVertexColor(1,1,1,1)
@@ -32,8 +37,15 @@ function UI:SymbolPicker(parent,width)
             end
         end
         for i=shown+1,#self.buttons do self.buttons[i]:Hide() end
-        self.form:SetContentHeight(math.max(1,math.ceil(shown/COLUMNS)*CELL))
-        self.count=shown
+        -- A line under the grid: how to reach the rest.
+        if not self.more then self.more=UI:Label(self.form.content,"",11,"muted");self.more:SetWordWrap(true) end
+        local rows=math.ceil(shown/COLUMNS)*CELL
+        if query=="" then self.more:SetText(string.format("Type to search all %d symbols.",#list))
+        elseif matches>shown then self.more:SetText(string.format("%d of %d matches shown; type more to narrow it down.",shown,matches))
+        else self.more:SetText("") end
+        self.more:ClearAllPoints();UI:Place(self.more,self.form.content,4,rows+6);D.Size(self.more,COLUMNS*CELL-8,30)
+        self.form:SetContentHeight(math.max(1,rows+(self.more:GetText()~="" and 40 or 0)))
+        self.count,self.matches=shown,matches
     end
     panel.search:SetScript("OnTextChanged",function() panel:Refresh() end)
     function panel:Open(current,onChoose)

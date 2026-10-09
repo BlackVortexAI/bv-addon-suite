@@ -126,7 +126,10 @@ local function slice(parent,path,corner,layer,sublevel,expand)
     end end
     return pieces
 end
+DesignSystem.Slice=slice
 function Factory:Skin(frame,fill,corner,alpha,shadow)
+    -- In-game style contexts (UI/StyleFamilies.lua) draw the family's border.
+    if self.skinner then return self.skinner(frame,fill,corner,alpha,shadow) end
     local fills=slice(frame,media.."DesignLab\\surface.tga",corner,"BACKGROUND",0)
     local borders=slice(frame,media.."DesignLab\\border.tga",corner,"BORDER",0)
     if shadow then slice(frame,media.."DesignLab\\shadow.tga",20,"BACKGROUND",-2,10) end
@@ -219,8 +222,9 @@ end
 function Factory:Icon(parent,name,size,color)
     local icon=CreateFrame("Frame",nil,parent); M.Size(icon,size or 16,size or 16)
     icon:EnableMouse(false); icon.lines={}; icon.circles={}; icon.dots={}
-    -- Lucide graphic when available; the line drawing stays as fallback.
-    local symbol=ns.Symbols and ns.Symbols:UIName(name)
+    -- Lucide graphic when available (a UI name or, since all of Lucide is in
+    -- the atlas, any Lucide name); the line drawing stays as fallback.
+    local symbol=ns.Symbols and (ns.Symbols:UIName(name) or (ns.Symbols:Valid(name) and name))
     if symbol then
         local path,l,r,t,b=ns.Symbols:Coords(symbol,M.ToNative(size or 16))
         local glyph=icon:CreateTexture(nil,"OVERLAY")
@@ -380,6 +384,11 @@ function Factory:Button(parent,text,width,callback,kind)
         self.fullLabel=tostring(value or ""); self.renderedLabel=nil
         self.label:SetText(self.fullLabel); fitLabel()
     end
+    -- The label is our own font string, not the button's: SetText and
+    -- GetText go to it (Florian 2026-10-09: the tracker kept "Start" while
+    -- running, the editor's Area button never said "Finish").
+    function button:SetText(value) self:SetLabelText(value) end
+    function button:GetText() return self.fullLabel or "" end
     function button:SetLabelInsets(first,last,justify)
         left,right,alignment=first or 8,last or 8,justify or "CENTER"; labelGeometry()
     end
@@ -700,6 +709,8 @@ end
 function Factory:Dropdown(parent,width,options,value,changed)
     local button=self:Button(parent,"",width,function(control) self.owner:ShowDropdown(control) end)
     button.options,button.changed=options,changed
+    -- Its list opens in the same style (in-game style families, 0.8.95).
+    button.bvStyle=self
     button:SetLabelInsets(10,28,"LEFT")
     button.arrow=self:Icon(button,"chevron",12,"muted"); M.Point(button.arrow,"RIGHT",-9,0)
     function button:SetValue(v)

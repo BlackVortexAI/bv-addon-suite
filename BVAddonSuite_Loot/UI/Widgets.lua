@@ -148,7 +148,7 @@ function W:OptionButton(parent,size)
     local b=CreateFrame("Button",nil,parent);D.Size(b,size,size)
     b.icon=b:CreateTexture(nil,"ARTWORK");b.icon:SetAllPoints(b)
     b.glow=b:CreateTexture(nil,"HIGHLIGHT");b.glow:SetAllPoints(b);b.glow:SetColorTexture(1,1,1,.12)
-    b.count=UI:Label(b,"",11,false,true);b.count:SetJustifyH("RIGHT")
+    b.count=UI:GameLabel(L.ID,b,"",11,false,true);b.count:SetJustifyH("RIGHT")
     D.Point(b.count,"BOTTOMRIGHT",b,"BOTTOMRIGHT",4,-3);D.Size(b.count,24,12)
     b.count:SetTextColor(1,1,1)
     function b:SetOption(option,enabled,count,selected,def)
@@ -174,17 +174,29 @@ function W:OptionButton(parent,size)
     return b
 end
 
--- Quality-colored item icon with item level and stack count.
-function W:ItemIcon(parent,size)
+-- Quality-colored item icon with item level and stack count. game: the
+-- module's in-game style (fonts, border width of the family); the master loot
+-- window keeps the tool style.
+function W:ItemIcon(parent,size,game)
     local f=CreateFrame("Button",nil,parent);D.Size(f,size,size)
+    local function label(...) if game then return UI:GameLabel(L.ID,...) end;return UI:Label(...) end
     f.border=f:CreateTexture(nil,"BACKGROUND");f.border:SetAllPoints(f);f.border:SetColorTexture(0,0,0,1)
-    f.icon=f:CreateTexture(nil,"ARTWORK");D.Point(f.icon,"TOPLEFT",f,"TOPLEFT",1,-1);D.Point(f.icon,"BOTTOMRIGHT",f,"BOTTOMRIGHT",-1,1)
+    f.icon=f:CreateTexture(nil,"ARTWORK")
     f.icon:SetTexCoord(.08,.92,.08,.92)
-    f.bvLevel=UI:Label(f,"",11,false,true);D.Point(f.bvLevel,"BOTTOM",f,"BOTTOM",0,1);f.bvLevel:SetJustifyH("CENTER");D.Size(f.bvLevel,size,12)
+    f.bvLevel=label(f,"",11,false,true);D.Point(f.bvLevel,"BOTTOM",f,"BOTTOM",0,1);f.bvLevel:SetJustifyH("CENTER");D.Size(f.bvLevel,size,12)
     f.bvLevel:SetTextColor(1,1,1)
-    f.bvStack=UI:Label(f,"",11,false,true);D.Point(f.bvStack,"TOPRIGHT",f,"TOPRIGHT",-2,-2);f.bvStack:SetJustifyH("RIGHT");D.Size(f.bvStack,size,12)
+    f.bvStack=label(f,"",11,false,true);D.Point(f.bvStack,"TOPRIGHT",f,"TOPRIGHT",-2,-2);f.bvStack:SetJustifyH("RIGHT");D.Size(f.bvStack,size,12)
     f.bvStack:SetTextColor(1,1,1)
+    function f:Edge()
+        local edge=game and select(2,L:Family()).iconEdge or 1
+        if self.bvEdge==edge then return end
+        self.bvEdge=edge
+        self.icon:ClearAllPoints()
+        D.Point(self.icon,"TOPLEFT",self,"TOPLEFT",edge,-edge);D.Point(self.icon,"BOTTOMRIGHT",self,"BOTTOMRIGHT",-edge,edge)
+    end
+    f:Edge()
     function f:SetItem(icon,quality,level,count)
+        self:Edge()
         self.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
         local r,g,b=L.QualityColor(quality or 1)
         self.border:SetColorTexture(r,g,b,1)

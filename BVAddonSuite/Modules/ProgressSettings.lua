@@ -38,6 +38,8 @@ function Options:Get(kind)
     if config.hideBlizzardDefault ~= 2 then config.hideBlizzard, config.hideBlizzardDefault = true, 2 end
     config.hideBlizzard = config.hideBlizzard == true
     config.showRested = config.showRested ~= false
+    -- Style family of this bar (Core 0.8.95): "inherit" = the suite's in-game style.
+    if config.styleFamily ~= "inherit" and not ns.Styles.families[config.styleFamily] then config.styleFamily = "inherit" end
     if type(config.fields) ~= "table" or #config.fields == 0 then config.fields = self:DefaultFields(kind) end
     while #config.fields > 12 do table.remove(config.fields) end
     for index, entry in ipairs(config.fields) do

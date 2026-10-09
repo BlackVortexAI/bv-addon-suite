@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.8.90","0.8.89",1) then return end
+if not ns:RequireCore(package,"0.8.92","0.8.96",1) then return end
 -- Shared state of the loot package. Files below fill L (package-private table):
 -- Rolls (data), RollFrame/Monitor/Results (views), Master (window), Sim.
 L.ns=ns
@@ -30,7 +30,10 @@ L.DEFAULTS={enabled=false,
     -- Master loot window and roll requests.
     master=true,masterAutoOpen=true,masterRollTime=30,masterOptions="need_greed",masterAnnounce=false,acceptRequests=true,
     -- Custom roll of the master looter: reason text and symbol.
-    customEnabled=false,customText="",customSymbol="star",customAfter=""}
+    customEnabled=false,customText="",customSymbol="star",customAfter="",
+    -- In-game style (0.8.91, Core 0.8.95 style families): own family or the
+    -- suite's, optional roll bar background, opacity of toasts and cards (%).
+    styleFamily="inherit",rollBackground=false,rollBgOpacity=75,rollBgOwnColor=false,rollBgColor="141414FF",panelOpacity=100}
 local GROW={UP=true,DOWN=true}
 -- tooltip (0.8.90): no cards; the overview shows on hovering a roll bar.
 local MODES={toast=true,sticky=true,tooltip=true}
@@ -45,7 +48,7 @@ function L:Config()
     if cfg.rollKind==nil and cfg.rollInfo~=nil then cfg.rollKind,cfg.rollStats=cfg.rollInfo==true,cfg.rollInfo==true end
     for key,value in pairs(self.DEFAULTS) do if cfg[key]==nil then cfg[key]=value end end
     for _,key in ipairs({"rolls","rollKind","rollStats","rollKeep","rollQualityBar","hideBlizzard","monitor","monitorSelf","monitorGroup",
-        "monitorMoney","results","master","masterAutoOpen","masterAnnounce","acceptRequests","customEnabled"}) do cfg[key]=cfg[key]==true end
+        "monitorMoney","results","master","masterAutoOpen","masterAnnounce","acceptRequests","customEnabled","rollBackground","rollBgOwnColor"}) do cfg[key]=cfg[key]==true end
     if L.CleanCustom then cfg.customText,cfg.customSymbol=L.CleanCustom(cfg.customText,cfg.customSymbol) end
     if type(cfg.customAfter)~="string" or not (cfg.customAfter=="" or L.OPTIONS[cfg.customAfter]) or cfg.customAfter=="pass" then cfg.customAfter="" end
     cfg.rollWidth=num(cfg.rollWidth,330,200,600,true);cfg.rollHeight=num(cfg.rollHeight,30,20,48,true)
@@ -57,6 +60,9 @@ function L:Config()
     cfg.resultsRows=num(cfg.resultsRows,5,1,10,true);cfg.resultsWidth=num(cfg.resultsWidth,290,200,500,true)
     cfg.resultsLinger=num(cfg.resultsLinger,20,3,120,true)
     cfg.masterRollTime=num(cfg.masterRollTime,30,10,120,true)
+    cfg.rollBgOpacity=num(cfg.rollBgOpacity,75,0,100,true);cfg.panelOpacity=num(cfg.panelOpacity,100,20,100,true)
+    if cfg.styleFamily~="inherit" and not ns.Styles.families[cfg.styleFamily] then cfg.styleFamily="inherit" end
+    if type(cfg.rollBgColor)~="string" or not cfg.rollBgColor:match("^%x%x%x%x%x%x%x%x$") then cfg.rollBgColor="141414FF" end
     for _,key in ipairs({"rollGrow","monitorGrow","resultsGrow"}) do if not GROW[cfg[key]] then cfg[key]=self.DEFAULTS[key] end end
     if not MODES[cfg.resultsMode] then cfg.resultsMode="toast" end
     if type(cfg.rollBarColor)~="string" or not cfg.rollBarColor:match("^%x%x%x%x%x%x%x%x$") then cfg.rollBarColor="3D7BD9FF" end
@@ -64,6 +70,14 @@ function L:Config()
     return cfg
 end
 function L:Active() return self.context~=nil end
+-- Style family of the module (own or the suite's) and the roll bar padding
+-- its optional background adds on every side.
+function L:Family() return ns.Styles:Family(self.ID) end
+-- The WoW gold frame (2 + inner line) needs more room than the thin borders.
+function L.RollPad(cfg)
+    if not cfg.rollBackground then return 0 end
+    return select(2,L:Family()).border=="gold" and 6 or 4
+end
 
 -- Blizzard calls go through here so the simulation can stand in for single
 -- calls (fake roll ids, fake loot window) without replacing globals.
@@ -89,7 +103,30 @@ function L.Short(name)
     if type(name)~="string" or L.Secret(name) or name=="" then return nil end
     return (name:match("^([^%-]+)")) or name
 end
-function L.Me() return L.Short(L.Call("UnitName","player")) or "?" end
+-- WoW Forever characters carry a surname: UnitName hands it back as its
+-- second value (retail: the realm) and the client's chat lines and loot
+-- history show "First Last" (Florian's roll results 2026-10-07: "Loky" and
+-- "Loky Lock" as two players). Units are named the same way here.
+local separator=Constants and Constants.CharacterNameSeparatorConsts
+    and Constants.CharacterNameSeparatorConsts.CHARACTERNAME_SURNAME_SEPARATOR or " "
+L.SEPARATOR=separator
+function L.UnitFull(unit)
+    local name,surname=L.Call("UnitName",unit)
+    name=L.Short(name)
+    if not name then return nil end
+    if type(surname)=="string" and not L.Secret(surname) and surname~="" then
+        local tail=separator..surname
+        if name:sub(-#tail)~=tail then name=name..tail end
+    end
+    return name
+end
+function L.Me() return L.UnitFull("player") or "?" end
+-- The part before the surname, nil for a one-word name.
+function L.FirstName(name)
+    if type(name)~="string" then return nil end
+    local at=name:find(separator,1,true)
+    return at and at>1 and name:sub(1,at-1) or nil
+end
 L.CLASS_FALLBACK={1,.82,.6}
 function L.ClassColor(class)
     local colors=CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS

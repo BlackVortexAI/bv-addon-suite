@@ -83,7 +83,12 @@ function UI:Bind(widget,render)
     self.styled[widget]=render; render(widget); return widget
 end
 
+-- UI:WithStyle (UI/StyleFamilies.lua) builds a window in an in-game style.
 function UI:GetStyle()
+    if self.styleOverride then return self.styleOverride end
+    return self:ToolStyle()
+end
+function UI:ToolStyle()
     if self.styleContext then return self.styleContext end
     local owner={}
     function owner:ShowTooltip(control,title,body) UI:ShowTooltip(control,title,body) end
@@ -109,7 +114,12 @@ end
 
 function UI:Refresh()
     if self.styleContext then self.styleContext.theme=ns.Settings:Get("themeKey"); self.styleContext:Refresh() end
-    for widget,render in pairs(self.styled) do render(widget) end
+    -- Snapshot first: a render may register new widgets (a progress bar adds
+    -- labels), and adding keys while pairs() runs can skip entries at random.
+    local widgets={}
+    for widget in pairs(self.styled) do widgets[#widgets+1]=widget end
+    for _,widget in ipairs(widgets) do local render=self.styled[widget]; if render then render(widget) end end
+    if ns.Styles then ns.Styles:Notify() end
     if ns.Config then ns.Config:Refresh() end
 end
 
@@ -130,6 +140,7 @@ local function compatibility(frame)
     frame.edges={facade(frame.borders or {})}
     return frame
 end
+function UI:Compatible(frame) return compatibility(frame) end
 function UI:HideSurface(frame)
     frame.surfaceHidden=true
     if frame.fill then frame.fill:Hide() end
@@ -238,36 +249,118 @@ function UI:AttachTooltip(widget,title,text)
     widget.tooltipTitle,widget.tooltipText,widget.tooltipBody=title,text,text
     self:GetStyle():Tooltip(widget,title,text)
 end
+-- Tooltip (Core 0.8.96, Florian 2026-10-08: less bulky, less prototype):
+-- as wide as its content (150..240), tight padding, a dark translucent
+-- ground with a hairline edge, the title in the text colour. text may be a
+-- string (explanations, as before) or a table: {tag=, tagColor={r,g,b},
+-- rows={{label,value},...}, text=, hint=} for values and a separate, muted
+-- line of mouse actions under a hairline.
+local TIP={MIN=150,MAX=240,PADX=10,TOP=7,BOTTOM=8,TITLE=13,BODY=12,SMALL=11}
+local function tipRegion(parent,size,role,bold)
+    local label=UI:Label(parent,"",size,role,bold)
+    label:SetJustifyV("TOP");label:SetWordWrap(true)
+    return label
+end
+function UI:TooltipFrame()
+    if self.tooltip then return self.tooltip end
+    local tooltip=CreateFrame("Frame",nil,UIParent)
+    tooltip:SetFrameStrata("TOOLTIP");tooltip:SetClampedToScreen(true);tooltip:EnableMouse(false);tooltip:Hide()
+    tooltip.ground=tooltip:CreateTexture(nil,"BACKGROUND");tooltip.ground:SetAllPoints(tooltip)
+    tooltip.edges={}
+    for i=1,4 do tooltip.edges[i]=tooltip:CreateTexture(nil,"BORDER") end
+    tooltip.edges[1]:SetPoint("TOPLEFT");tooltip.edges[1]:SetPoint("TOPRIGHT");tooltip.edges[1]:SetHeight(1)
+    tooltip.edges[2]:SetPoint("BOTTOMLEFT");tooltip.edges[2]:SetPoint("BOTTOMRIGHT");tooltip.edges[2]:SetHeight(1)
+    tooltip.edges[3]:SetPoint("TOPLEFT");tooltip.edges[3]:SetPoint("BOTTOMLEFT");tooltip.edges[3]:SetWidth(1)
+    tooltip.edges[4]:SetPoint("TOPRIGHT");tooltip.edges[4]:SetPoint("BOTTOMRIGHT");tooltip.edges[4]:SetWidth(1)
+    tooltip.title=tipRegion(tooltip,TIP.TITLE,"text",true);tooltip.title:SetWordWrap(false)
+    tooltip.tag=tipRegion(tooltip,TIP.SMALL,"muted");tooltip.tag:SetWordWrap(false);tooltip.tag:SetJustifyH("RIGHT")
+    tooltip.body=tipRegion(tooltip,TIP.BODY,"text")
+    tooltip.rule=tooltip:CreateTexture(nil,"ARTWORK")
+    tooltip.hint=tipRegion(tooltip,TIP.SMALL,"muted")
+    tooltip.labels,tooltip.values={},{}
+    -- Older callers may still set these fields on the frame.
+    self.tooltip=tooltip
+    return tooltip
+end
+-- Width of a text at a size (the client measures; a fallback estimate where it cannot).
+local function textWidth(region,value,size)
+    region:SetWidth(2000);region:SetText(value)
+    local width=region.GetStringWidth and region:GetStringWidth()
+    if type(width)=="number" and width>0 then return M.ToDesign(width) end
+    return #value*size*.52
+end
+local function textHeight(region,value,size,width)
+    M.Width(region,width);region:SetHeight(0);region:SetText(value)
+    local _,breaks=value:gsub("\n","")
+    local measured=region.GetStringHeight and region:GetStringHeight()
+    return math.max((breaks+1)*size*1.3,type(measured)=="number" and M.ToDesign(measured) or 0)
+end
 function UI:ShowTooltip(owner,title,text)
     title=title or owner.tooltipTitle
     if not title or not ns.Settings:Get("tooltips") then return end
-    if not self.tooltip then
-        local tooltip=self:Panel(UIParent,280,40,"raised")
-        tooltip:SetFrameStrata("TOOLTIP"); tooltip:SetClampedToScreen(true)
-        tooltip:EnableMouse(false)
-        tooltip.title=self:Label(tooltip,"",14,"accent","bold")
-        tooltip.body=self:Label(tooltip,"",12,"text")
-        tooltip.title:SetJustifyV("TOP"); tooltip.body:SetJustifyV("TOP")
-        tooltip.title:SetWordWrap(true); tooltip.body:SetWordWrap(true)
-        self.tooltip=tooltip
-    end
-    local tooltip=self.tooltip; tooltip.owner=owner
+    local tooltip=self:TooltipFrame()
+    tooltip.owner=owner
     tooltip:SetScale(owner:GetEffectiveScale()/UIParent:GetEffectiveScale())
-    local copy=text or owner.tooltipText or ""
-    local function measure(region,value,size)
-        M.Width(region,256); region:SetHeight(0); region:SetText(value)
-        local _,breaks=value:gsub("\n","")
-        -- Give cold FontStrings a real drawable rectangle; do not depend on a
-        -- later configuration refresh to resolve their initial auto-height.
-        return math.max((breaks+1)*size*1.2,M.ToDesign(region:GetStringHeight()))
+    local content=text or owner.tooltipText or ""
+    if type(content)~="table" then content={text=content} end
+    local rows=type(content.rows)=="table" and content.rows or {}
+    local body=type(content.text)=="string" and content.text or ""
+    local hint=type(content.hint)=="string" and content.hint or ""
+    local tag=type(content.tag)=="string" and content.tag or ""
+    -- Colours from the tool style; the ground slightly darker than its panels.
+    local br,bg,bb=Theme:Color("bg")
+    tooltip.ground:SetColorTexture(br*.6,bg*.6,bb*.6,.95)
+    for _,edge in ipairs(tooltip.edges) do edge:SetColorTexture(1,1,1,.1) end
+    tooltip.rule:SetColorTexture(1,1,1,.08)
+    tooltip.title:SetTextColor(Theme:Color("text"))
+    if content.tagColor then tooltip.tag:SetTextColor(content.tagColor[1],content.tagColor[2],content.tagColor[3]) else tooltip.tag:SetTextColor(Theme:Color("muted")) end
+    -- Width: as much as the content needs, within MIN..MAX.
+    local need=textWidth(tooltip.title,title,TIP.TITLE)+(tag~="" and textWidth(tooltip.tag,tag,TIP.SMALL)+12 or 0)
+    local labelWidth,valueWidth=0,0
+    for i,row in ipairs(rows) do
+        tooltip.labels[i]=tooltip.labels[i] or tipRegion(tooltip,TIP.BODY,"muted")
+        tooltip.values[i]=tooltip.values[i] or tipRegion(tooltip,TIP.BODY,"text")
+        tooltip.labels[i]:SetWordWrap(false);tooltip.values[i]:SetWordWrap(false);tooltip.values[i]:SetJustifyH("RIGHT")
+        labelWidth=math.max(labelWidth,textWidth(tooltip.labels[i],tostring(row[1] or ""),TIP.BODY))
+        valueWidth=math.max(valueWidth,textWidth(tooltip.values[i],tostring(row[2] or ""),TIP.BODY))
     end
-    local titleHeight=measure(tooltip.title,title,14)
-    local bodyHeight=copy~="" and measure(tooltip.body,copy,12) or 0
-    tooltip.title:ClearAllPoints(); M.Point(tooltip.title,"TOPLEFT",12,-10); M.Height(tooltip.title,titleHeight)
-    tooltip.body:ClearAllPoints(); M.Point(tooltip.body,"TOPLEFT",12,-(16+titleHeight))
-    tooltip.body:SetText(copy); tooltip.body:SetShown(copy~=""); M.Height(tooltip.body,bodyHeight)
-    M.Height(tooltip,20+titleHeight+(copy~="" and 6+bodyHeight or 0))
-    tooltip:ClearAllPoints(); M.Point(tooltip,"TOPLEFT",owner,"BOTTOMLEFT",0,-6); tooltip:Show()
+    if #rows>0 then need=math.max(need,labelWidth+14+valueWidth) end
+    if body~="" then for line in body:gmatch("[^\n]+") do need=math.max(need,textWidth(tooltip.body,line,TIP.BODY)) end end
+    if hint~="" then for line in hint:gmatch("[^\n]+") do need=math.max(need,textWidth(tooltip.hint,line,TIP.SMALL)) end end
+    local inner=math.max(TIP.MIN,math.min(TIP.MAX,math.ceil(need)+1+2*TIP.PADX))-2*TIP.PADX
+    local y=TIP.TOP
+    tooltip.title:ClearAllPoints();M.Point(tooltip.title,"TOPLEFT",tooltip,"TOPLEFT",TIP.PADX,-y)
+    M.Size(tooltip.title,inner-(tag~="" and math.min(80,textWidth(tooltip.tag,tag,TIP.SMALL))+12 or 0),TIP.TITLE*1.3);tooltip.title:SetText(title)
+    tooltip.tag:ClearAllPoints();M.Point(tooltip.tag,"TOPRIGHT",tooltip,"TOPRIGHT",-TIP.PADX,-y-1);M.Size(tooltip.tag,80,TIP.SMALL*1.3)
+    tooltip.tag:SetText(tag);tooltip.tag:SetShown(tag~="")
+    y=y+TIP.TITLE*1.3+3
+    for i,row in ipairs(rows) do
+        local label,value=tooltip.labels[i],tooltip.values[i]
+        label:ClearAllPoints();M.Point(label,"TOPLEFT",tooltip,"TOPLEFT",TIP.PADX,-y);M.Size(label,inner*.5,TIP.BODY*1.3);label:SetText(tostring(row[1] or ""))
+        value:ClearAllPoints();M.Point(value,"TOPRIGHT",tooltip,"TOPRIGHT",-TIP.PADX,-y);M.Size(value,inner-math.min(labelWidth,inner*.5)-8,TIP.BODY*1.3);value:SetText(tostring(row[2] or ""))
+        label:SetTextColor(Theme:Color("muted"));value:SetTextColor(Theme:Color("text"))
+        label:Show();value:Show()
+        y=y+TIP.BODY*1.3
+    end
+    for i=#rows+1,#tooltip.labels do tooltip.labels[i]:Hide();tooltip.values[i]:Hide() end
+    if body~="" then
+        if #rows>0 then y=y+3 end
+        local height=textHeight(tooltip.body,body,TIP.BODY,inner)
+        tooltip.body:ClearAllPoints();M.Point(tooltip.body,"TOPLEFT",tooltip,"TOPLEFT",TIP.PADX,-y);M.Height(tooltip.body,height)
+        tooltip.body:SetTextColor(Theme:Color("text"));tooltip.body:Show()
+        y=y+height
+    else tooltip.body:Hide() end
+    if hint~="" then
+        y=y+5
+        tooltip.rule:ClearAllPoints();M.Point(tooltip.rule,"TOPLEFT",tooltip,"TOPLEFT",TIP.PADX,-y);M.Size(tooltip.rule,inner,1);tooltip.rule:Show()
+        y=y+5
+        local height=textHeight(tooltip.hint,hint,TIP.SMALL,inner)
+        tooltip.hint:ClearAllPoints();M.Point(tooltip.hint,"TOPLEFT",tooltip,"TOPLEFT",TIP.PADX,-y);M.Height(tooltip.hint,height)
+        tooltip.hint:SetTextColor(Theme:Color("muted"));tooltip.hint:Show()
+        y=y+height
+    else tooltip.rule:Hide();tooltip.hint:Hide() end
+    M.Size(tooltip,inner+2*TIP.PADX,y+TIP.BOTTOM)
+    tooltip:ClearAllPoints();M.Point(tooltip,"TOPLEFT",owner,"BOTTOMLEFT",0,-6);tooltip:Show()
 end
 function UI:HideTooltip(owner)
     if self.tooltip and (not owner or self.tooltip.owner==owner) then self.tooltip:Hide(); self.tooltip.owner=nil end

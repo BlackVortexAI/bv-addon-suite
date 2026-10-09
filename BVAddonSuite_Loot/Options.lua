@@ -15,6 +15,11 @@ function L:Changed()
     L.RollFrame:Sync();L.Results:Repaint();if L.Master.window then L.Master:Refresh() end
     L.Widgets:Refresh()
 end
+-- A style family changed (suite or own): what Loot draws itself follows at once.
+ns.Styles:OnChanged(L,function()
+    if not L:Active() then return end
+    L.RollFrame:Sync();L.Monitor:Repaint();L.Results:Repaint();L.Widgets:Refresh()
+end)
 local refreshTimer
 local function infoReceived()
     if refreshTimer then return end
@@ -83,6 +88,17 @@ local function build(parent)
     g:Row("",UI:Button(g,"Test loot monitor",170,function() L.Sim:Run("monitor") end),{help="Fake loot for you and the group."})
     g:Row("",UI:Button(g,"Test roll request",170,function() L.Sim:Run("request") end),{help="A fake master looter asks you and others to roll."})
     g:Row("",UI:Button(g,"Test master loot",170,function() L.Sim:Run("master") end),{help="Master loot window with fake loot and a fake raid. Awards are only printed."})
+    -- In-game style (0.8.91): family, roll bar background, card opacity.
+    local function styled(key) return function(value) cfg()[key]=value;ns.Styles:Changed();L:Changed();if page then page:Refresh() end end end
+    g:Section("style","Style")
+    row("styleFamily","Style family",UI:Dropdown(g,190,ns.Styles:Choices(true),styled("styleFamily")),
+        "Look of roll bars, toasts and result cards: the suite's in-game style or an own one. The master loot window keeps the BV style.")
+    controls.styleFamily:SetOptionsProvider(function() return ns.Styles:Choices(true) end)
+    row("rollBackground","Roll bar background",UI:Switch(g,false,styled("rollBackground")),"A background behind each roll bar in the style's look. Off: icon, name and bar only.")
+    row("rollBgOpacity","Background opacity",UI:InlineSlider(g,190,0,100,5,"%d %%",styled("rollBgOpacity")),"Opacity of the roll bar background.")
+    row("rollBgOwnColor","Own background color",UI:Switch(g,false,styled("rollBgOwnColor")),"Off: the style's background colour.")
+    row("rollBgColor","Background color",UI:ColorInput(g,150,styled("rollBgColor")),"Used with an own background colour.",{width=150})
+    row("panelOpacity","Toast and card opacity",UI:InlineSlider(g,190,20,100,5,"%d %%",styled("panelOpacity")),"Background opacity of loot toasts and result cards.")
     g:Section("rolls","Roll bars")
     switch("rolls","Show roll bars","Group loot rolls and roll requests as bars.")
     switch("hideBlizzard","Hide Blizzard roll frames","Takes effect when the module starts (reload or off/on).")
@@ -121,7 +137,14 @@ local function build(parent)
     switch("masterAnnounce","Announce awards","Posts item and player to the raid or party chat.")
     switch("acceptRequests","Accept roll requests","Show roll bars when a master looter in your group asks you to roll.")
     g:Row("Window",UI:Button(g,"Open master loot",170,function() L.Master:Open() end),{help="Opens the master loot window (also /bv loot master)."})
+    local select=UI:SettingsTabs(page,g,{
+        {id="general",label="General",sections={"module","style"}},
+        {id="rolls",label="Rolls",sections={"rolls","results"}},
+        {id="monitor",label="Loot monitor",sections={"monitor"}},
+        {id="master",label="Master loot",sections={"master"}},
+    })
     function page:Arrange(width)
+        self.width=width
         UI:Place(g,self,0,0)
         local height=g:Arrange(width)+8
         D.Height(self,height);return height
@@ -137,8 +160,11 @@ local function build(parent)
         local tooltip=L.Rolls:Tooltip()
         if tooltip then controls.rollKeep:SetValue(true);controls.rollKeep:Disable() else controls.rollKeep:Enable() end
         if tooltip then controls.resultsLinger:Enable() else controls.resultsLinger:Disable() end
+        -- Background options only matter with the background on.
+        for _,key in ipairs({"rollBgOpacity","rollBgOwnColor"}) do if c.rollBackground then controls[key]:Enable() else controls[key]:Disable() end end
+        if c.rollBackground and c.rollBgOwnColor then controls.rollBgColor:Enable() else controls.rollBgColor:Disable() end
     end
-    page:Arrange(880);page:Refresh()
+    select("general");page:Refresh()
     return page
 end
 ns.Config:RegisterPage("loot",{title="Loot",description="Roll bars, loot monitor, roll results and master loot with roll requests.",

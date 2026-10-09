@@ -289,7 +289,36 @@ function Lab:CreateMaterials()
         local sw=(inner-32)/5
         for i,t in ipairs(self.swatches) do at(t,self.body,(i-1)*(sw+8),156,sw,60) end
     end
-    self.materialSections={panel}
+    -- In-game style families (Core 0.8.95): each family fixed, side by side.
+    local styles=self:Section(page,"In-game styles",300)
+    styles.copy=f:Label(styles.body,"Bars, roll bars, toasts and other elements you see while playing. Choose the suite's family under Appearance; a module can pick its own.",14,"muted")
+    styles.samples={}
+    for _,id in ipairs(ns.Styles.order) do
+        local s=ns.Styles:Preview(id,self)
+        local sample=s:Panel(styles.body,160,170,"bg",6)
+        sample.style=s
+        sample.title=s:Label(sample,ns.Styles.families[id].label,15,"text","bold")
+        sample.text=s:Label(sample,ns.Styles:LevelText(id,80),12,"muted")
+        sample.button=s:Button(sample,"Award",120,function() self:Status(ns.Styles.families[id].label..": button") end)
+        sample.bar=CreateFrame("StatusBar",nil,sample);sample.bar:SetMinMaxValues(0,1);sample.bar:SetValue(.62)
+        sample.bar:SetStatusBarTexture(ns.Styles:BarTexture(id));sample.bar:SetStatusBarColor(s:Color("accent"))
+        sample.barBack=sample.bar:CreateTexture(nil,"BACKGROUND");sample.barBack:SetAllPoints(sample.bar);sample.barBack:SetColorTexture(0,0,0,.45)
+        sample.barBorder=ns.Styles:Border(s,sample.bar)
+        styles.samples[#styles.samples+1]=sample
+    end
+    function styles:Arrange(width)
+        local inner=width-28; at(self.copy,self.body,0,0,inner,44)
+        local count=#self.samples
+        local sw=(inner-(count-1)*10)/count
+        for i,sample in ipairs(self.samples) do
+            at(sample,self.body,(i-1)*(sw+10),56,sw,170)
+            at(sample.title,sample,12,10,sw-24,22)
+            at(sample.text,sample,12,36,sw-24,18)
+            at(sample.button,sample,12,64,math.min(120,sw-24),30)
+            at(sample.bar,sample,12,110,sw-24,14)
+        end
+    end
+    self.materialSections={panel,styles}
 end
 function Lab:CreateNodes()
     local f,c=self.factory,self.controls; local page=self.pages.nodes

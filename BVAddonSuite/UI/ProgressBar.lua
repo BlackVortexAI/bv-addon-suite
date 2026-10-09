@@ -7,8 +7,11 @@ function UI:RGBA(hex)
 end
 
 -- Shared renderer for XP, reputation and future bounded progress data.
-function UI:ProgressBar()
+-- moduleID: the bar's module (style family, Core 0.8.95). "Inherit" texture
+-- and fonts follow the family; WoW and Clean add their border inside the bar.
+function UI:ProgressBar(moduleID)
     local view = CreateFrame("Frame", nil, UIParent)
+    view.moduleID = moduleID
     view:Hide()
     view:SetFrameStrata("MEDIUM")
     view:EnableMouse(false)
@@ -16,8 +19,10 @@ function UI:ProgressBar()
     view.rested = view:CreateTexture(nil, "ARTWORK")
     view.fill = CreateFrame("StatusBar", nil, view)
     view.fill:SetAllPoints(view); view.fill:SetMinMaxValues(0, 1)
+    view.border = UI:GameBorder(moduleID, view)
+    view.border:SetFrameLevel(view.fill:GetFrameLevel() + 1)
     view.overlay = CreateFrame("Frame", nil, view)
-    view.overlay:SetAllPoints(view); view.overlay:SetFrameLevel(view.fill:GetFrameLevel() + 1)
+    view.overlay:SetAllPoints(view); view.overlay:SetFrameLevel(view.fill:GetFrameLevel() + 2)
     view.labels, view.ticks = {}, {}
     function view:Geometry(rect)
         self.layoutHidden=rect.width<=0 or rect.height<=0
@@ -31,7 +36,9 @@ function UI:ProgressBar()
         self.config, self.editing = config, editing
         self:SetAlpha(config.opacity)
         self.background:SetColorTexture(UI:RGBA(config.background))
-        local texture = ns.Media:StatusBar(config.texture == "inherit" and ns.Settings:Get("statusbar") or config.texture)
+        local family = ns.Styles:Family(self.moduleID)
+        local texture = config.texture == "inherit" and ns.Styles:BarTexture(family) or ns.Media:StatusBar(config.texture)
+        self.border:RepaintSurface()
         self.fill:SetStatusBarTexture(texture); self.fill:SetStatusBarColor(UI:RGBA(config.color))
         self.rested:SetTexture(texture); self.rested:SetVertexColor(UI:RGBA(config.restedColor))
         for index = 1, config.segments - 1 do
@@ -46,7 +53,8 @@ function UI:ProgressBar()
             if not label then label = UI:Label(self.overlay, ""); self.labels[index] = label end
             -- The progress renderer owns per-field appearance; not the global label renderer.
             UI.styled[label] = nil
-            ns.Theme:Font(label, entry.size, entry.font ~= "inherit" and entry.font or nil)
+            if entry.font == "inherit" then ns.Styles:Font(family, label, entry.size, "regular")
+            else ns.Theme:Font(label, entry.size, entry.font) end
             label:SetTextColor(UI:RGBA(entry.color)); label:SetJustifyH(entry.align); label:SetJustifyV("MIDDLE")
             label:SetWordWrap(false); label:SetSize(entry.width, entry.size * 1.8)
             label:ClearAllPoints(); label:SetPoint(entry.anchor, self, entry.relative, entry.x, entry.y)

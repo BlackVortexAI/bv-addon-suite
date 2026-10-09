@@ -128,8 +128,14 @@ local function build(parent)
         "Blizzard's numbers over the enemies you hit. They show only your own damage, which addons cannot tell apart; keep them and turn \"Outgoing damage\" below off if you want exactly your own.")
     row("plates","Use nameplates",UI:Switch(g,true,set("plates")),
         "Texts set to \"At the nameplate\" follow the enemy's nameplate; without one they use the outgoing anchor.")
+    row("plateOffset","Nameplate height",UI:InlineSlider(g,190,-50,150,5,"%d px",set("plateOffset")),
+        "How far above the nameplate texts start, for example above the enemy's debuffs. 0: right at the nameplate.")
     row("numbers","Numbers",UI:Dropdown(g,190,NUMBERS,set("numbers")),"How amounts are written.")
     row("outline","Outline",UI:Dropdown(g,190,OUTLINES,set("outline")),"Outline of all combat texts.")
+    -- In-game style (0.7.4): font of the texts and look of the status display.
+    row("styleFamily","Style family",UI:Dropdown(g,190,ns.Styles:Choices(true),function(value) cfg().styleFamily=value;ns.Styles:Changed() end),
+        "The suite's in-game style or an own one: font of the combat texts (WoW, Clean) and the status display's border. BV uses the suite font.")
+    controls.styleFamily:SetOptionsProvider(function() return ns.Styles:Choices(true) end)
     g:Row("Position",UI:Button(g,"Open Layout Editor",170,function() ns.LayoutEditor:Open("bv:combattext_outgoing") end),
         {help="Outgoing, incoming and notification anchors are movable elements. Texts start in the middle of the anchor."})
     if ns.Tutorial and ns.Tutorial.Open then
@@ -314,7 +320,7 @@ local function build(parent)
         {id="experimental",label="Experimental",sections={"icons"}},
     }
     local definitions={}
-    for i,tab in ipairs(TABS) do definitions[i]={id=tab.id,label=tab.label} end
+    for i,tab in ipairs(TABS) do definitions[i]={id=tab.id,label=tab.label,sections=tab.sections} end
     local function select(id)
         for _,tab in ipairs(TABS) do
             if tab.id==id then

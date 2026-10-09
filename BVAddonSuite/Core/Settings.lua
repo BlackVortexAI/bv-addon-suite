@@ -2,9 +2,13 @@ local _, ns = ...
 local Settings = { profileListeners = {}, afterProfileListeners={} }
 ns.Settings = Settings
 
-local defaults = { font = "alegreyaSansBold", themeKey = "violet", accent = "verdant", scale = 1, tooltips = true, statusbar = "softLightBevel", inspectorGap = 100, gridSize = 16, snapToGrid = true, snapToElements = true }
+local defaults = { font = "alegreyaSansBold", themeKey = "violet", accent = "verdant", scale = 1, tooltips = true, statusbar = "softLightBevel", inspectorGap = 100, gridSize = 16, snapToGrid = true, snapToElements = true,
+    -- In-game style family (UI/StyleFamilies.lua, 0.8.95); tool windows keep themeKey.
+    -- gameMatchUI: only read once to move an old switch to the family "match".
+    gameFamily = "bv", gameMatchUI = false }
 local choices = {
     themeKey = { violet=true, ember=true, tide=true },
+    gameFamily = { bv=true, wow=true, clean=true, match=true },
     font = { ysabeau = true, ysabeauBold = true, alegreyaSans = true, alegreyaSansBold = true, alegreya = true, alegreyaBold = true },
     accent = { verdant = true, violet = true, ember = true },
     statusbar = { flat = true, bevel = true, gradient = true, gradientBevel = true, softLight = true, softLightBevel = true },
@@ -17,7 +21,7 @@ local function valid(key, value)
     if key == "gridSize" then return type(value)=="number" and choices.gridSize[value]==true end
     if choices[key] then return type(value) == "string" and choices[key][value] == true end
     if key == "scale" then return type(value) == "number" and value >= 0.5 and value <= 1.3 end
-    if key == "tooltips" or key == "snapToGrid" or key == "snapToElements" then return type(value) == "boolean" end
+    if key == "tooltips" or key == "snapToGrid" or key == "snapToElements" or key == "gameMatchUI" then return type(value) == "boolean" end
     return false
 end
 

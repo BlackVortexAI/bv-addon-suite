@@ -1,0 +1,10 @@
+## Interface: 16001
+## Title: BV Addon Suite - Gather Data
+## Notes: Known herb and ore spawn points for BV Gather, from the vMaNGOS world database. GPL-2.0 (see LICENSE.txt and NOTICE.txt); the rest of BV Addon Suite has its own license.
+## Author: BV
+## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
+## Version: 0.1.0
+## Dependencies: BVAddonSuite, BVAddonSuite_Gather
+
+Guard.lua
+Data.lua

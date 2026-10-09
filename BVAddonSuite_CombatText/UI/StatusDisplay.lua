@@ -82,14 +82,17 @@ function S:Create()
     b:SetSize(M.ToNative(self.WIDTH),M.ToNative(self.HEIGHT))
     b:RegisterForClicks("AnyUp","AnyDown")
     b:SetAttribute("type","macro")
-    local bg=b:CreateTexture(nil,"BACKGROUND")
-    bg:SetAllPoints();bg:SetColorTexture(.06,.06,.08,.8)
+    -- Background and border of the style family (0.7.4); red tint while something needs a click.
+    local bg=ns.UI:GamePanel(L.ID,b,self.WIDTH,self.HEIGHT,"bg",4,.8)
+    bg:SetAllPoints(b);bg:EnableMouse(false);bg:SetFrameLevel(b:GetFrameLevel())
+    bg.bvFillOverride=function() if S.bad then return .2,.06,.08,1 end end
     b.bg=bg
     local icon=b:CreateTexture(nil,"ARTWORK")
     icon:SetSize(M.ToNative(16),M.ToNative(16));icon:SetPoint("LEFT",b,"LEFT",4,0)
     b.icon=icon
     local text=b:CreateFontString(nil,"OVERLAY")
     text:SetFont("Fonts\\FRIZQT__.TTF",11,"OUTLINE")
+    ns.Styles:Font((ns.Styles:Family(L.ID)),text,11,"regular","OUTLINE")
     text:SetPoint("LEFT",icon,"RIGHT",4,0);text:SetPoint("RIGHT",b,"RIGHT",-4,0)
     text:SetJustifyH("LEFT")
     b.label=text
@@ -112,7 +115,7 @@ function S:Refresh()
     local text,all=self:Text()
     b.label:SetText(text)
     b.icon:SetTexture(all and self.ICON_OK or self.ICON_BAD)
-    b.bg:SetColorTexture(all and .06 or .2,.06,.08,.8)
+    if self.bad~=(not all) then self.bad=not all;b.bg:RepaintSurface() end
     if b.hover then self:Tooltip(b) end
     if not locked() then b:SetAttribute("macrotext",L.Log:Macro()) end
 end
@@ -171,3 +174,8 @@ ns.Layout:Register(S.LAYOUT,{label="Combat Text: Status",sizeLocked=true,
     enabled=function() return L:Active() end,
     -- In the Layout Editor it shows even while turned off, to place it.
     preview=function(value) S.previewing=value==true;S:Update() end})
+-- Style family changed (0.7.4): the box's font follows; border and background repaint themselves.
+ns.Styles:OnChanged(S,function()
+    local b=S.button
+    if b then ns.Styles:Font((ns.Styles:Family(L.ID)),b.label,11,"regular","OUTLINE") end
+end)

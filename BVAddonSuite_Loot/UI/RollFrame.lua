@@ -37,7 +37,10 @@ function F:Bar(index)
     local bar=self.bars[index]
     if bar then return bar end
     bar=W.Owned(CreateFrame("Frame",nil,self.anchor.frame));bar:Hide();bar:EnableMouse(true)
-    bar.bg=bar:CreateTexture(nil,"BACKGROUND");bar.bg:SetColorTexture(0,0,0,0)
+    -- Optional background (0.8.91) in the family's look; off by default.
+    bar.back=UI:GamePanel(L.ID,bar,10,10,"bg",6,function() return L:Config().rollBgOpacity/100 end)
+    bar.back:SetAllPoints(bar);bar.back:EnableMouse(false);bar.back:Hide()
+    bar.back.bvFillOverride=function() local c=L:Config();if c.rollBgOwnColor then return UI:RGBA(c.rollBgColor) end end
     -- The whole bar (name, timer) shows the item tooltip, not only the icon;
     -- with results as "tooltip" it shows the roll overview instead (the icon
     -- keeps the item tooltip).
@@ -50,7 +53,7 @@ function F:Bar(index)
         else F:ItemEnter(owner,bar.roll) end
     end)
     bar:SetScript("OnLeave",function(owner) W:HideTooltip(owner);L.Results:HideTip(owner) end)
-    bar.item=W:ItemIcon(bar,30)
+    bar.item=W:ItemIcon(bar,30,true)
     bar.item:SetScript("OnEnter",function(owner) F:ItemEnter(owner,bar.roll) end)
     bar.item:EnableMouse(true)
     bar.item:SetScript("OnLeave",function(owner) W:HideTooltip(owner) end)
@@ -58,8 +61,8 @@ function F:Bar(index)
         local link=bar.roll and bar.roll.link
         if link and IsModifiedClick and IsModifiedClick() and HandleModifiedItemClick then HandleModifiedItemClick(link) end
     end)
-    bar.bvName=UI:Label(bar,"",12,false,true);bar.bvName:SetWordWrap(false)
-    bar.bind=UI:Label(bar,"",11,false,true);bar.bind:SetJustifyH("RIGHT")
+    bar.bvName=UI:GameLabel(L.ID,bar,"",12,false,true);bar.bvName:SetWordWrap(false)
+    bar.bind=UI:GameLabel(L.ID,bar,"",11,false,true);bar.bind:SetJustifyH("RIGHT")
     bar.status=CreateFrame("StatusBar",nil,bar);bar.status:SetMinMaxValues(0,1)
     bar.statusBg=bar.status:CreateTexture(nil,"BACKGROUND");bar.statusBg:SetAllPoints(bar.status)
     bar.statusEdge=bar:CreateTexture(nil,"BORDER")
@@ -71,8 +74,8 @@ function F:Bar(index)
         b:SetScript("OnLeave",function(owner) W:HideTooltip(owner) end)
         bar.buttons[slot]=b
     end
-    bar.bvKind=UI:Label(bar,"",17,false,true);bar.bvKind:SetJustifyH("RIGHT");bar.bvKind:SetWordWrap(false)
-    bar.stats=UI:Label(bar,"",10,false);bar.stats:SetJustifyH("RIGHT");bar.stats:SetWordWrap(false)
+    bar.bvKind=UI:GameLabel(L.ID,bar,"",17,false,true);bar.bvKind:SetJustifyH("RIGHT");bar.bvKind:SetWordWrap(false)
+    bar.stats=UI:GameLabel(L.ID,bar,"",10,false);bar.stats:SetJustifyH("RIGHT");bar.stats:SetWordWrap(false)
     bar.bvKind:SetTextColor(1,1,1);bar.stats:SetTextColor(.85,.85,.85)
     self.bars[index]=bar
     return bar
@@ -80,27 +83,35 @@ end
 function F:Layout(bar,cfg)
     local w=self.anchor:Width()
     local h,barH,nameH,button=geometry(cfg)
-    D.Size(bar,w,h)
-    bar.item:Resize(h);bar.item:ClearAllPoints();D.Point(bar.item,"TOPLEFT",bar,"TOPLEFT",0,0)
+    -- With the background on, everything sits inside a padding on every side.
+    local p=L.RollPad(cfg)
+    D.Size(bar,w,h+2*p)
+    bar.back:SetShown(cfg.rollBackground);bar.back:SetFrameLevel(bar:GetFrameLevel())
+    w=w-2*p
+    bar.item:Resize(h);bar.item:ClearAllPoints();D.Point(bar.item,"TOPLEFT",bar,"TOPLEFT",p,-p)
     -- Above the bar, which takes the mouse itself (same level: the parent wins).
     bar.item:SetFrameLevel(bar:GetFrameLevel()+3)
     local x=h+4
-    bar.status:ClearAllPoints();D.Point(bar.status,"BOTTOMLEFT",bar,"BOTTOMLEFT",x,0);D.Point(bar.status,"BOTTOMRIGHT",bar,"BOTTOMRIGHT",0,0);D.Height(bar.status,barH)
+    -- Right inset: the option counts stick out 4 beyond their button, so with
+    -- a background the right side keeps room for them (Florian, 2026-10-07).
+    local rp=p>0 and p+5 or 0
+    w=w-(rp-p)
+    bar.status:ClearAllPoints();D.Point(bar.status,"BOTTOMLEFT",bar,"BOTTOMLEFT",x+p,p);D.Point(bar.status,"BOTTOMRIGHT",bar,"BOTTOMRIGHT",-rp,p);D.Height(bar.status,barH)
     bar.statusEdge:ClearAllPoints();D.Point(bar.statusEdge,"TOPLEFT",bar.status,"TOPLEFT",-1,1);D.Point(bar.statusEdge,"BOTTOMRIGHT",bar.status,"BOTTOMRIGHT",1,-1)
-    bar.statusEdge:SetColorTexture(0,0,0,.85)
+    bar.statusEdge:SetColorTexture(unpack(select(2,L:Family()).barEdge))
     local right=0
     for slot=#bar.buttons,1,-1 do
         local b=bar.buttons[slot]
         b:Resize(button)
         if b:IsShown() then
-            b:ClearAllPoints();D.Point(b,"BOTTOMRIGHT",bar,"BOTTOMRIGHT",-right,barH+2);right=right+button+3
+            b:ClearAllPoints();D.Point(b,"BOTTOMRIGHT",bar,"BOTTOMRIGHT",-right-rp,barH+2+p);right=right+button+3
         end
     end
-    bar.bind:ClearAllPoints();D.Point(bar.bind,"BOTTOMRIGHT",bar,"BOTTOMRIGHT",-right-2,barH+3);D.Size(bar.bind,30,nameH)
-    bar.bvName:ClearAllPoints();D.Point(bar.bvName,"BOTTOMLEFT",bar,"BOTTOMLEFT",x+1,barH+2)
+    bar.bind:ClearAllPoints();D.Point(bar.bind,"BOTTOMRIGHT",bar,"BOTTOMRIGHT",-right-2-rp,barH+3+p);D.Size(bar.bind,30,nameH)
+    bar.bvName:ClearAllPoints();D.Point(bar.bvName,"BOTTOMLEFT",bar,"BOTTOMLEFT",x+1+p,barH+2+p)
     D.Size(bar.bvName,math.max(20,w-x-right-36),nameH)
-    bar.bvKind:ClearAllPoints();D.Point(bar.bvKind,"TOPRIGHT",bar,"TOPLEFT",-6,1);D.Size(bar.bvKind,INFO,math.max(14,h*.6))
-    bar.stats:ClearAllPoints();D.Point(bar.stats,"BOTTOMRIGHT",bar,"BOTTOMLEFT",-6,0);D.Size(bar.stats,INFO+60,12)
+    bar.bvKind:ClearAllPoints();D.Point(bar.bvKind,"TOPRIGHT",bar,"TOPLEFT",-6,1-p);D.Size(bar.bvKind,INFO,math.max(14,h*.6))
+    bar.stats:ClearAllPoints();D.Point(bar.stats,"BOTTOMRIGHT",bar,"BOTTOMLEFT",-6,p);D.Size(bar.stats,INFO+60,12)
 end
 function F:Paint(bar,roll,cfg)
     bar.roll=roll
@@ -108,11 +119,12 @@ function F:Paint(bar,roll,cfg)
     local r,g,b=L.QualityColor(roll.quality or info.quality or 1)
     bar.item:SetItem(roll.icon or info.icon,roll.quality or info.quality,info.level,roll.count)
     bar.bvName:SetText(roll.name or info.name or roll.link or "?");bar.bvName:SetTextColor(r,g,b)
+    local familyID,family=L:Family()
     if roll.kind=="bv" then
-        bar.bind:SetText("ML");bar.bind:SetTextColor(Theme:Color("accent"))
-    elseif roll.bop then bar.bind:SetText("BoP");bar.bind:SetTextColor(1,.3,.1)
+        bar.bind:SetText("ML");bar.bind:SetTextColor(UI:GameStyle(L.ID):Color("accent"))
+    elseif roll.bop then bar.bind:SetText(ns.Styles:Label(familyID,"BoP"));bar.bind:SetTextColor(1,.3,.1)
     else bar.bind:SetText("") end
-    local texture=ns.Media:StatusBar(ns.Settings:Get("statusbar"))
+    local texture=ns.Styles:BarTexture(familyID)
     bar.status:SetStatusBarTexture(texture)
     if cfg.rollQualityBar then bar.status:SetStatusBarColor(r,g,b,.85);bar.statusBg:SetColorTexture(r*.2,g*.2,b*.2,.75)
     else bar.status:SetStatusBarColor(UI:RGBA(cfg.rollBarColor));bar.statusBg:SetColorTexture(0,0,0,.6) end
@@ -126,7 +138,8 @@ function F:Paint(bar,roll,cfg)
         else button.option=nil;button:Hide() end
     end
     local kind=cfg.rollKind and L.ItemKind(info) or nil
-    bar.bvKind:SetText(kind or "");bar.stats:SetText(cfg.rollStats and roll.link and L.ItemStats(roll.link) or "")
+    bar.bvKind:SetText(ns.Styles:Label(familyID,kind) or "");bar.stats:SetText(cfg.rollStats and roll.link and L.ItemStats(roll.link) or "")
+    bar.bvKind:SetTextColor(unpack(family.labelColor))
     bar.bvKind:SetShown(kind~=nil);bar.stats:SetShown(cfg.rollStats)
     self:Layout(bar,cfg)
     self:Tick(bar)
@@ -220,7 +233,7 @@ end
 function F:Create()
     if self.anchor then return end
     self.anchor=W:Anchor({layout="bv:lootrolls",label="Loot Rolls",screen="TOP",x=0,y=-220,
-        width=function() return L:Config().rollWidth end,height=function() return L:Config().rollHeight end,
+        width=function() return L:Config().rollWidth end,height=function() local c=L:Config();return c.rollHeight+2*L.RollPad(c) end,
         grow=function() return L:Config().rollGrow end,spacing=function() return L:Config().rollSpacing end,
         enabled=function() return L:Config().rolls end,
         resized=function(width)

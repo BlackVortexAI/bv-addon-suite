@@ -1,0 +1,17 @@
+## Interface: 16001
+## Title: BV Addon Suite - Quest
+## Notes: Quest log beside the world map: compact list, details beside the map, smart sorting and grouping. Requires BV Core.
+## Author: BV
+## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
+## Version: 0.1.1
+## Dependencies: BVAddonSuite
+
+Quest.lua
+Data.lua
+Run.lua
+UI\Panes.lua
+UI\List.lua
+UI\Details.lua
+UI\Banner.lua
+UI\Tracker.lua
+Options.lua

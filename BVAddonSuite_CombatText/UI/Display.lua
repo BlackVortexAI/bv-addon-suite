@@ -48,6 +48,11 @@ end
 
 -- Text frames -------------------------------------------------------------------------
 local function fontPath(cfg)
+    -- "inherit": the style family's font (WoW, Clean), else the suite font (BV).
+    if cfg.font=="inherit" then
+        local path=ns.Styles:FontPath((ns.Styles:Family(L.ID)),"bold")
+        if path then return path end
+    end
     if cfg.font~="inherit" and ns.Media then
         local ok,path=pcall(ns.Media.Font,ns.Media,cfg.font)
         if ok and path then return path end
@@ -215,6 +220,8 @@ function Display:Place(entry,override)
         offset=entry.staggerLine*D.ToNative(style.staggerSpacing)*((keys[#keys].y or 0)>0 and -1 or 1)
     end
     y=y+offset
+    -- At a nameplate: the chosen height above it (over its debuffs).
+    if plate then offset=offset+D.ToNative(cfg.plateOffset);y=y+D.ToNative(cfg.plateOffset) end
     frame:ClearAllPoints()
     if plate and not pcall(frame.SetPoint,frame,"BOTTOM",plate,"TOP",x,y) then
         frame:ClearAllPoints();plate=nil

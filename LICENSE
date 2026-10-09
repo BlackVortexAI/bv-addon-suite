@@ -3,8 +3,8 @@ BV Addon Suite - Custom License
 Copyright (c) 2026 BlackVortexAI. All rights reserved.
 
 This license applies to BV Addon Suite and all of its modules, including
-BV Addon Suite - Core, AuraStudio, Experience, Reputation, Bags and
-Micro Menu. It covers the code, the node system, graphics, icons,
+BV Addon Suite - Core, AuraStudio, Experience, Reputation, Bags, Micro Menu,
+Loot, Combat Text, Quest, Map and Gather. It covers the code, the node system, graphics, icons,
 textures, the BV logo and all other content of this project, excluding
 third-party resources (see below).
 
@@ -29,6 +29,11 @@ perpetual, worldwide, royalty-free and irrevocable right to use, modify,
 distribute and relicense that contribution as part of this project, and
 you confirm that you have the right to grant it.
 
+Exception: the folder BVAddonSuite_GatherData (BV Addon Suite - Gather Data)
+is not covered by this license. It contains data derived from the vMaNGOS
+world database and is licensed under the GNU General Public License,
+version 2; see LICENSE.txt and NOTICE.txt in that folder.
+
 Third-party resources: Bundled libraries, fonts and symbols remain under
 their own licenses. Their license and notice files are included in the
 addon folders, for example:
@@ -41,6 +46,7 @@ addon folders, for example:
 - LibCustomGlow-1.0 (MIT License)
 - Lucide symbols (ISC License / MIT License)
 - Alegreya, Alegreya Sans and Ysabeau fonts (SIL Open Font License 1.1)
+- vMaNGOS world database (GNU GPL 2.0), as data in BVAddonSuite_GatherData
 
 World of Warcraft and Blizzard Entertainment are trademarks or registered
 trademarks of Blizzard Entertainment, Inc. This project is not affiliated

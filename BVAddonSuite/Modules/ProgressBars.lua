@@ -9,7 +9,7 @@ function Bars:View(kind)
     local state = self.states[kind]
     if not state then state = {}; self.states[kind] = state end
     if not state.view then
-        state.view = ns.UI:ProgressBar()
+        state.view = ns.UI:ProgressBar(kind .. "_bar")
         if ns.ExternalFrames then ns.ExternalFrames:MarkOwned(state.view) end
         ns.Layout:Refresh(true)
     end
@@ -35,7 +35,7 @@ function Bars:Render(kind)
     local view = self:View(kind)
     local level=ns.Layout:Level("bv:"..kind)
     if view:GetFrameLevel()~=level then
-        view:SetFrameLevel(level);view.fill:SetFrameLevel(level+1);view.overlay:SetFrameLevel(level+2)
+        view:SetFrameLevel(level);view.fill:SetFrameLevel(level+1);view.border:SetFrameLevel(level+2);view.overlay:SetFrameLevel(level+3)
     end
     if not snapshot then
         snapshot = self.definitions[kind].missing or { current=0, maximum=1 }

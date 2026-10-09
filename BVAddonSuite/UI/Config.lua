@@ -4,21 +4,35 @@ local D=ns.DesignSystem.Metrics
 local Config={page="appearance",modulePages={},moduleOrder={}}
 ns.Config=Config
 local function at(w,p,x,y) return UI:Place(w,p,x,y) end
-local NAV,HEADING=30,22
--- Sidebar categories (0.8.75): collapsible groups. Modules pick one with
--- definition.category (id) and categoryLabel; default is UI Enhancements.
-local categoryOrder={"design","core","enhancements"}
-local categoryLabels={design="Design & Layout",core="Core Services",enhancements="UI Enhancements"}
-local pageCategory={layout="design",appearance="core",profiles="core",core="core"}
+local NAV,HEADING,ROW=30,24,26
+-- Sidebar (Florian 2026-10-08, after EllesmereUI's): the suite's own pages
+-- pinned on top with distinct symbols; modules as compact text rows in real
+-- categories, each with a power switch. Modules pick a category with
+-- definition.category (id) and categoryLabel; the known pages are listed
+-- here so published packages need no new version. Unknown ones go to Other.
+local categoryOrder={"pinned","interface","combat","questmap","loot"}
+local categoryLabels={pinned="Suite",interface="Interface",combat="Combat",questmap="Quest and map",loot="Loot",enhancements="Other"}
+local pageCategory={layout="pinned",appearance="pinned",profiles="pinned",core="pinned"}
+local pinnedOrder={"layout","appearance","profiles","stage","core"}
+local KNOWN={experience={"interface","experience_bar"},reputation={"interface","reputation_bar"},bags={"interface","bag_bar"},
+    micromenu={"interface","micro_menu"},aurastudio={"combat","aura_studio"},combattext={"combat","combat_text"},
+    quest={"questmap","quest"},map={"questmap","map"},loot={"loot","loot"},stage={"pinned"}}
+local pageModule={}
 local titles={appearance="Global Settings",profiles="Profiles",core="Core Status"}
-local icons={appearance="spark",profiles="grid",core="info",aurastudio="tree",experience="plus",reputation="check",bags="folder",micromenu="grid",loot="spark"}
+local icons={layout="layout-dashboard",appearance="settings",profiles="layers",stage="bell",core="activity"}
 local descriptions={appearance="Shared typography, surfaces and preferences for every BV module.",profiles="Independent configurations for your characters and activities.",core="Client and module diagnostics, captured on demand."}
 function Config:RegisterPage(id,definition)
     assert(not titles[id],"Duplicate configuration page")
     self.modulePages[id]=definition; self.moduleOrder[#self.moduleOrder+1]=id
     titles[id],descriptions[id]=definition.title,definition.description
-    local category=type(definition.category)=="string" and definition.category:match("^[a-z][a-z0-9_]*$") and definition.category or "enhancements"
-    if not categoryLabels[category] then
+    local known=KNOWN[id] or {}
+    local category=type(definition.category)=="string" and definition.category:match("^[a-z][a-z0-9_]*$") and definition.category or known[1] or "enhancements"
+    -- Old ids from before the sidebar rework: Core's own pages are pinned.
+    if category=="core" or category=="design" then category="pinned" end
+    pageModule[id]=type(definition.module)=="string" and definition.module or known[2]
+    if category=="enhancements" then
+        if not self.otherAdded then self.otherAdded=true;categoryOrder[#categoryOrder+1]=category end
+    elseif not categoryLabels[category] then
         categoryLabels[category]=type(definition.categoryLabel)=="string" and definition.categoryLabel or category
         categoryOrder[#categoryOrder+1]=category
     end
@@ -28,9 +42,55 @@ end
 function Config:ModuleNavigation()
     for _,id in ipairs(self.moduleOrder) do
         local key=id
-        if not self.nav[id] then self.nav[id]=self.navButton(titles[id],function() self:SelectPage(key) end,icons[id] or "grid",0) end
+        if not self.nav[id] then
+            if pageCategory[id]=="pinned" then self.nav[id]=self.navButton(titles[id],function() self:SelectPage(key) end,icons[id] or "layout-grid",0)
+            else self.nav[id]=self:ModuleRow(id) end
+        end
     end
-    for _,category in ipairs(categoryOrder) do self:CategoryHeading(category) end
+    for _,category in ipairs(categoryOrder) do if category~="pinned" then self:CategoryHeading(category) end end
+end
+-- A module's row: its name (opens the page) and a power switch on the right.
+function Config:ModuleRow(id)
+    local row=UI:NavButton(self.navContent,titles[id],160,function() self:SelectPage(id) end,false)
+    D.Height(row,ROW-2);if row.mark then D.Height(row.mark,ROW-2) end
+    row:SetLabelInsets(14,34,"LEFT")
+    local module=pageModule[id]
+    if module then
+        row.power=CreateFrame("Button",nil,row);D.Size(row.power,22,22);D.Point(row.power,"RIGHT",row,"RIGHT",-4,0)
+        row.power:SetFrameLevel(row:GetFrameLevel()+3)
+        row.power.icon=UI:Icon(row.power,"power",14,"muted");D.Point(row.power.icon,"CENTER")
+        row.power:SetScript("OnClick",function() self:TogglePower(id) end)
+        row.power:SetScript("OnEnter",function(owner)
+            local record=ns.Modules.records[module]
+            local state=record and record.state or "missing"
+            UI:ShowTooltip(owner,titles[id],state=="enabled" and "On. Click to switch it off." or state=="faulted" and "Stopped after an error. Click to try again."
+                or "Off. Click to switch it on.")
+        end)
+        row.power:SetScript("OnLeave",function(owner) UI:HideTooltip(owner) end)
+    end
+    row.moduleID=module
+    return row
+end
+function Config:TogglePower(id)
+    local module=pageModule[id]
+    local record=module and ns.Modules.records[module]
+    if not record then return end
+    if InCombatLockdown and InCombatLockdown() then ns:Print("Switch modules after combat.");return end
+    ns.Modules:SetEnabled(module,record.state~="enabled")
+    if ns.Layout and ns.Layout.Refresh then ns.Layout:Refresh(true) end
+    self:Refresh()
+end
+-- Power symbols and row colours follow the module states.
+function Config:PaintPower()
+    for id,row in pairs(self.nav) do
+        if row.power then
+            local record=ns.Modules.records[row.moduleID]
+            local state=record and record.state
+            local role=state=="enabled" and "success" or state=="faulted" and "danger" or "muted"
+            row.power.icon.colorRole=role;row.power.icon:SetColor(ns.Theme:Color(role))
+            if row.label then row.label:SetAlpha(state=="enabled" and 1 or .6) end
+        end
+    end
 end
 function Config:CategoryOf(id) return pageCategory[id] or "enhancements" end
 -- Collapsed categories are remembered per profile.
@@ -49,13 +109,13 @@ function Config:CategoryHeading(category)
     self.categoryHeadings=self.categoryHeadings or {}
     if self.categoryHeadings[category] then return self.categoryHeadings[category] end
     local h=CreateFrame("Button",nil,self.navContent); D.Size(h,160,HEADING-2)
-    h.label=UI:Label(h,string.upper(categoryLabels[category]),10,"muted"); D.Point(h.label,"LEFT",22,0); D.Size(h.label,130,14)
+    h.label=UI:Label(h,categoryLabels[category],12,"accent",true); D.Point(h.label,"LEFT",10,0); D.Size(h.label,120,16)
     h.label:SetWordWrap(false)
-    h.open=UI:Icon(h,"chevron",12,"muted"); D.Point(h.open,"LEFT",6,0)
-    h.closed=UI:Icon(h,"right",12,"muted"); D.Point(h.closed,"LEFT",6,0)
+    h.open=UI:Icon(h,"chevron",12,"muted"); D.Point(h.open,"RIGHT",-6,0)
+    h.closed=UI:Icon(h,"right",12,"muted"); D.Point(h.closed,"RIGHT",-6,0)
     h:SetScript("OnClick",function() self:ToggleCategory(category) end)
     h:SetScript("OnEnter",function() h.label:SetTextColor(ns.Theme:Color("text")) end)
-    h:SetScript("OnLeave",function() h.label:SetTextColor(ns.Theme:Color("muted")) end)
+    h:SetScript("OnLeave",function() h.label:SetTextColor(ns.Theme:Color("accent")) end)
     UI:AttachTooltip(h,categoryLabels[category],"Click to expand or collapse this category.")
     self.categoryHeadings[category]=h; self.navHeadings[#self.navHeadings+1]=h.label
     return h
@@ -67,35 +127,171 @@ function Config:ArrangeNavigation(side,compact)
     self.emptyModules:Hide()
     local buttons={layout=self.layoutButton}
     for id,button in pairs(self.nav) do buttons[id]=button end
-    for _,category in ipairs(categoryOrder) do
-        local items={}
-        if category=="design" then items[1]="layout" end
-        if category=="core" then items={"appearance","profiles","core"} end
-        for _,id in ipairs(self.moduleOrder) do if pageCategory[id]==category then items[#items+1]=id end end
-        local heading=self:CategoryHeading(category)
-        local empty=category=="enhancements" and #items==0
-        local visible=#items>0 or empty
-        heading:SetShown(visible and not compact)
-        local open=compact or not collapsed[category]
-        if visible and not compact then
-            at(heading,self.navContent,0,y); D.Width(heading,side-16)
-            heading.open:SetShown(open); heading.closed:SetShown(not open)
-            y=y+HEADING
+    -- The suite's own pages, always open, no heading.
+    for _,id in ipairs(pinnedOrder) do
+        local button=buttons[id]
+        if button then button:Show();at(button,self.navContent,0,y);y=y+NAV end
+    end
+    y=y+8
+    -- Settings search (Core 0.8.96): results take the module list's place.
+    self.searchBox:SetShown(not compact);self.searchHint:SetShown(not compact and self.searchBox:GetText()=="" and not self.searchBox:HasFocus())
+    if not compact then
+        at(self.searchBox,self.navContent,0,y);D.Width(self.searchBox,side-16)
+        at(self.searchHint,self.navContent,10,y+6);D.Width(self.searchHint,side-36)
+        y=y+34
+    end
+    local searching=not compact and self.searchResults~=nil
+    for _,row in ipairs(self.searchRows) do row:Hide() end
+    self.searchEmpty:Hide()
+    if searching then
+        for _,heading in pairs(self.categoryHeadings or {}) do heading:Hide() end
+        for id,button in pairs(self.nav) do if pageCategory[id]~="pinned" then button:Hide() end end
+        self.emptyModules:Hide()
+        for index,result in ipairs(self.searchResults) do
+            local row=self:SearchRow(index)
+            row.result=result
+            row.title:SetText(result.title)
+            local where=titles[result.page] or ""
+            if result.section and result.section~="" then where=where.."  ·  "..result.section end
+            if result.kind=="page" then where="Page" end
+            row.where:SetText(where)
+            at(row,self.navContent,0,y);D.Width(row,side-16);D.Width(row.title,side-28);D.Width(row.where,side-28)
+            row:Show();y=y+40
         end
-        for _,id in ipairs(items) do
-            local button=buttons[id]
-            if button then
-                button:SetShown(open)
-                if open then at(button,self.navContent,0,y); y=y+NAV end
+        if #self.searchResults==0 then at(self.searchEmpty,self.navContent,10,y);self.searchEmpty:Show();y=y+24 end
+        return y
+    end
+    local modules=0
+    for _,category in ipairs(categoryOrder) do
+        if category~="pinned" then
+            local items={}
+            for _,id in ipairs(self.moduleOrder) do if pageCategory[id]==category then items[#items+1]=id end end
+            local heading=self:CategoryHeading(category)
+            local visible=#items>0
+            modules=modules+#items
+            heading:SetShown(visible and not compact)
+            local open=compact or not collapsed[category]
+            if visible and not compact then
+                at(heading,self.navContent,0,y); D.Width(heading,side-16)
+                heading.open:SetShown(open); heading.closed:SetShown(not open)
+                y=y+HEADING
+            end
+            for _,id in ipairs(items) do
+                local button=buttons[id]
+                if button then
+                    button:SetShown(open)
+                    if open then at(button,self.navContent,0,y); y=y+(button.power and ROW or NAV) end
+                end
+            end
+            if visible then y=y+6 end
+        end
+    end
+    self.emptyModules:SetShown(modules==0 and not compact)
+    if modules==0 and not compact then at(self.emptyModules,self.navContent,8,y+4); y=y+24 end
+    return y
+end
+-- Settings search (Core 0.8.96, Florian's second step after the sidebar):
+-- page titles and every settings row (title, tooltip text, section) of all
+-- pages; building every module page once is the price of the first search.
+local SEARCH_MAX=12
+function Config:BuildAllPages()
+    for _,id in ipairs(self.moduleOrder) do
+        if not self.pages[id] then
+            self.buildingPage=id
+            local ok,page=pcall(self.modulePages[id].build,self.pageContent)
+            self.buildingPage=nil
+            if ok and page then self.pages[id]=page;if id~=self.page then page:Hide() end end
+        end
+    end
+end
+function Config:SearchIndex()
+    self:BuildAllPages()
+    local out={}
+    for id,title in pairs(titles) do out[#out+1]={kind="page",page=id,title=title,help=descriptions[id]} end
+    for _,grid in ipairs(UI.settingsGrids or {}) do
+        if grid.pageID and titles[grid.pageID] then
+            for _,item in ipairs(grid.items) do
+                if item.kind=="row" and type(item.title)=="string" and item.title~="" then
+                    out[#out+1]={kind="setting",page=grid.pageID,title=item.title,help=item.help,
+                        section=item.section and item.section.text,grid=grid,item=item}
+                end
             end
         end
-        if empty then
-            self.emptyModules:SetShown(open and not compact)
-            if open and not compact then at(self.emptyModules,self.navContent,8,y+4); y=y+24 end
-        end
-        if visible then y=y+8 end
     end
-    return y
+    return out
+end
+-- Best first: name starts with the text, name contains it, its section or
+-- page does, its explanation does.
+function Config:Search(text)
+    text=type(text)=="string" and text or ""
+    text=text:lower():gsub("^%s+",""):gsub("%s+$","")
+    if #text<2 then return nil end
+    local order={}
+    for i,id in ipairs(pinnedOrder) do order[id]=i end
+    for i,id in ipairs(self.moduleOrder) do order[id]=order[id] or 100+i end
+    local hits={}
+    for _,entry in ipairs(self:SearchIndex()) do
+        local title=entry.title:lower()
+        local rank
+        if title:sub(1,#text)==text then rank=1
+        elseif title:find(text,1,true) then rank=2
+        elseif ((entry.section or ""):lower()):find(text,1,true) or ((titles[entry.page] or ""):lower()):find(text,1,true) then rank=3
+        elseif type(entry.help)=="string" and entry.help:lower():find(text,1,true) then rank=4 end
+        if rank then entry.rank=rank;hits[#hits+1]=entry end
+    end
+    table.sort(hits,function(a,b)
+        if a.rank~=b.rank then return a.rank<b.rank end
+        if a.kind~=b.kind then return a.kind=="page" end
+        local oa,ob=order[a.page] or 999,order[b.page] or 999
+        if oa~=ob then return oa<ob end
+        return a.title<b.title
+    end)
+    while #hits>SEARCH_MAX do table.remove(hits) end
+    return hits
+end
+function Config:UpdateSearch()
+    self.searchResults=self:Search(self.searchBox:GetText())
+    self:Layout()
+end
+function Config:ClearSearch()
+    self.searchBox:SetText("");self.searchBox:ClearFocus()
+    self.searchResults=nil
+    self:Layout()
+end
+function Config:SearchRow(index)
+    local row=self.searchRows[index]
+    if row then return row end
+    row=CreateFrame("Button",nil,self.navContent);D.Size(row,160,38)
+    row.band=row:CreateTexture(nil,"BACKGROUND");row.band:SetAllPoints(row);row.band:SetColorTexture(1,1,1,0)
+    row.title=UI:Label(row,"",12,"text");D.Point(row.title,"TOPLEFT",10,-4);row.title:SetWordWrap(false)
+    row.where=UI:Label(row,"",10,"muted");D.Point(row.where,"TOPLEFT",10,-21);row.where:SetWordWrap(false)
+    row:SetScript("OnEnter",function() row.band:SetColorTexture(1,1,1,.06) end)
+    row:SetScript("OnLeave",function() row.band:SetColorTexture(1,1,1,0) end)
+    row:SetScript("OnClick",function() if row.result then Config:Go(row.result) end end)
+    self.searchRows[index]=row
+    return row
+end
+-- Opens the hit: its page, its tab or section, scrolled to the row, which
+-- lights up for a moment.
+function Config:Go(result)
+    self.searchBox:SetText("");self.searchBox:ClearFocus();self.searchResults=nil
+    self:SelectPage(result.page)
+    if result.kind~="setting" then return end
+    local page=self.pages[result.page];local navigation=page and page.navigation
+    local section=result.grid.navigationID or (result.item.section and result.item.section.id)
+    if navigation and section then
+        for _,definition in ipairs(navigation.definitions or {}) do
+            local holds=definition.id==section
+            for _,id in ipairs(definition.sections or {}) do if id==section then holds=true end end
+            if holds then self:SelectSection(definition.id);break end
+        end
+    end
+    self:Layout()
+    local y=result.item.y or 0
+    local gridTop,contentTop=result.grid:GetTop(),self.pageContent:GetTop()
+    if type(gridTop)=="number" and type(contentTop)=="number" then y=y+D.ToDesign(contentTop-gridTop) end
+    self.pageScroll:SetValue(math.max(0,math.min(self.pageMaximum or 0,y-24)))
+    result.grid:Flash(result.item)
 end
 function Config:OpenPage(id)
     if ns.LayoutEditor.active then ns:Print("Finish layout editing before opening module settings."); return end
@@ -105,7 +301,7 @@ end
 function Config:SelectPage(id)
     if not titles[id] then ns:Print("This module is not loaded."); return end
     local module=self.modulePages[id]
-    if module then self.pages[id]=module.build(self.pageContent) end
+    if module then self.buildingPage=id;self.pages[id]=module.build(self.pageContent);self.buildingPage=nil end
     self.page=id; self.pageScroll:SetValue(0); self.heading:SetText(titles[id]); self.description:SetText(descriptions[id])
     local category=self:CategoryOf(id)
     self.category:SetText("CONFIGURATION / "..string.upper(categoryLabels[category]))
@@ -132,11 +328,13 @@ end
 function Config:Refresh()
     if not self.window then return end
     UI:FitWindow(self.window,1040,680,Settings:Get("scale"))
-    for _,key in ipairs({"font","themeKey","scale","statusbar","tooltips"}) do self[key]:SetValue(Settings:Get(key)) end
+    ns.Styles:SuiteFamily()
+    for _,key in ipairs({"font","themeKey","scale","statusbar","tooltips","gameFamily"}) do self[key]:SetValue(Settings:Get(key)) end
     self.profile:SetOptions(Settings:ListProfiles()); self.profile:SetValue(Settings.db.activeProfile)
     self.profileLabel:SetText("PROFILE  /  "..Settings.db.activeProfile)
     if self.page=="core" and self.window:IsShown() then self:UpdateDiagnostics() end
     for _,id in ipairs(self.moduleOrder) do self.modulePages[id].refresh() end
+    self:PaintPower()
     self:UpdateNavigation(); self:Layout()
 end
 function Config:UpdateDiagnostics()
@@ -216,10 +414,23 @@ function Config:Build()
         return b
     end
     -- Positions come from ArrangeNavigation; headings are created per category.
-    self.layoutButton=navButton("Layout Editor",function() ns.LayoutEditor:Open() end,"grid",0)
+    self.layoutButton=navButton("Layout Editor",function() ns.LayoutEditor:Open() end,icons.layout,0)
     local function nav(id) self.nav[id]=navButton(titles[id],function() self:SelectPage(id) end,icons[id],0) end
     nav("appearance"); nav("profiles"); nav("core")
     self.emptyModules=UI:Label(self.navContent,"No feature addons loaded.",11,"muted")
+    self.searchRows={}
+    self.searchBox=UI:Input(self.navContent,150,function()
+        local first=self.searchResults and self.searchResults[1]
+        if first then self:Go(first) end
+    end)
+    self.searchBox:SetMaxLetters(40);D.Height(self.searchBox,28)
+    self.searchBox:HookScript("OnTextChanged",function() self:UpdateSearch() end)
+    self.searchBox:HookScript("OnEscapePressed",function() self:ClearSearch() end)
+    self.searchBox:HookScript("OnEditFocusGained",function() self.searchHint:Hide() end)
+    self.searchBox:HookScript("OnEditFocusLost",function() self.searchHint:SetShown(self.searchBox:GetText()=="") end)
+    UI:AttachTooltip(self.searchBox,"Search settings","Every page and setting of the suite and its modules. Enter opens the first hit, Escape clears.")
+    self.searchHint=UI:Label(self.navContent,"Search settings…",11,"muted");self.searchHint:SetWordWrap(false)
+    self.searchEmpty=UI:Label(self.navContent,"No settings found.",11,"muted")
     self.navButton=navButton
     self:ModuleNavigation()
     self.sectionHeading=UI:Label(self.navContent,"PAGE SECTIONS",10,"muted")
@@ -247,7 +458,7 @@ function Config:Build()
     self.pages={}; self.grids={}
     for _,id in ipairs({"appearance","profiles","core"}) do
         self.pages[id]=UI:Panel(self.pageContent,880,600,"surface"); UI:HideSurface(self.pages[id])
-        self.grids[id]=UI:SettingsGrid(self.pages[id])
+        self.grids[id]=UI:SettingsGrid(self.pages[id]);self.grids[id].pageID=id
     end
     local g=self.grids.appearance
     g:Section("typography","Typography")
@@ -258,6 +469,11 @@ function Config:Build()
         {help="Default texture for BV bars. Change the suite palette with Material in the header."})
     self.statusbar:SetOptionsProvider(function()return ns.Media:BarOptions()end)
     self.barPreview=g:Row("Preview",UI:StatusBar(g,220,10),{width=220,help="Sample bar with the selected texture."})
+    -- In-game style family (0.8.95): elements seen while playing; tool windows keep the material above.
+    g:Section("gamestyle","In-game style")
+    self.gameFamily=g:Row("Style family",UI:Dropdown(g,220,ns.Styles:Choices(false),function(v) Settings:Set("gameFamily",v) end),
+        {help="Look of bars, roll bars, toasts and other elements you see while playing. Settings windows keep the BV style. A module can choose its own family on its page. \"Clean (match my UI)\" takes border, background and accent colours from a supported interface package."})
+    self.gameFamily:SetOptionsProvider(function() return ns.Styles:Choices(false) end)
     g:Section("interaction","Window & interaction")
     self.tooltips=g:Row("Contextual help",UI:Switch(g,true,function(v) Settings:Set("tooltips",v) end),{help="Show tooltips on BV controls."})
     UI:AttachTooltip(self.tooltips,"Control tooltips","Show contextual help for BV controls.")

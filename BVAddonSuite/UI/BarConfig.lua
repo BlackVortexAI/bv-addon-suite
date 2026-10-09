@@ -1,14 +1,15 @@
 local _,ns=...
 -- Explanations per setting key; {bar, text field} where a key exists in both.
 local HELP={
-    texture="Status bar texture of the fill. \"Inherit\" uses the texture from Global Settings.",
+    texture="Status bar texture of the fill. \"Inherit\" uses the texture of the style family.",
+    styleFamily="Look of this bar: the suite's in-game style or an own one. WoW and Clean draw their border around the bar; inherited texture and fonts follow the style.",
     color={"Color of the filled part of the bar.","Text color of this field."},
     background="Color of the empty part and of the dividers between segments.",
     showRested="Shows rested experience as a lighter section after the fill.",
     restedColor="Color of the rested section.",
     hideInactive="Hides the bar when there is nothing to show, for example at the level cap or without a watched faction.",
     template="Text of this field. Variables in braces are replaced; hover for the list.",
-    font="Font of this field. \"Inherit\" uses the font from Global Settings.",
+    font="Font of this field. \"Inherit\" uses the font of the style family.",
     size="Font size of this field.",
     enabled="Shows or hides this text field.",
     anchor="Point of the text that is attached to the bar.",
@@ -30,7 +31,7 @@ function Editor:Refresh(kind)
     local p=self.pages[kind]; if not p then return end
     local cfg=ns.ProgressOptions:Get(kind); p.fieldIndex=math.min(p.fieldIndex,#cfg.fields)
     p.enabled:SetValue(cfg.enabled==true)
-    local texture=ns.Media:StatusBar(cfg.texture=="inherit" and ns.Settings:Get("statusbar") or cfg.texture)
+    local texture=cfg.texture=="inherit" and ns.Styles:BarTexture(ns.Styles:Family(kind.."_bar")) or ns.Media:StatusBar(cfg.texture)
     p.barSample:SetStatusBarTexture(texture)
     p.barSample:SetStatusBarColor(UI:RGBA(cfg.color)); p.barSample:SetAlpha(cfg.opacity)
     for _,c in ipairs(p.controls) do c.widget:SetValue((c.field and cfg.fields[p.fieldIndex] or cfg)[c.key]) end
@@ -90,15 +91,17 @@ function Editor:Build(parent,kind)
             control:SetScript("OnEditFocusLost",function(input) ns:Call("text field",set,input:GetText()) end)
         end
         if mode=="choice" and key=="font" then control:SetOptionsProvider(function()return ns.Media:FontOptions(true)end)
-        elseif mode=="choice" and key=="texture" then control:SetOptionsProvider(function()return ns.Media:BarOptions(true)end) end
+        elseif mode=="choice" and key=="texture" then control:SetOptionsProvider(function()return ns.Media:BarOptions(true)end)
+        elseif mode=="choice" and key=="styleFamily" then control:SetOptionsProvider(function()return ns.Styles:Choices(true)end) end
         p.controls[#p.controls+1]={widget=control,key=key,field=isField}
         p.inputs[isField and "field" or "bar"][key]=control
         local text=HELP[key]
         if type(text)=="table" then text=text[isField and 2 or 1] end
         return grid:Row(title,control,{help=help or text,width=width,wide=mode=="text" or nil})
     end
-    local a=UI:SettingsGrid(pages.appearance); p.appearanceGrid=a
+    local a=UI:SettingsGrid(pages.appearance); p.appearanceGrid=a; a.navigationID="appearance"
     a:Section("surface","Surface")
+    field(a,"Style family","styleFamily",false,"choice",220,ns.Styles:Choices(true))
     field(a,"Texture","texture",false,"choice",220,ns.Media:BarOptions(true))
     field(a,"Fill","color",false,"color",150)
     field(a,"Background / dividers","background",false,"color",150)
@@ -111,7 +114,7 @@ function Editor:Build(parent,kind)
         field(a,"Show rested XP","showRested",false,"toggle")
         field(a,"Rested color","restedColor",false,"color",150)
     end
-    local b=UI:SettingsGrid(pages.behavior); p.behaviorGrid=b
+    local b=UI:SettingsGrid(pages.behavior); p.behaviorGrid=b; b.navigationID="behavior"
     b:Section("visibility","Visibility")
     field(b,"Hide when inactive / at maximum","hideInactive",false,"toggle")
     field(b,"Hide native Blizzard artwork","hideBlizzard",false,"toggle",nil,nil,nil,
@@ -135,7 +138,7 @@ function Editor:Build(parent,kind)
         local cfg=ns.ProgressOptions:Get(kind); if #cfg.fields<=1 then return end
         table.remove(cfg.fields,p.fieldIndex); p.fieldIndex=1; changed()
     end); D.Height(removeField,24)
-    local t=UI:SettingsGrid(text); p.textGrid=t
+    local t=UI:SettingsGrid(text); p.textGrid=t; t.navigationID="text"
     t:Section("field","Selected text field")
     local template=field(t,"Text / variables","template",true,"text",420)
     UI:AttachTooltip(template,"Available variables","{level} {nextLevel} {current} {max} {remaining} {percent} {rested} {rate} {eta} {levelTime} {sessionXP} {faction} {standing} {status}")

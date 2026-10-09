@@ -69,14 +69,15 @@ function Master:Roster()
         if name and not seen[name] then seen[name]=true;out[#out+1]={name=name,class=class or L.ClassOf(name)} end
     end
     if L.Call("IsInRaid") then
+        -- Names with surname (WoW Forever), as chat and loot history show them.
         for i=1,40 do
             local name,_,_,_,_,token=L.Call("GetRaidRosterInfo",i)
-            if name then add(name,token) end
+            if name then add(L.UnitFull("raid"..i) or name,token) end
         end
     else
         add(L.Me(),select(2,L.Call("UnitClass","player")))
         for i=1,4 do
-            local name=L.Call("UnitName","party"..i)
+            local name=L.UnitFull("party"..i)
             if name then add(name,select(2,L.Call("UnitClass","party"..i))) end
         end
     end
@@ -215,16 +216,31 @@ function Master:AwardClick()
 end
 
 -- Window ----------------------------------------------------------------------------
+-- In the module's in-game style since the form kit (Loot 0.8.91):
+-- built inside UI:WithStyle, so controls, the window and its lists follow the
+-- style family live. Own lines: white in BV and Clean, the gold edge in WoW.
+local function style() return UI:GameStyle(L.ID) end
+local function color(key,alpha) return style():Color(key,alpha) end
+local function line(texture,alpha)
+    style():Bind(function()
+        if select(2,L:Family()).border=="gold" then local r,g,b=color("edge");texture:SetColorTexture(r,g,b,.6)
+        else texture:SetColorTexture(1,1,1,alpha) end
+    end,texture)
+    return texture
+end
 function Master:Status(text) self.statusText=text;if self.window then self.window.status:SetText(text or "") end end
 local function heading(parent,text,x,y,width)
     local label=UI:Label(parent,text,11,"accent",true);UI:Place(label,parent,x,y)
-    local rule=parent:CreateTexture(nil,"ARTWORK");rule:SetColorTexture(1,1,1,.08)
+    local rule=line(parent:CreateTexture(nil,"ARTWORK"),.08)
     UI:Place(rule,parent,x-2,y+18);D.Size(rule,width,1)
     return label,rule
 end
 local function control(widget,height) D.Height(widget,height or CONTROL);return widget end
 function Master:Build()
     if self.window then return self.window end
+    return UI:WithStyle(style(),self.BuildWindow,self)
+end
+function Master:BuildWindow()
     local w=W.Owned(UI:Dialog("BVLootMasterWindow",WIDTH,HEIGHT))
     w.title:SetText("Master Loot")
     self.window=w
@@ -232,7 +248,7 @@ function Master:Build()
     -- Sidebar: items on top, custom roll at the bottom.
     w.side=c:CreateTexture(nil,"BACKGROUND",nil,1);w.side:SetColorTexture(0,0,0,.18)
     D.Point(w.side,"TOPLEFT",c,"TOPLEFT",0,0);D.Point(w.side,"BOTTOMLEFT",c,"BOTTOMLEFT",0,FOOTER);D.Width(w.side,SIDE)
-    w.sideRule=c:CreateTexture(nil,"ARTWORK");w.sideRule:SetColorTexture(1,1,1,.07)
+    w.sideRule=line(c:CreateTexture(nil,"ARTWORK"),.07)
     D.Point(w.sideRule,"TOPLEFT",c,"TOPLEFT",SIDE,0);D.Point(w.sideRule,"BOTTOMLEFT",c,"BOTTOMLEFT",SIDE,FOOTER);D.Width(w.sideRule,1)
     w.listTitle=heading(c,"ITEMS",14,10,SIDE-24)
     w.empty=UI:Label(c,"No loot yet.",12,"muted");UI:Place(w.empty,c,14,40);D.Size(w.empty,SIDE-28,18)
@@ -257,7 +273,7 @@ function Master:Build()
     w.customSwitch=UI:Switch(c,false,function(value) L:Config().customEnabled=value;Master:Refresh() end)
     UI:Place(w.customSwitch,c,SIDE-48,CUSTOM_Y+133)
     -- Header: selected item, award (and integration buttons) on the right.
-    w.header=W:ItemIcon(c,40);UI:Place(w.header,c,MAIN_X,12)
+    w.header=W:ItemIcon(c,40,true);UI:Place(w.header,c,MAIN_X,12)
     w.header:SetScript("OnEnter",function(owner) local item=Master.selected;if item then W:ItemTooltip(owner,{link=item.link,itemID=L.ItemID(item.link),slot=item.slot,roll=item.roll,source="master"}) end end)
     w.header:SetScript("OnLeave",function(owner) W:HideTooltip(owner) end)
     w.bvName=UI:Label(c,"",15,false,true);UI:Place(w.bvName,c,MAIN_X+50,10);D.Size(w.bvName,MAIN_W-216,20);w.bvName:SetWordWrap(false)
@@ -267,7 +283,7 @@ function Master:Build()
     UI:Place(w.award,c,MAIN_X+MAIN_W-156,12)
     UI:AttachTooltip(w.award,"Award","Gives the item to the roll winner or the one selected player. Click twice to confirm; the loot window must be open.")
     w.extra={}
-    w.headerRule=c:CreateTexture(nil,"ARTWORK");w.headerRule:SetColorTexture(1,1,1,.07)
+    w.headerRule=line(c:CreateTexture(nil,"ARTWORK"),.07)
     UI:Place(w.headerRule,c,MAIN_X,64);D.Size(w.headerRule,MAIN_W,1)
     -- Toolbar: who, which options, request.
     w.selectMenu=control(UI:Dropdown(c,170,self:ClassChoices(),function(value) Master:Select(value) end))
@@ -295,7 +311,7 @@ function Master:Build()
     D.Point(w.track,"TOPRIGHT",w.list,"TOPRIGHT",0,0);D.Size(w.track,4,LIST_H)
     w.thumb=c:CreateTexture(nil,"OVERLAY")
     -- Footer with the status line, below both columns.
-    w.footer=c:CreateTexture(nil,"ARTWORK");w.footer:SetColorTexture(1,1,1,.07)
+    w.footer=line(c:CreateTexture(nil,"ARTWORK"),.07)
     D.Point(w.footer,"BOTTOMLEFT",c,"BOTTOMLEFT",0,FOOTER);D.Point(w.footer,"BOTTOMRIGHT",c,"BOTTOMRIGHT",0,FOOTER);D.Height(w.footer,1)
     w.status=UI:Label(c,"",11,"muted");D.Point(w.status,"BOTTOMLEFT",c,"BOTTOMLEFT",14,8);D.Size(w.status,WIDTH-150,16);w.status:SetWordWrap(false)
     w.historyButton=control(UI:Button(c,"History",100,function() L.Results:ShowHistory(10) end),22)
@@ -308,10 +324,14 @@ end
 function Master:ItemButton(index)
     local b=self.itemButtons[index]
     if b then return b end
+    return UI:WithStyle(style(),self.NewItemButton,self,index)
+end
+function Master:NewItemButton(index)
+    local b
     local c=self.window.content
     b=CreateFrame("Button",nil,c);D.Size(b,SIDE-24,ITEM_PITCH-2)
     b.band=b:CreateTexture(nil,"BACKGROUND");b.band:SetAllPoints(b)
-    b.item=W:ItemIcon(b,28);UI:Place(b.item,b,3,3);b.item:EnableMouse(false)
+    b.item=W:ItemIcon(b,28,true);UI:Place(b.item,b,3,3);b.item:EnableMouse(false)
     b.bvName=UI:Label(b,"",12,false,true);UI:Place(b.bvName,b,38,3);D.Size(b.bvName,SIDE-66,15);b.bvName:SetWordWrap(false)
     b.state=UI:Label(b,"",10,"muted");UI:Place(b.state,b,38,18);D.Size(b.state,SIDE-66,13);b.state:SetWordWrap(false)
     b:SetScript("OnClick",function() Master.selected=b.data;Master.confirm=nil;Master:Refresh() end)
@@ -323,7 +343,11 @@ end
 function Master:Row(index)
     local row=self.rows[index]
     if row then return row end
-    row=CreateFrame("Button",nil,self.window.listChild);D.Size(row,COLUMN-6,ROW-2);row:RegisterForClicks("LeftButtonUp","RightButtonUp")
+    return UI:WithStyle(style(),self.NewRow,self,index)
+end
+function Master:NewRow(index)
+    local row=CreateFrame("Button",nil,self.window.listChild)
+    row.bvMenuStyle=style();D.Size(row,COLUMN-6,ROW-2);row:RegisterForClicks("LeftButtonUp","RightButtonUp")
     row.band=row:CreateTexture(nil,"BACKGROUND");row.band:SetAllPoints(row)
     row.box=row:CreateTexture(nil,"ARTWORK");D.Size(row.box,12,12);D.Point(row.box,"LEFT",row,"LEFT",4,0)
     row.tick=row:CreateTexture(nil,"OVERLAY");D.Size(row.tick,8,8);D.Point(row.tick,"CENTER",row.box,"CENTER",0,0)
@@ -402,7 +426,7 @@ function Master:Refresh()
             local state=item.awarded and ("Awarded: "..item.awarded) or item.gone and "Looted" or item.roll and (item.roll.done and
                 (item.roll.winner and ("Winner: "..item.roll.winner) or "Roll ended") or "Rolling…") or item.slot and "In loot window" or "Not in loot window"
             b.state:SetText(state)
-            local ar,ag,ab=Theme:Color("accent")
+            local ar,ag,ab=color("accent")
             if item==self.selected then b.band:SetColorTexture(ar,ag,ab,.16) else b.band:SetColorTexture(1,1,1,.03) end
             UI:Place(b,w.content,12,y);b:Show();y=y+ITEM_PITCH
         elseif b then b.data=nil;b:Hide() end
@@ -448,7 +472,7 @@ function Master:Refresh()
         return a.name<b.name
     end)
     local selected=0
-    local ar,ag,ab=Theme:Color("accent")
+    local ar,ag,ab=color("accent")
     local lines=math.ceil(#list/2)
     D.Height(w.listChild,math.max(LIST_H,lines*ROW))
     for index=1,math.max(#list,#self.rows) do
@@ -507,7 +531,7 @@ function Master:Scroll(delta)
     if range>0 then
         local size=math.max(24,LIST_H*LIST_H/(LIST_H+range))
         w.thumb:ClearAllPoints();D.Point(w.thumb,"TOPRIGHT",w.list,"TOPRIGHT",0,-(LIST_H-size)*self.scroll/range)
-        D.Size(w.thumb,4,size);w.thumb:SetColorTexture(Theme:Color("accent",.7))
+        D.Size(w.thumb,4,size);w.thumb:SetColorTexture(color("accent",.7))
     end
 end
 function Master:Clock(run)

@@ -193,12 +193,11 @@ function UI:ScaleSlider(parent, width, callback)
     end)
     local function commit() ns:Call("window scale",callback,host.value) end
     slider:SetScript("OnMouseUp",commit)
-    slider:EnableMouseWheel(true)
-    slider:SetScript("OnMouseWheel",function(_,delta)
+    self:SliderWheel(slider,function(delta)
         slider:SetValue(math.max(50,math.min(130,slider:GetValue()+delta*5))); commit()
     end)
     function host:SetValue(value) slider:SetValue(value*100) end
-    self:AttachTooltip(slider,"Window scale","50–130%. Release to apply; mouse wheel adjusts by 5%.")
+    self:AttachTooltip(slider,"Window scale","50–130%. Release to apply; after a click the mouse wheel adjusts by 5%.")
     host:SetValue(1); return host
 end
 

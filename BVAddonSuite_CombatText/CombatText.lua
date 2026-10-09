@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.7.3","0.8.91",1) then return end
+if not ns:RequireCore(package,"0.7.6","0.8.95",1) then return end
 -- Combat text module. Everything specific to it lives in this package, never
 -- in Core, so Core stays free for fixes.
 L.ns=ns
@@ -61,7 +61,10 @@ end
 L.CRIT_CATEGORIES={outgoing=true,incoming=true,heal=true,outheal=true}
 -- Switches of the message categories (only where the defaults have them).
 L.CATEGORY_SWITCHES={"gains","fades","combat","reputation","honor","procs","kills"}
-L.DEFAULTS={enabled=false,hideBlizzard=true,hideBlizzardSelf=true,plates=true,numbers="short",font="inherit",outline="OUTLINE",
+L.DEFAULTS={enabled=false,hideBlizzard=true,hideBlizzardSelf=true,plates=true,
+    -- Texts at a nameplate start this much higher (a CurseForge wish
+    -- 2026-10-09: above the enemy's debuffs).
+    plateOffset=0,numbers="short",font="inherit",outline="OUTLINE",
     -- Numbers on enemies not fighting you: own color (optional) and transparency.
     foreignTint=true,foreignColor="A0A0A0FF",foreignAlpha=.6,
     -- Spell icons (best guess from your own casts): "off", "left" or "right".
@@ -73,6 +76,8 @@ L.DEFAULTS={enabled=false,hideBlizzard=true,hideBlizzardSelf=true,plates=true,nu
     logSignal=true,logButton=true,
     -- Status display of all sources, movable, click fixes (0.7.2). Off by default.
     statusDisplay=false,
+    -- In-game style family (0.7.4, Core 0.8.95 style families): own or the suite's.
+    styleFamily="inherit",
     -- Hits told apart as your pet's (Origin.lua): "mine" (as yours), "dimmed", "hidden".
     pet="mine"}
 -- Whose numbers at enemies, per content type (Origin.lua): "mine" (only
@@ -107,10 +112,12 @@ function L:Config()
     if cfg.numbers~="short" and cfg.numbers~="full" and cfg.numbers~="plain" then cfg.numbers="short" end
     if cfg.outline~="OUTLINE" and cfg.outline~="THICKOUTLINE" and cfg.outline~="" then cfg.outline="OUTLINE" end
     cfg.foreignTint=cfg.foreignTint==true;cfg.foreignAlpha=num(cfg.foreignAlpha,.6,.1,1)
+    cfg.plateOffset=math.floor(num(cfg.plateOffset,0,-50,150)+.5)
     if type(cfg.foreignColor)~="string" or not cfg.foreignColor:match("^%x%x%x%x%x%x%x%x$") then cfg.foreignColor="A0A0A0FF" end
     if cfg.icons~="off" and cfg.icons~="left" and cfg.icons~="right" then cfg.icons="left" end
     cfg.iconSize=num(cfg.iconSize,1,.5,2);cfg.iconHeals=cfg.iconHeals==true;cfg.spellGuess=cfg.spellGuess==true
     cfg.logSignal=cfg.logSignal==true;cfg.logButton=cfg.logButton==true;cfg.statusDisplay=cfg.statusDisplay==true
+    if cfg.styleFamily~="inherit" and not ns.Styles.families[cfg.styleFamily] then cfg.styleFamily="inherit" end
     if cfg.pet~="mine" and cfg.pet~="dimmed" and cfg.pet~="hidden" then cfg.pet="mine" end
     if type(cfg.schoolColors)~="table" then cfg.schoolColors={} end
     for bit,hex in pairs(L.Format.SCHOOLS) do

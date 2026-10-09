@@ -2,7 +2,9 @@ local _, ns = ...
 local UI = ns.UI
 local D = ns.DesignSystem.Metrics
 
-local function previewFont(region,font)
+local function previewFont(region,font,style)
+    -- Without a font preview the row keeps its style's font (in-game families).
+    if not font and style then style:Font(region,13);return end
     local ok=pcall(ns.Theme.Font,ns.Theme,region,D.ToNative(13),font)
     if not ok then pcall(region.SetFont,region,"Fonts\\FRIZQT__.TTF",D.ToNative(13),"") end
 end
@@ -12,8 +14,12 @@ function UI:CloseDropdown()
     if self.dropdown then self.dropdown:Hide(); self.dropdown.owner = nil end
 end
 
-local function createPopup()
-    local root = CreateFrame("Frame", "BVAddonSuiteDropdown", UIParent)
+-- One pooled popup per style: the tool style keeps its global name; lists of
+-- in-game controls open in their family (UI.dropdown = the current popup).
+local function createPopup(style)
+    local tools = style == UI:ToolStyle()
+    local root = CreateFrame("Frame", tools and "BVAddonSuiteDropdown" or nil, UIParent)
+    root.style = style
     root:Hide()
     root:SetAllPoints(UIParent)
     root:SetFrameStrata("TOOLTIP")
@@ -76,11 +82,11 @@ local function createPopup()
                 D.Width(row,width - 8)
                 row:SetLabelInsets(10,option.texture and 84 or 26,"LEFT")
                 row:SetLabelText(label(option.label))
-                previewFont(row.label,option.font)
+                previewFont(row.label,option.font,not tools and style or nil)
                 row.sample:SetShown(option.texture ~= nil)
                 if option.texture then local ok,ready=pcall(row.sample.SetTexture,row.sample,option.texture);row.sample:SetShown(ok and ready~=false) else row.sample:SetTexture(nil) end
                 local current=not owner.contextMenu and option.value == owner.value
-                row:SetSelected(current); row.mark:SetColorTexture(ns.Theme:Color("accent")); row.mark:SetShown(current)
+                row:SetSelected(current); row.mark:SetColorTexture(style:Color("accent")); row.mark:SetShown(current)
             end
         end
         self.hint:SetText("Scroll for more")
@@ -90,15 +96,24 @@ local function createPopup()
         root.offset = math.max(0, math.min(math.max(0, #root.owner.options - (root.owner.menuRows or 8)), root.offset - delta))
         root:RefreshRows()
     end)
-    UI.dropdown = root
+    UI.dropdowns = UI.dropdowns or {}
+    UI.dropdowns[style] = root
     return root
+end
+local function popupFor(host)
+    local style = host.bvStyle or UI:ToolStyle()
+    local popup = UI.dropdowns and UI.dropdowns[style]
+    if not popup then popup = UI:WithStyle(style, createPopup, style) end
+    if UI.dropdown and UI.dropdown ~= popup then UI:CloseDropdown() end
+    UI.dropdown = popup
+    return popup
 end
 
 function UI:OpenDropdown(host)
         if UI.dropdown and UI.dropdown:IsShown() and UI.dropdown.owner == host then UI:CloseDropdown(); return end
         if host.optionsProvider then host:SetOptions(host.optionsProvider());host:SetValue(host.value) end
         if #host.options == 0 then return end
-        local popup = UI.dropdown or createPopup()
+        local popup = popupFor(host)
         -- Dropdowns can originate inside TOOLTIP-strata pickers. Place the
         -- pooled menu and its click shield above that owned branch on each open;
         -- a fixed UIParent-relative level would put them behind picker rows.
@@ -130,6 +145,8 @@ end
 function UI:ContextMenu(anchor,options,callback)
     self:CloseDropdown()
     local session={anchor=anchor,options=options,callback=callback,menuWidth=260,contextMenu=true,menuRows=16}
+    -- An in-game window sets anchor.bvMenuStyle: its context menu opens in that style.
+    session.bvStyle=anchor.bvMenuStyle
     function session:GetEffectiveScale() return self.anchor:GetEffectiveScale() end
     function session:SetValue() end
     if not anchor.contextMenuHooked then

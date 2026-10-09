@@ -585,8 +585,7 @@ function UI:GraphEditor(controller)
         end)
         local function commitSlider() if row.slider.current~=nil then E:SubmitField(row,row.slider.current) end end
         row.slider.bar:SetScript("OnMouseUp",commitSlider)
-        row.slider.bar:EnableMouseWheel(true)
-        row.slider.bar:SetScript("OnMouseWheel",function(_,delta)
+        UI:SliderWheel(row.slider.bar,function(delta)
             local spec=row.binding and row.binding.slider;if not spec or not row.slider.bar:IsMouseEnabled() then return end
             row.slider.bar:SetValue(math.max(spec.min,math.min(spec.max,(row.slider.current or spec.min)+delta*spec.step)));commitSlider()
         end)

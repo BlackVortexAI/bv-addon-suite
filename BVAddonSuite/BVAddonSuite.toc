@@ -3,7 +3,7 @@
 ## Notes: Shared UI, media, profiles and layout editor. Install feature addons separately.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.8.94
+## Version: 0.8.97
 ## OptionalDeps: Masque
 ## SavedVariables: BVAddonSuiteDB, BVSpellIndexDB, BVRecordingDB
 
@@ -17,6 +17,10 @@ Libs\LibDeflate\LibDeflate.lua
 Core\Namespace.lua
 Core\SymbolData.lua
 Core\Symbols.lua
+Core\MapOverlayData.lua
+Core\MapOverlays.lua
+Core\MinimapTileData.lua
+Core\MapTerrain.lua
 Core\Events.lua
 Core\SpellIndex.lua
 Core\ItemCatalog.lua
@@ -25,6 +29,7 @@ Core\IconCatalog.lua
 Core\Settings.lua
 Core\Modules.lua
 Core\Commands.lua
+Core\InfoMessages.lua
 Core\Tutorial.lua
 Core\Media.lua
 Core\GraphValues.lua
@@ -52,6 +57,7 @@ Core\DisplayStackQueue.lua
 UI\DesignSystem.lua
 UI\Theme.lua
 UI\Components.lua
+UI\StyleFamilies.lua
 UI\Dropdown.lua
 UI\Workspace.lua
 UI\LookupPicker.lua
@@ -101,6 +107,8 @@ UI\FrameInspector.lua
 UI\FrameLibrary.lua
 UI\LayoutCleanupUI.lua
 UI\Config.lua
+UI\Stage.lua
+UI\MapPins.lua
 UI\DesignLabTheme.lua
 UI\DesignLab.lua
 Core\Bootstrap.lua
