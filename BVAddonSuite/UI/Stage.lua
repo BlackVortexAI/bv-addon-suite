@@ -10,7 +10,7 @@ local Stage={types={},order={},queue={},seq=0,MAX=5,FADE_IN=.3,FADE_OUT=.5}
 ns.Stage=Stage
 Stage.ID="stage"
 local ANIMATIONS={fade=true,slide=true,reveal=true,zoom=true,lowerthird=true,none=true}
-local DEFAULTS={styleFamily="inherit",titleSize=30,subtitleSize=15,animation="fade",line=true}
+local DEFAULTS={styleFamily="inherit",titleSize=30,subtitleSize=15,animation="reveal",line=true}
 
 local function num(value,default,low,high)
     if type(value)~="number" or value~=value then value=default end
@@ -21,7 +21,7 @@ function Stage:Config()
     for key,value in pairs(DEFAULTS) do if cfg[key]==nil then cfg[key]=value end end
     if cfg.styleFamily~="inherit" and not ns.Styles.families[cfg.styleFamily] then cfg.styleFamily="inherit" end
     cfg.titleSize=num(cfg.titleSize,30,16,60);cfg.subtitleSize=num(cfg.subtitleSize,15,10,30)
-    if not ANIMATIONS[cfg.animation] then cfg.animation="fade" end
+    if not ANIMATIONS[cfg.animation] then cfg.animation="reveal" end
     cfg.line=cfg.line~=false
     if type(cfg.types)~="table" then cfg.types={} end
     return cfg

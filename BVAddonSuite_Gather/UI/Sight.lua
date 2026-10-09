@@ -38,7 +38,9 @@ function S:Update()
     local minimap=rawget(_G,"Minimap")
     local view=G.Call("C_Minimap.GetViewRadius")
     if not self:Wanted() or type(view)~="number" or view<=0 then f:Hide();return self:Watch(false) end
-    local size=G:Config().sightRadius/view*minimap:GetWidth()
+    -- Never larger than the minimap (Florian 2026-10-09: zoomed in, the ring
+    -- reached far beyond it); then it marks the minimap's own edge.
+    local size=math.min(G:Config().sightRadius/view*minimap:GetWidth(),minimap:GetWidth(),minimap:GetHeight())
     f:SetSize(size,size)
     -- Colour and opacity are settings (Florian 2026-10-09); the fill is a
     -- faint share of the ring's opacity.

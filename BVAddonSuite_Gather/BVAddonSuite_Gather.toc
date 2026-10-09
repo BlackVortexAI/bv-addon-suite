@@ -3,7 +3,7 @@
 ## Notes: Herbs, ore, fishing pools and treasure on the world map and the minimap; GatherMate2 import. Requires BV Core.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.1.1
+## Version: 0.1.2
 ## Dependencies: BVAddonSuite
 ## OptionalDeps: GatherMate2
 ## SavedVariables: BVGatherDB
@@ -12,6 +12,7 @@ Terrain\Data_azeroth.lua
 Terrain\Data_kalimdor.lua
 Gather.lua
 Data.lua
+Visibility.lua
 Record.lua
 Pins.lua
 Import.lua
@@ -29,4 +30,6 @@ UI\Tracker.lua
 UI\Hud.lua
 UI\Sight.lua
 UI\SourceList.lua
+UI\Expert.lua
+Wiki.lua
 Options.lua

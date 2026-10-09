@@ -37,7 +37,7 @@ function R.Space(zones)
     s.cells={}
     -- Terrain (slopes, water) where the local data has it and the setting wants it.
     local frame=G:Config().routeTerrain and ns.MapTerrain and ns.MapTerrain:Frame(space)
-    if frame and ns.MapTerrain:Data(frame.instance) then s.terrain,s.ground,s.steep,s.elevation=frame,{},{},{} end
+    if frame and ns.MapTerrain:Data(frame.instance) then s.terrain,s.ground,s.steep,s.elevation,s.walls=frame,{},{},{},{} end
     return s
 end
 -- A point of one map on another: maps are straight projections of the
@@ -115,7 +115,7 @@ end
 -- link from one cell to another at its walking length; one-way ones only
 -- forwards. s.links[from] = {{to, yards}}.
 function R.Links(s,links)
-    s.links,s.linked={},{}
+    s.links,s.linked,s.back={},{},{}
     for _,link in ipairs(links or {}) do
         local ax,ay=R.ToSpace(s,link.a.mapID,link.a.x,link.a.y)
         local bx,by=R.ToSpace(s,link.b.mapID,link.b.x,link.b.y)
@@ -126,7 +126,11 @@ function R.Links(s,links)
             local a,b=acy*s.cols+acx,bcy*s.cols+bcx
             local yards=R.Yards(s,ax,ay,bx,by)
             s.links[a]=s.links[a] or {};table.insert(s.links[a],{b,yards});s.linked[a..">"..b]=true
-            if not link.oneway then s.links[b]=s.links[b] or {};table.insert(s.links[b],{a,yards});s.linked[b..">"..a]=true end
+            s.back[b]=s.back[b] or {};table.insert(s.back[b],{a,yards})
+            if not link.oneway then
+                s.links[b]=s.links[b] or {};table.insert(s.links[b],{a,yards});s.linked[b..">"..a]=true
+                s.back[a]=s.back[a] or {};table.insert(s.back[a],{b,yards})
+            end
         end
     end
 end
@@ -192,6 +196,9 @@ end
 -- dear rather than blocked (jumping still gets you up some of it); water
 -- by "Avoid water", magma and slime almost never. Cached per cell.
 R.SLOPE={1,1.2,2.5,8}
+-- Values the expert settings can change (UI/Expert.lua): steep slope,
+-- swimming, roads and walked ways, the straight-line limit.
+R.STEEP=8;R.SWIM=6;R.ROAD=.6;R.CLEAR=1.25
 function R.Ground(s,cx,cy)
     if not s.terrain then return 1 end
     local index=cy*s.cols+cx
@@ -205,9 +212,9 @@ function R.Ground(s,cx,cy)
         local water=math.floor(code/4)%4
         -- Roads (the client's road textures, Florian 2026-10-08: safe ways
         -- marked in advance) are preferred like painted preferred ground.
-        if code%64>=32 and G:Config().preferRoads and water==0 then cost=.6
+        if code%64>=32 and G:Config().preferRoads and water==0 then cost=R.ROAD
         elseif water==3 then cost=20
-        elseif water==2 then cost=G:Config().avoidWater and 6 or 1.5
+        elseif water==2 then cost=G:Config().avoidWater and R.SWIM or 1.5
         elseif water==1 then cost=1.2
         else
             cost=R.SLOPE[code%4+1]
@@ -218,10 +225,31 @@ function R.Ground(s,cx,cy)
     if G:Config().preferWalked and G.Trace then
         local f=s.terrain
         local wx,wy=R.Center(s,cx,cy)
-        if G.Trace:Count(f.instance,f.a[f.iy]+wy*f.dy,f.a[f.ix]+wx*f.dx)>=G.Trace.WALKED then cost=math.min(cost,.6) end
+        if G.Trace:Count(f.instance,f.a[f.iy]+wy*f.dy,f.a[f.ix]+wx*f.dx)>=G.Trace.WALKED then cost=math.min(cost,R.ROAD) end
     end
     s.ground[index]=cost
     return cost
+end
+-- What makes a cell hard going, for the difficult spots of a route
+-- (Florian 2026-10-09: the data cannot know everything; tell the player
+-- where to paint): "risk", "enemy", "magma", "swim" (with Avoid water),
+-- "steep" (not walkable by the slope data) or nil. Preferred ground is the
+-- player's own choice: never a difficult spot.
+function R.Hazard(s,cx,cy)
+    local code=s.cells[cy*s.cols+cx]
+    if code==PREFER then return nil end
+    if code==RISK then return "risk" end
+    if code==ENEMY then return "enemy" end
+    if not s.terrain then return nil end
+    local f=s.terrain
+    local x,y=R.Center(s,cx,cy)
+    local t=ns.MapTerrain:Code(f.instance,f.a[f.iy]+y*f.dy,f.a[f.ix]+x*f.dx)
+    if not t then return nil end
+    local water=math.floor(t/4)%4
+    if water==3 then return "magma" end
+    if water==2 and G:Config().avoidWater then return "swim" end
+    if water==0 and t%4==3 then return "steep" end
+    return nil
 end
 -- Ground height of a cell (yards), cached; nil without height data.
 function R.Height(s,cx,cy)
@@ -244,10 +272,71 @@ R.SAFEDROP=12
 -- goal: the cell is the end of the leg (a node on a slope): a small step
 -- up into it is fine, a climb out of a ditch is not (Florian 2026-10-09).
 R.GOALSTEP=4
+-- A step that rises or falls more than R.MAXRISE is a cliff too, whatever
+-- the slope class says (Florian 2026-10-09, Durotar 54,27: the slope cells
+-- are 8 yd, the heights 16 yd; at an edge a cell counted as flat although
+-- it lay 33 yd higher, and the route climbed the wall).
+R.MAXRISE=14
+-- Walls between neighbouring cells from the full vertex heights (Core
+-- MapTerrain:Wall, data from tools/build_terrain_data.py). Florian
+-- 2026-10-09, Durotar 53,29: the heights lie 16 yd apart, a 36 yd wall
+-- became a ramp of 17 yd per cell, and the search went up it at a slant,
+-- where each step rose less than R.MAXRISE. Florian's idea: walls known in
+-- advance from the fine heights. 0 none, 1 up from a to b, 2 down, 3 both.
+function R.TerrainCell(s,x,y)
+    local f=s.terrain
+    return ns.MapTerrain.Cell(f.a[f.iy]+y*f.dy,f.a[f.ix]+x*f.dx)
+end
+function R.Wall(s,ax,ay,bx,by)
+    local T=ns.MapTerrain
+    if not (type(s.terrain)=="table" and s.terrain.a and T.Wall) then return 0 end
+    local gx1,gy1=R.TerrainCell(s,ax,ay)
+    local gx2,gy2=R.TerrainCell(s,bx,by)
+    if gx1==gx2 and gy1==gy2 then return 0 end
+    return T:Wall(s.terrain.instance,gx1,gy1,gx2,gy2)
+end
+-- The walls on a line, sampled every 2 yards (the route cells and the
+-- terrain cells do not line up; a slanted step may cross two terrain edges).
+function R.LineWall(s,ax,ay,bx,by)
+    local n=math.max(1,math.ceil(R.Yards(s,ax,ay,bx,by)/2))
+    local up,down=false,false
+    local lx,ly=ax,ay
+    for i=1,n do
+        local px,py=ax+(bx-ax)*i/n,ay+(by-ay)*i/n
+        local wall=R.Wall(s,lx,ly,px,py)
+        if wall==1 or wall==3 then up=true end
+        if wall==2 or wall==3 then down=true end
+        lx,ly=px,py
+    end
+    return (up and 1 or 0)+(down and 2 or 0)
+end
+-- The wall between two route cells (cached per pair).
+function R.CellWall(s,cx,cy,nx,ny)
+    if not s.walls then return 0 end
+    local key=(cy*s.cols+cx)*9+(ny-cy+1)*3+(nx-cx+1)
+    local wall=s.walls[key]
+    if wall==nil then
+        local ax,ay=R.Center(s,cx,cy)
+        local bx,by=R.Center(s,nx,ny)
+        wall=R.LineWall(s,ax,ay,bx,by)
+        s.walls[key]=wall
+    end
+    return wall
+end
 function R.Step(s,cx,cy,nx,ny,cost,goal)
-    if not (s.terrain and s.steep[ny*s.cols+nx]) then return cost end
+    if not s.terrain then return cost end
     local from,to=R.Height(s,cx,cy),R.Height(s,nx,ny)
     if not (from and to) then return cost end
+    local wall=R.CellWall(s,cx,cy,nx,ny)
+    -- A wall up (or a ridge) is never climbed; a wall down is a drop.
+    if wall==1 or wall==3 then return nil end
+    if wall==2 then
+        local mode=G:Config().cliffs
+        if mode=="always" or (mode=="safe" and from-to<=R.SAFEDROP) then return cost*1.5 end
+        return cost*R.SLOPE[4]
+    end
+    local cliff=s.steep[ny*s.cols+nx] or math.abs(to-from)>R.MAXRISE
+    if not cliff then return cost end
     if to>from+1 then
         if goal and to-from<=R.GOALSTEP then return cost end
         return nil
@@ -258,9 +347,61 @@ function R.Step(s,cx,cy,nx,ny,cost,goal)
     if mode=="always" or from-to<=R.SAFEDROP then return cost/R.SLOPE[4]*1.5 end
     return cost
 end
+-- Does the way from one space point to another drop down a steep face
+-- (Florian 2026-10-09: show where to jump, so nobody jumps by accident)?
+-- Sampled every half cell: a step onto a steep cell that is R.DROP yards
+-- or more lower.
+R.DROP=12
+-- peak: the highest ground of the way just before (a fall spread over two
+-- cells is one jump; Florian 2026-10-09, Durotar 54,27: 28 to 11 yards was
+-- not marked). Returns the jump and the highest ground of this piece's end.
+function R.Drops(s,x1,y1,x2,y2,peak)
+    if not s.terrain then return false end
+    local steps=math.max(1,math.ceil(R.Yards(s,x1,y1,x2,y2)/(R.CELL/2)))
+    local lastCx,lastCy,lastH,lastX,lastY
+    local jump=false
+    for i=0,steps do
+        local t=i/steps
+        local px,py=x1+(x2-x1)*t,y1+(y2-y1)*t
+        if lastX and not jump then
+            local wall=R.Wall(s,lastX,lastY,px,py)
+            if wall==2 then jump=true end
+        end
+        lastX,lastY=px,py
+        local cx,cy=R.Cell(s,px,py)
+        if cx and (cx~=lastCx or cy~=lastCy) then
+            local h=R.Height(s,cx,cy)
+            -- A fall of R.DROP or more from the ground just before is a jump
+            -- (heights alone: the slope class misses edges, see R.Step).
+            if h then
+                if (lastH and lastH-h>=R.DROP) or (peak and peak-h>=R.DROP) then jump=true end
+                peak=math.max(peak or h,h)
+                -- The reference sinks with the way: only the last stretch counts.
+                if lastH and h<lastH then peak=math.max(h,peak-(R.CELL/2)) end
+            end
+            lastCx,lastCy,lastH=cx,cy,h or lastH
+        end
+    end
+    return jump,lastH
+end
 -- Cost of entering a cell per yard; nil = blocked. Painted areas win over
 -- the terrain: preferred ground is cheap whatever its slope.
+-- s.costs: during a calculation the cost of each cell is kept (the
+-- searches ask for the same cells again and again; Florian 2026-10-09:
+-- calculating took long). Painting in the editor has no cache.
 function R.Cost(s,cx,cy)
+    local costs=s.costs
+    if costs then
+        local index=cy*s.cols+cx
+        local known=costs[index]
+        if known~=nil then return known or nil end
+        local value=R.CellCost(s,cx,cy)
+        costs[index]=value or false
+        return value
+    end
+    return R.CellCost(s,cx,cy)
+end
+function R.CellCost(s,cx,cy)
     local code=s.cells[cy*s.cols+cx]
     if code==NOGO then return nil end
     if code==PREFER then return .5 end
@@ -281,13 +422,17 @@ end
 function R.Clear(s,x1,y1,x2,y2)
     local yards=R.Yards(s,x1,y1,x2,y2)
     local steps=math.max(1,math.ceil(yards/(R.CELL/2)))
+    local last
     for i=0,steps do
         local t=i/steps
-        local cx,cy=R.Cell(s,x1+(x2-x1)*t,y1+(y2-y1)*t)
+        local px,py=x1+(x2-x1)*t,y1+(y2-y1)*t
+        local cx,cy=R.Cell(s,px,py)
         if cx then
             local cost=R.Cost(s,cx,cy)
             -- Gentle slopes and shallow water still count as a clear line.
-            if not cost or cost>1.25 then return false end
+            if not cost or cost>R.CLEAR then return false end
+            if s.terrain and last and R.Wall(s,last[1],last[2],px,py)~=0 then return false end
+            last={px,py}
         end
     end
     return true
@@ -295,30 +440,165 @@ end
 
 -- A* on the cells (8 neighbours, octile heuristic), yielding every 400 steps.
 local SQRT2=math.sqrt(2)
-local function push(heap,node)
-    heap[#heap+1]=node
-    local i=#heap
+-- A binary heap in two flat arrays (keys, values): no table per entry.
+local function heapPush(keys,vals,n,key,value)
+    n=n+1
+    local i=n
     while i>1 do
         local parent=math.floor(i/2)
-        if heap[parent][1]<=heap[i][1] then break end
-        heap[parent],heap[i]=heap[i],heap[parent];i=parent
+        if keys[parent]<=key then break end
+        keys[i],vals[i]=keys[parent],vals[parent];i=parent
     end
+    keys[i],vals[i]=key,value
+    return n
 end
-local function pop(heap)
-    local top=heap[1]
-    local last=table.remove(heap)
-    if #heap>0 then
-        heap[1]=last
+local function heapPop(keys,vals,n)
+    local topKey,topValue=keys[1],vals[1]
+    local key,value=keys[n],vals[n]
+    keys[n],vals[n]=nil,nil;n=n-1
+    if n>0 then
         local i=1
         while true do
-            local l,r,s=i*2,i*2+1,i
-            if heap[l] and heap[l][1]<heap[s][1] then s=l end
-            if heap[r] and heap[r][1]<heap[s][1] then s=r end
-            if s==i then break end
-            heap[i],heap[s]=heap[s],heap[i];i=s
+            local l=i*2
+            if l>n then break end
+            local c=l
+            if l+1<=n and keys[l+1]<keys[l] then c=l+1 end
+            if keys[c]>=key then break end
+            keys[i],vals[i]=keys[c],vals[c];i=c
+        end
+        keys[i],vals[i]=key,value
+    end
+    return topKey,topValue,n
+end
+-- The search over the cells from start: to one goal (with the octile
+-- distance as estimate) or, with goals = {[index]=true}, to all of them
+-- (no estimate). Ends when every goal is reached, after limit steps or past
+-- maxCost. Returns cost and from of the cells it reached.
+-- reverse: the steps the other way round (who can reach start), used to
+-- tell quickly that a goal on a plateau cannot be reached. The fourth
+-- result: every reachable cell was seen (nothing left to search).
+function R.Explore(s,start,goal,goals,limit,maxCost,reverse)
+    local cols,rows,CELL=s.cols,s.rows,R.CELL
+    -- The estimate: the octile distance to the goal, or to the nearest of
+    -- the goals (still never too high, so the ways found stay the shortest).
+    local targets={}
+    if goal then targets[1]={goal%cols,math.floor(goal/cols)}
+    elseif goals then for index in pairs(goals) do targets[#targets+1]={index%cols,math.floor(index/cols)} end end
+    local function h(cx,cy)
+        local best
+        for i=1,#targets do
+            local dx,dy=math.abs(cx-targets[i][1]),math.abs(cy-targets[i][2])
+            local d=(math.max(dx,dy)+(SQRT2-1)*math.min(dx,dy))*CELL*.5
+            if not best or d<best then best=d end
+        end
+        return best or 0
+    end
+    local keys,vals,n={},{},0
+    local cost,from,closed={[start]=0},{},{}
+    local left=0
+    if goals then for _ in pairs(goals) do left=left+1 end end
+    n=heapPush(keys,vals,n,h(start%cols,math.floor(start/cols)),start)
+    local steps=0
+    limit=limit or 60000
+    local Cost,Step,links=R.Cost,R.Step,reverse and s.back or s.links
+    local ended=false
+    while n>0 do
+        local f,current
+        f,current,n=heapPop(keys,vals,n)
+        if not closed[current] then
+            closed[current]=true
+            if current==goal then ended=true;break end
+            if goals and goals[current] then left=left-1;if left<=0 then ended=true;break end end
+            local g=cost[current]
+            if maxCost and g>maxCost then ended=true;break end
+            steps=steps+1
+            if steps>limit then return cost,from,false end
+            if steps%400==0 and coroutine.running() then coroutine.yield() end
+            local cx,cy=current%cols,math.floor(current/cols)
+            for dy=-1,1 do
+                local ny=cy+dy
+                if ny>=0 and ny<rows then
+                    for dx=-1,1 do
+                        local nx=cx+dx
+                        if (dx~=0 or dy~=0) and nx>=0 and nx<cols then
+                            local index=ny*cols+nx
+                            if not closed[index] then
+                                local step
+                                if reverse then
+                                    -- Walking from the neighbour into this cell.
+                                    step=Cost(s,cx,cy)
+                                    if step and Cost(s,nx,ny) then step=Step(s,nx,ny,cx,cy,step,current==start) else step=nil end
+                                else
+                                    step=Cost(s,nx,ny)
+                                    if step then step=Step(s,cx,cy,nx,ny,step,index==goal or (goals and goals[index])) end
+                                end
+                                -- No corner cutting past blocked cells.
+                                if step and dx~=0 and dy~=0 and (not Cost(s,cx+dx,cy) or not Cost(s,cx,cy+dy)) then step=nil end
+                                if step then
+                                    local ng=g+step*CELL*((dx~=0 and dy~=0) and SQRT2 or 1)
+                                    local old=cost[index]
+                                    if not old or ng<old then
+                                        cost[index]=ng;from[index]=current
+                                        n=heapPush(keys,vals,n,ng+h(nx,ny),index)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            for _,link in ipairs(links and links[current] or {}) do
+                local index=link[1]
+                local ng=g+link[2]
+                if not closed[index] and (not cost[index] or ng<cost[index]) then
+                    cost[index]=ng;from[index]=current
+                    n=heapPush(keys,vals,n,ng+h(index%cols,math.floor(index/cols)),index)
+                end
+            end
         end
     end
-    return top
+    return cost,from,true,not ended
+end
+-- Every cell you can walk to from start (reverse: that can walk to start),
+-- without costs: a flood over the walkable steps and transitions, within
+-- box {x0,y0,x1,y1} (cells) when given. Returns {[cell]=true}.
+function R.Flood(s,start,reverse,box)
+    local cols,rows=s.cols,s.rows
+    local x0,y0,x1,y1=0,0,cols-1,rows-1
+    if box then x0,y0,x1,y1=math.max(0,box[1]),math.max(0,box[2]),math.min(cols-1,box[3]),math.min(rows-1,box[4]) end
+    local Cost,Step,links=R.Cost,R.Step,reverse and s.back or s.links
+    local seen,queue,head={[start]=true},{start},1
+    while head<=#queue do
+        local current=queue[head];head=head+1
+        if head%2000==0 and coroutine.running() then coroutine.yield() end
+        local cx,cy=current%cols,math.floor(current/cols)
+        for dy=-1,1 do
+            local ny=cy+dy
+            if ny>=y0 and ny<=y1 then
+                for dx=-1,1 do
+                    local nx=cx+dx
+                    local index=ny*cols+nx
+                    if (dx~=0 or dy~=0) and nx>=x0 and nx<=x1 and not seen[index] then
+                        local step
+                        if reverse then
+                            step=Cost(s,cx,cy)
+                            if step and Cost(s,nx,ny) then step=Step(s,nx,ny,cx,cy,step,false) else step=nil end
+                        else
+                            step=Cost(s,nx,ny)
+                            if step then step=Step(s,cx,cy,nx,ny,step,false) end
+                        end
+                        if step and dx~=0 and dy~=0 and (not Cost(s,cx+dx,cy) or not Cost(s,cx,cy+dy)) then step=nil end
+                        if step then seen[index]=true;queue[#queue+1]=index end
+                    end
+                end
+            end
+        end
+        for _,link in ipairs(links and links[current] or {}) do
+            local index=link[1]
+            if not seen[index] then seen[index]=true;queue[#queue+1]=index end
+        end
+    end
+    return seen
 end
 function R.Search(s,x1,y1,x2,y2,limit)
     local sx,sy=R.Cell(s,x1,y1)
@@ -326,49 +606,18 @@ function R.Search(s,x1,y1,x2,y2,limit)
     if not (sx and tx) then return nil end
     local cols=s.cols
     local start,goal=sy*cols+sx,ty*cols+tx
-    local function h(cx,cy) local dx,dy=math.abs(cx-tx),math.abs(cy-ty);return (math.max(dx,dy)+(SQRT2-1)*math.min(dx,dy))*R.CELL*.5 end
-    local open,cost,from={},{[start]=0},{}
-    push(open,{h(sx,sy),start})
-    local steps=0
-    limit=limit or 60000
-    while #open>0 do
-        local node=pop(open)
-        local current=node[2]
-        if current==goal then break end
-        steps=steps+1
-        if steps>limit then return nil end
-        if steps%400==0 and coroutine.running() then coroutine.yield() end
-        local cx,cy=current%cols,math.floor(current/cols)
-        for dy=-1,1 do
-            for dx=-1,1 do
-                if dx~=0 or dy~=0 then
-                    local nx,ny=cx+dx,cy+dy
-                    if nx>=0 and ny>=0 and nx<cols and ny<s.rows then
-                        local step=R.Cost(s,nx,ny)
-                        if step then step=R.Step(s,cx,cy,nx,ny,step,ny*cols+nx==goal) end
-                        -- No corner cutting past blocked cells.
-                        if step and dx~=0 and dy~=0 and (not R.Cost(s,cx+dx,cy) or not R.Cost(s,cx,cy+dy)) then step=nil end
-                        if step then
-                            local index=ny*cols+nx
-                            local g=cost[current]+step*R.CELL*((dx~=0 and dy~=0) and SQRT2 or 1)
-                            if not cost[index] or g<cost[index] then
-                                cost[index]=g;from[index]=current
-                                push(open,{g+h(nx,ny),index})
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        for _,link in ipairs(s.links and s.links[current] or {}) do
-            local index=link[1]
-            local g=cost[current]+link[2]
-            if not cost[index] or g<cost[index] then
-                cost[index]=g;from[index]=current
-                push(open,{g+h(index%cols,math.floor(index/cols)),index})
-            end
-        end
-    end
+    -- First, the other way round from the goal, briefly: a goal on a
+    -- plateau or in a closed hollow nobody gets into shows at once, without
+    -- searching the whole map (Florian 2026-10-09: calculating took long).
+    local reached,_,done,exhausted=R.Explore(s,goal,start,nil,R.PRECHECK,nil,true)
+    if done and exhausted and not reached[start] then return nil end
+    local _,from,ok=R.Explore(s,start,goal,nil,limit)
+    if not ok then return nil end
+    return R.Trace(s,from,start,goal,x1,y1,x2,y2)
+end
+-- The way back from goal to start through from, pulled tight.
+function R.Trace(s,from,start,goal,x1,y1,x2,y2)
+    local cols=s.cols
     if not from[goal] and start~=goal then return nil end
     -- Cells back to the start, then pulled tight: a point is kept only where
     -- the line from the last kept one stops being clear.
@@ -394,13 +643,22 @@ function R.Search(s,x1,y1,x2,y2,limit)
 end
 
 -- Runs a function as a coroutine in slices (a few milliseconds per frame).
+R.BUDGET=8
+R.PRECHECK=3000
 function R.Run(fn,done)
     local co=coroutine.create(fn)
     local ticker
+    -- Several slices per frame while they take less than R.BUDGET ms (the
+    -- real ways of a large route are many searches; one slice per frame
+    -- made it slow), so the game keeps its frame rate.
+    local clock=rawget(_G,"debugprofilestop")
     local function step()
-        local ok,result=coroutine.resume(co)
-        if not ok then ticker:Cancel();G:Print("Route failed: "..tostring(result));if done then done(nil) end;return end
-        if coroutine.status(co)=="dead" then ticker:Cancel();if done then done(result) end end
+        local began=clock and clock()
+        repeat
+            local ok,result=coroutine.resume(co)
+            if not ok then ticker:Cancel();G:Print("Route failed: "..tostring(result));if done then done(nil) end;return end
+            if coroutine.status(co)=="dead" then ticker:Cancel();if done then done(result) end;return end
+        until not clock or clock()-began>=R.BUDGET
     end
     ticker=C_Timer.NewTicker(.01,step)
     return ticker

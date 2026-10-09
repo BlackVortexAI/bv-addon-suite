@@ -18,6 +18,10 @@ F.NEAR=30       -- (kept for the setting's lower end)
 F.ON=10         -- yards to the current leg that count as walking on it
 F.CLOSER=15     -- yards another leg must be closer than the current one
 F.TICK=1
+-- Pieces that drop down a cliff (jump here): their own colour.
+F.DROP={1,.45,.15}
+-- Legs without a way round (only the straight line is known): red.
+F.GAP={.95,.2,.25}
 
 function F:State()
     local db=G.Data.db or G.Data:Init()
@@ -28,7 +32,7 @@ function F:Active() local s=self:State();return s~=nil and type(s.points)=="tabl
 function F:Start(name,route)
     if not (route and type(route.points)=="table" and #route.points>1) then return false end
     local points={}
-    for i,point in ipairs(route.points) do points[i]={mapID=point.mapID,x=point.x,y=point.y,stop=point.stop,count=point.count} end
+    for i,point in ipairs(route.points) do points[i]={mapID=point.mapID,x=point.x,y=point.y,stop=point.stop,count=point.count,drop=point.drop,gap=point.gap} end
     G.Data.db.follow={name=name or "Route",points=points,loop=route.loop and true or false,next=2}
     -- Following means gathering: the mode comes on.
     G:Config().mode=true
@@ -193,13 +197,14 @@ function F:Build(s,c)
     for i,point in ipairs(s.points) do
         local isNext=i==s.next
         out[#out+1]={mapID=point.mapID,x=point.x,y=point.y,index=i,dot=true,noPin=not point.stop and not isNext or nil,
-            size=isNext and 11 or 7,color=isNext and nextColor or route,alpha=dotAlpha,
-            lineColor=isNext and nextColor or route,lineAlpha=lineAlpha,
+            -- The next point as a ring, not to be taken for a tracking dot.
+            size=isNext and 14 or 7,hollow=isNext or nil,color=isNext and nextColor or route,alpha=dotAlpha,
+            lineColor=(point.gap and F.GAP) or (point.drop and F.DROP) or (isNext and nextColor or route),lineAlpha=lineAlpha,
             lead=isNext or nil,leadColor=nextColor}
     end
     if s.loop then
         local first=s.points[1]
-        out[#out+1]={mapID=first.mapID,x=first.x,y=first.y,index=1,noPin=true,lineColor=s.next==1 and nextColor or route,lineAlpha=lineAlpha}
+        out[#out+1]={mapID=first.mapID,x=first.x,y=first.y,index=1,noPin=true,lineColor=(first.gap and F.GAP) or (first.drop and F.DROP) or (s.next==1 and nextColor or route),lineAlpha=lineAlpha}
     end
     return out
 end

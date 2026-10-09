@@ -82,12 +82,13 @@ function T:Data(instance)
     local data=rawget(_G,"BVTerrainData")
     return type(data)=="table" and type(data[instance])=="table" and data[instance] or nil
 end
-function T:Codes(instance,col,row)
-    local key=instance*10000+col*100+row
+function T:Codes(instance,col,row,layer)
+    layer=layer or "tiles"
+    local key=layer..(instance*10000+col*100+row)
     local codes=self.decoded[key]
     if codes~=nil then return codes end
     local data=self:Data(instance)
-    local text=data and data.tiles and data.tiles[col*100+row]
+    local text=data and data[layer] and data[layer][col*100+row]
     if type(text)~="string" then return false end
     local values={}
     for i=1,#data.codes do values[data.codes:sub(i,i)]=i-1 end
@@ -116,6 +117,28 @@ function T:Code(instance,X,Y)
     if not codes then return nil end
     local cx,cy=math.floor((fc-col)*64),math.floor((fr-row)*64)
     return codes[cy*64+cx+1]
+end
+-- Walls between neighbouring cells (Florian 2026-10-09: the heights are
+-- 16 yd apart, a wall between two of them became a ramp), from the full
+-- vertex heights: the cell of a world position as whole cells over the
+-- instance (gx west to east, gy north to south), and the wall between two
+-- neighbouring cells: 0 none, 1 up from a to b, 2 down, 3 both (a ridge).
+function T.Cell(X,Y)
+    return math.floor((32-Y/T.ADT)*64),math.floor((32-X/T.ADT)*64)
+end
+local DIRECTION={[1]={"edges",0},[64]={"edges",2},[65]={"edges2",0},[63]={"edges2",2}}
+function T:Wall(instance,ax,ay,bx,by)
+    local dx,dy=bx-ax,by-ay
+    local flip=false
+    if dy<0 or (dy==0 and dx<0) then ax,ay,bx,by,dx,dy,flip=bx,by,ax,ay,-dx,-dy,true end
+    local which=DIRECTION[dy*64+dx]
+    if not which or math.abs(dx)>1 then return 0 end
+    local col,row=math.floor(ax/64),math.floor(ay/64)
+    local codes=self:Codes(instance,col,row,which[1])
+    if not codes then return 0 end
+    local value=math.floor((codes[(ay-row*64)*64+(ax-col*64)+1] or 0)/2^which[2])%4
+    if flip and (value==1 or value==2) then value=3-value end
+    return value
 end
 
 -- Heights for cliffs (down yes, up no): per tile heightCells x heightCells

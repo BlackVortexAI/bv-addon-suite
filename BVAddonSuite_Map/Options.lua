@@ -60,6 +60,7 @@ local function build(parent)
     row("mapStyle","Map style",UI:Dropdown(g,190,{{value="blizzard",label="Blizzard's map"},{value="terrain",label="Terrain"}},set("mapStyle")),
         "Zone maps as Blizzard's art or as terrain (the game's own minimap tiles) with our area names. Also the layers button beside the map's search.")
     switch("ownFlights","Own flight masters only","Flight masters of the other faction are hidden on the world map and in the search; neutral ones stay.")
+    switch("learnFlights","Learn flight times","Your own flights are timed; the flight master's map then shows the time to each destination you have flown to.")
     switch("unexplored","Show unexplored areas","Areas you have not discovered yet show on the world map as if explored.")
     switch("forceReveal","Unexplored: use ours anyway","Ours although another addon reveals the map; switch the other addon's option off so the two never double up.")
     switch("search","Search","A magnifier at the map's top left: zones, points of interest, flight points and your quests. Right-click a result for a waypoint.")

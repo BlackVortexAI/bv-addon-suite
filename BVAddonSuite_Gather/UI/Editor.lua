@@ -125,6 +125,16 @@ function E:Build()
         catcher:Hide()
         self.catcher=catcher
         w:HookScript("OnHide",function() E:AreaMode(false) end)
+        -- A leg without a way (Florian 2026-10-09): a warning over the map
+        -- until the route is calculated again.
+        local warning=CreateFrame("Frame",nil,view);warning:SetPoint("TOP",view,"TOP",0,-8);warning:SetSize(600,26)
+        warning:SetFrameLevel(view:GetFrameLevel()+50)
+        warning.bg=warning:CreateTexture(nil,"BACKGROUND");warning.bg:SetAllPoints(warning);warning.bg:SetColorTexture(.05,.05,.07,.88)
+        local gr,gg,gb=unpack(G.Follow.GAP)
+        warning.line=warning:CreateTexture(nil,"BORDER");warning.line:SetPoint("BOTTOMLEFT");warning.line:SetPoint("BOTTOMRIGHT");warning.line:SetHeight(2);warning.line:SetColorTexture(gr,gg,gb,1)
+        warning.text=UI:Label(warning,"",12,"text",true);warning.text:SetPoint("CENTER",warning,"CENTER",0,1)
+        warning:Hide()
+        self.warning=warning
         self.hint=UI:Label(view,"",11,"muted");M.Point(self.hint,"BOTTOMLEFT",view,"BOTTOMLEFT",8,6);M.Size(self.hint,520,16)
         self:BuildBar(c)
         self:BuildSide(c)
@@ -140,7 +150,7 @@ function E:BuildBar(c)
         M.Point(widget,"BOTTOMLEFT",c,"BOTTOMLEFT",x,10);x=x+width+6
         return widget
     end
-    self.name=add(UI:Input(c,150,function() E:Save() end),150)
+    self.name=add(UI:Input(c,130,function() E:Save() end),130)
     UI:AttachTooltip(self.name,"Route name","Type a name, then Save.")
     self.save=add(UI:Button(c,"Save",64,function() E:Save() end),64)
     self.saved=add(UI:Dropdown(c,160,{},function(value) E:Load(value) end),160)
@@ -149,7 +159,7 @@ function E:BuildBar(c)
     self.delete=add(UI:Button(c,"Delete",64,function() E:Delete() end,"ghost"),64)
     self.export=add(UI:Button(c,"Export",64,function() E:Export() end,"ghost"),64)
     self.import=add(UI:Button(c,"Import",64,function() G.Exchange:Open("routeImport") end,"ghost"),64)
-    self.follow=UI:Button(c,"Follow route",150,function() E:Follow() end,true)
+    self.follow=UI:Button(c,"Follow route",130,function() E:Follow() end,true)
     UI:AttachTooltip(self.follow,"Follow route","Shows the route on your map and minimap with small points and arrows; you join at the nearest leg. Your waypoints stay as they are.")
     M.Point(self.follow,"BOTTOMRIGHT",c,"BOTTOMRIGHT",-SIDE-26,10)
 end
@@ -187,7 +197,10 @@ function E:BuildSide(c)
     -- Bottom part, from the bottom up.
     local y=0
     self.status=UI:Label(side,"",11,"muted");M.Point(self.status,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y);M.Size(self.status,SIDE,40);self.status:SetWordWrap(true)
-    self.status:SetJustifyV("TOP");y=y+44
+    self.status:SetJustifyV("TOP")
+    -- While calculating: a bar over the status line, filling up.
+    self.progress=UI:StatusBar(side,SIDE,4);M.Point(self.progress,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y+40);self.progress:SetValue(0);self.progress:Hide()
+    y=y+44
     self.calculate=UI:Button(side,"Calculate",SIDE,function() E:Calculate() end,true);M.Point(self.calculate,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y);y=y+40
     local function option(title,control,height)
         local l=UI:Label(side,title,12,"text");M.Point(l,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y+4);M.Size(l,110,20)
@@ -226,7 +239,16 @@ function E:BuildSide(c)
     UI:AttachTooltip(self.sight,"Sight radius","Each node comes within this distance of a stop (the minimap shows about 230 yards zoomed out, 150 indoors).")
     self.loop=option("Loop",UI:Switch(side,true,function(value) G:Config().loop=value;E:Stale() end))
     UI:AttachTooltip(self.loop,"Loop","The route ends where it started and starts over; off: one way from the first point to the last.")
-    local route=UI:Label(side,"Route",12,"accent",true);M.Point(route,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y);y=y+24
+    local route=UI:Label(side,"Route",12,"accent",true);M.Point(route,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y)
+    -- Wiki and expert settings beside the heading (Florian 2026-10-09: in
+    -- the bar under the map they ran into "Follow route").
+    self.expert=UI:IconButton(side,"sliders-horizontal",function() G.Expert:Open() end,"ghost");M.Size(self.expert,26,26)
+    M.Point(self.expert,"BOTTOMRIGHT",side,"BOTTOMRIGHT",0,y-4)
+    UI:AttachTooltip(self.expert,"Expert settings","The fixed values behind route planning: levels, jumps, costs of slopes, water and roads. Apply to the next Calculate.")
+    self.wiki=UI:IconButton(side,"book-open",function() G.Wiki:Open("page:editor") end,"ghost");M.Size(self.wiki,26,26)
+    M.Point(self.wiki,"RIGHT",self.expert,"LEFT",-4,0)
+    UI:AttachTooltip(self.wiki,"Wiki","How the route editor and its settings work, with examples.")
+    y=y+24
     self.bottomHeight=y
     self:ArrangeSide()
 end
@@ -469,8 +491,15 @@ end
 function E:Status()
     if not self.status then return end
     local r=self.route
-    if self.job then self.status:SetText("Calculating...");return end
-    if not r then self.status:SetText("Choose zones and nodes, paint areas if you like, then Calculate.");return end
+    if self.job then
+        local p=G.Plan.progress
+        self.status:SetText(string.format("Calculating... %d %%  ·  %s",math.floor(p.value*100+.5),p.text or ""))
+        if self.progress then self.progress:Show();self.progress:SetValue(p.value) end
+        self:Warn(nil)
+        return
+    end
+    if self.progress then self.progress:Hide() end
+    if not r then self.status:SetText("Choose zones and nodes, paint areas if you like, then Calculate.");self:Warn(nil);return end
     local stops=0;for _,point in ipairs(r.points) do if point.stop then stops=stops+1 end end
     local length=r.length or 0
     local text=string.format("%d stops, %d yards%s%s: about %d min on foot, %d mounted.",stops,math.floor(length+.5),r.loop and " (loop)" or "",
@@ -479,11 +508,27 @@ function E:Status()
     local notes={}
     if (r.skipped or 0)>0 then notes[#notes+1]=r.skipped.." nodes in no-go areas left out" end
     if (r.enemy or 0)>0 then notes[#notes+1]=r.enemy.." nodes in enemy bases left out" end
+    if (r.drops or 0)>0 then notes[#notes+1]=r.drops.." jumps down (orange)" end
     if (r.unworth or 0)>0 then notes[#notes+1]=string.format("%d nodes in %d stops not worth the way (over %d yd each)",r.unworth,r.unworthStops or 0,r.worth or 0) end
-    if (r.unreachable or 0)>0 then notes[#notes+1]=r.unreachable.." legs without a way round" end
+    if (r.cutoff or 0)>0 then notes[#notes+1]=string.format("%d nodes in %d stops left out: no way there and back",r.cutoff,r.cutoffStops or 0) end
+    if (r.unreachable or 0)>0 then notes[#notes+1]=r.unreachable.." legs without a way found (red): plan them by hand" end
+    if r.issues and #r.issues>0 then notes[#notes+1]=#r.issues.." difficult spots (warning signs on the map)" end
     if r.stale then notes[#notes+1]="changed since: Calculate again" end
     if #notes>0 then text=text.."\n"..table.concat(notes,", ").."." end
     self.status:SetText(text)
+    self:Warn(r)
+end
+
+-- The warning over the map while a leg has no way: what to do about it.
+function E:Warn(r)
+    if not self.warning then return end
+    local n=r and not r.stale and r.unreachable or 0
+    if n>0 then
+        self.warning.text:SetText(string.format("No way found for %d %s (red): plan %s by hand, with Preferred ground or a transition, then Calculate again.",
+            n,n==1 and "leg" or "legs",n==1 and "it" or "them"))
+        self.warning:SetWidth(math.max(200,math.min(self.view:GetWidth()-16,self.warning.text:GetUnboundedStringWidth()+32)))
+        self.warning:Show()
+    else self.warning:Hide() end
 end
 
 -- View: fit, zoom, pan ---------------------------------------------------------
@@ -1581,7 +1626,7 @@ function E:DrawRoute()
         local x,y=self:SpacePoint(point)
         if x then
             local bx,by=self:ToBoard(x,y)
-            if keepAll or point.stop or i==1 or i==n0 or not lastX or math.abs(bx-lastX)+math.abs(by-lastY)>=4 then
+            if keepAll or point.stop or point.drop or i==1 or i==n0 or not lastX or math.abs(bx-lastX)+math.abs(by-lastY)>=4 then
                 spots[#spots+1]={bx,by,i};lastX,lastY=bx,by
             end
         end
@@ -1593,7 +1638,11 @@ function E:DrawRoute()
         local a,b=spots[i],spots[i+1] or (r.loop and n>2 and spots[1])
         if a and b then
             local l=take(lines)
-            l:SetVertexColor(ar,ag,ab,stale);l:SetThickness(3)
+            -- A piece that drops down a cliff in its own colour (jump here).
+            local to=r.points[b[3]]
+            local tint=(to and to.gap and G.Follow.GAP) or (to and to.drop and G.Follow.DROP)
+            if tint then l:SetVertexColor(tint[1],tint[2],tint[3],stale) else l:SetVertexColor(ar,ag,ab,stale) end
+            l:SetThickness(3)
             l.shadow:SetVertexColor(0,0,0,.6*stale);l.shadow:SetThickness(6)
             for _,line in ipairs({l,l.shadow}) do
                 line:SetStartPoint("TOPLEFT",self.board,a[1],-a[2]);line:SetEndPoint("TOPLEFT",self.board,b[1],-b[2])
@@ -1625,6 +1674,55 @@ function E:DrawRoute()
             b.dot:SetSize(size-6,size-6);b.dot:SetVertexColor(ar,ag,ab,1)
             b.number:SetText(point.stop and (number==1 and "1" or "") or "")
             b:EnableMouse(true)
+        end
+    end
+    self:DrawIssues()
+end
+-- Difficult spots of the route (P.Issues): a warning sign each, with what
+-- it is and what may help (Florian 2026-10-09: the player knows the place
+-- and paints; the route improves on the next Calculate).
+E.ISSUES={
+    steep={"Steep ground","The way crosses ground the slope data calls too steep. If it is a cliff, paint No-go here; if there is a path, paint Preferred."},
+    swim={"Swimming","The way swims here. Paint No-go to keep out of the water, or Preferred over a bridge or ford."},
+    magma={"Magma or slime","The way touches magma or slime. Paint No-go here, or Preferred along a safe edge."},
+    enemy={"Enemy base","The way passes an enemy base. Paint No-go to go round it, or a transition for a way past it."},
+    risk={"High risk area","The way crosses your high-risk area: no other way was found. Paint Preferred where it is safe to pass."},
+    detour={"Long way round","Two stops close together lie far apart on foot. If there is a shortcut (a ramp, a bridge, a tunnel), paint Preferred along it or add a transition."},
+    gap={"No way found","No way between these stops in the terrain data. Plan it by hand: Preferred ground or a transition, then Calculate again."},
+    cut={"Left out","The stops here cannot be reached (and left again). If there is a way up, paint Preferred along it or add a transition."},
+}
+E.ISSUECOLOR={1,.78,.2}
+function E:DrawIssues()
+    local signs=pool("issues",function()
+        local b=CreateFrame("Button",nil,E.board);b:SetFrameLevel(E.board:GetFrameLevel()+7);b:SetSize(20,20)
+        b.disc=b:CreateTexture(nil,"BACKGROUND");b.disc:SetAllPoints(b);b.disc:SetTexture(DISC);b.disc:SetVertexColor(.06,.06,.08,.9)
+        b.icon=b:CreateTexture(nil,"ARTWORK");b.icon:SetPoint("CENTER",0,1);b.icon:SetSize(14,14)
+        local path,l,r,t,bt=ns.Symbols:Coords("triangle-alert",32)
+        if path then b.icon:SetTexture(path);b.icon:SetTexCoord(l,r,t,bt) end
+        b:SetScript("OnEnter",function(self)
+            local issue=self.issue
+            local info=issue and E.ISSUES[issue.kind]
+            if not info then return end
+            local rows={}
+            if issue.yards and issue.kind~="cut" then rows[#rows+1]={issue.kind=="detour" and "Extra way" or "Length",issue.yards.." yd"} end
+            if issue.kind=="cut" and issue.yards then rows[#rows+1]={"Nodes",tostring(issue.yards)} end
+            UI:ShowTooltip(self,info[1],{tag="Difficult spot",tagColor=E.ISSUECOLOR,rows=rows,text=info[2]})
+        end)
+        b:SetScript("OnLeave",function(self) UI:HideTooltip(self) end)
+        return b
+    end)
+    reset(signs)
+    local r=self.route
+    if not (r and r.issues) or r.stale then return end
+    for _,issue in ipairs(r.issues) do
+        local x,y=self:SpacePoint(issue)
+        if x then
+            local bx,by=self:ToBoard(x,y)
+            local b=take(signs)
+            b.issue=issue
+            local c=issue.kind=="gap" and G.Follow.GAP or E.ISSUECOLOR
+            b.icon:SetVertexColor(c[1],c[2],c[3],1)
+            b:ClearAllPoints();b:SetPoint("CENTER",self.board,"TOPLEFT",bx,-by)
         end
     end
 end
@@ -1687,8 +1785,12 @@ function E:Calculate()
     local zones={unpack(self.zones)}
     local area=self.area
     local goal,sight,worth=c.routeGoal,c.sightRadius,c.worthLimit
+    G.Plan.Report(0,"Starting")
+    if self.progressTicker then self.progressTicker:Cancel() end
+    self.progressTicker=C_Timer.NewTicker(.1,function() E:Status() end)
     self.job=Grid.Run(function() return G.Plan:Build(zones,chosen,{loop=c.loop,radius=c.passRadius,start=start,smooth=c.routeSmooth,area=area,goal=goal,sight=sight,worth=worth}) end,function(result)
         E.job=nil
+        if E.progressTicker then E.progressTicker:Cancel();E.progressTicker=nil end
         if result then
             result.chosen,result.radius,result.area,result.sight=chosen,c.passRadius,area,sight
             E.route=result
@@ -1715,10 +1817,21 @@ function E:Load(name)
     local saved=G.Plan:Load(name)
     if not saved then return end
     local route={points={},zones={},chosen={},loop=saved.loop,radius=saved.radius,length=saved.length}
-    for i,point in ipairs(saved.points) do route.points[i]={mapID=point.mapID,x=point.x,y=point.y,stop=point.stop,count=point.count} end
+    -- Jumps and legs without a way keep their colours (Florian 2026-10-09:
+    -- a loaded route showed neither), and the status line counts them.
+    route.drops,route.unreachable=0,0
+    for i,point in ipairs(saved.points) do
+        route.points[i]={mapID=point.mapID,x=point.x,y=point.y,stop=point.stop,count=point.count,drop=point.drop,gap=point.gap}
+        if point.drop and not (saved.points[i-1] and saved.points[i-1].drop) then route.drops=route.drops+1 end
+        if point.gap then route.unreachable=route.unreachable+1 end
+    end
     for i,zone in ipairs(saved.zones) do route.zones[i]=zone end
     for key in pairs(saved.chosen or {}) do route.chosen[key]=true end
     route.area=saved.area;route.goal=saved.goal;route.sight=saved.sight
+    if saved.issues then
+        route.issues={}
+        for i,issue in ipairs(saved.issues) do route.issues[i]={kind=issue.kind,mapID=issue.mapID,x=issue.x,y=issue.y,yards=issue.yards} end
+    end
     if saved.goal then G:Config().routeGoal=saved.goal end
     if saved.sight then G:Config().sightRadius=saved.sight end
     self.area=saved.area;self.areaDraw=nil;self:AreaMode(false)

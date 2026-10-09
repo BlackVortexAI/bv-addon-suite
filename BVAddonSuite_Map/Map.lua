@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.2.0","0.8.96",1) then return end
+if not ns:RequireCore(package,"0.2.1","0.8.96",1) then return end
 -- Map package (docs/map-quest-concept.md, own package by Florian's choice on
 -- 2026-10-08): coordinates, transparency while moving, map size and position,
 -- waypoints. Blizzard's map is never replaced; other map addons keep working.
@@ -52,6 +52,8 @@ P.DEFAULTS={enabled=false,
     mapStyle="blizzard",
     -- Flight masters of your own faction only (and neutral ones).
     ownFlights=true,
+    -- Flight times learned from your own flights, shown at the flight master.
+    learnFlights=true,
     styleFamily="inherit"}
 local CHOICES={fadeScope={all=true,map=true,panes=true},mapStyle={blizzard=true,terrain=true}}
 local function num(value,default,low,high)
@@ -71,7 +73,7 @@ function P:Config()
     end
     for key,value in pairs(self.DEFAULTS) do if cfg[key]==nil then cfg[key]=type(value)=="table" and {} or value end end
     for key,valid in pairs(CHOICES) do if not valid[cfg[key]] then cfg[key]=self.DEFAULTS[key] end end
-    for _,key in ipairs({"coords","coordsPlayer","coordsCursor","fade","fadeMouseover","movable","corpse","arrow","rememberZoom","search","forceMove","forceScale","forceCoords","zoneQuests","zoneDiscovered","pathPins","altClick","shareReceive","unexplored","forceReveal","ownFlights","pathLead"}) do cfg[key]=cfg[key]==true end
+    for _,key in ipairs({"coords","coordsPlayer","coordsCursor","fade","fadeMouseover","movable","corpse","arrow","rememberZoom","search","forceMove","forceScale","forceCoords","zoneQuests","zoneDiscovered","pathPins","altClick","shareReceive","unexplored","forceReveal","ownFlights","pathLead","learnFlights"}) do cfg[key]=cfg[key]==true end
     cfg.coordsDecimals=num(cfg.coordsDecimals,1,0,2);cfg.fadeOpacity=num(cfg.fadeOpacity,45,10,100)
     -- Fade time in tenths of a second (0.1 .. 1.0 s).
     cfg.pathPinAlpha=num(cfg.pathPinAlpha,100,10,100);cfg.pathLineAlpha=num(cfg.pathLineAlpha,95,10,100)
@@ -166,6 +168,7 @@ ns.Modules:Register({id=P.ID,OnEnable=function(context)
     P.Path:Enable(context)
     P.Share:Enable(context)
     P.Reveal:Enable(context)
+    P.FlightTimes:Enable(context)
     P.Terrain:Enable(context)
     P.Flights:Enable(context)
 end})

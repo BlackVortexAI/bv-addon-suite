@@ -5,6 +5,8 @@ local ns=G.ns
 local UI,M=ns.UI,ns.DesignSystem.Metrics
 
 function G:Changed()
+    -- Settings changed what shows: the next profession or tracking check compares anew.
+    if self.Visibility then self.Visibility.state=nil end
     if self.Hud then self.Hud:Apply() end
     if self.Sight then self.Sight:Update() end
     if self.Pins.registered and ns.MapPins and ns.MapPins.providers["gather:minimap"] then
@@ -26,6 +28,8 @@ local function build(parent)
     g:Section("module","Module")
     page.enabled=g:Row("Enabled",UI:Switch(g,false,function(value) ns.Modules:SetEnabled(G.ID,value);if ns.Config then ns.Config:Refresh() end end),
         {help="Herbs, ore, fishing pools and treasure you gather, on the world map and the minimap."})
+    g:Row("Wiki",UI:Button(g,"Open the Gather wiki",190,function() G.Wiki:Open() end),
+        {help="Every part and setting of Gather explained, each with an example. Also /bv gather wiki."})
     page.summary=g:Row("Known nodes",UI:Label(g,"",11,"muted"),{width=420,help="Per kind: all nodes, and those only shared with you so far."})
     page.other=g:Row("GatherMate2",UI:Label(g,"",11,"muted"),{width=420,help="With GatherMate2 running, ours neither records nor draws (no double pins), unless you say otherwise below."})
     switch("forceRecord","Record anyway","Record nodes although GatherMate2 records them too.")
@@ -41,7 +45,15 @@ local function build(parent)
     switch("world","World map","Nodes on the world map (zone maps).")
     switch("minimap","Minimap","Nodes around you on the minimap.")
     switch("minimapEdge","Far nodes at the edge","Nodes beyond the minimap's range stay at its edge, smaller.")
-    for _,t in ipairs(G.TYPES) do switch(t.id,t.label,"Show "..t.label:lower()..".") end
+    -- Per kind: the switch (manual override: off is always off) and when it
+    -- shows (Florian 2026-10-09).
+    for _,t in ipairs(G.TYPES) do
+        switch(t.id,t.label,"Show "..t.label:lower()..". Off always hides them, whatever is chosen below.")
+        local tracking={herb="Find Herbs",ore="Find Minerals",treasure="Find Treasure"}
+        local help="Always; only when you have the profession; or only while "..(tracking[t.id] or "its tracking").." is on."
+        if t.id=="fish" then help="Always, or only when you know Fishing." elseif t.id=="treasure" then help="Always, or only while Find Treasure is on." end
+        row(t.id.."When",t.label..": show",UI:Dropdown(g,190,G.Visibility.Options(t.id),set(t.id.."When")),help)
+    end
     g:Section("colours","Colours")
     for _,t in ipairs(G.TYPES) do
         local key=t.id.."Color"
@@ -52,6 +64,7 @@ local function build(parent)
     row("filter","Only these",UI:Input(g,190,function(text) cfg().filter=text;G:Changed() end),
         "Names separated by commas, for example Peacebloom, Silverleaf. Empty shows all.")
     slider("size","Pin size",8,30,1,"%d","Size of the node pins.")
+    slider("respawnMinutes","Gathered: grey for",0,60,1,"%d min","A node you gathered shows grey this long, until it has likely grown back. 0: never.")
     g:Section("record","Recording")
     switch("record","Record what you gather","Herbs, ore and treasure are stored where you gathered them.")
     slider("merge","Merge distance",3,60,1,"%d yd","The same plant found again closer than this counts up instead of adding a pin; its position moves to the middle of your finds.")
@@ -85,6 +98,7 @@ local function build(parent)
     row("priceSource","Prices",UI:Dropdown(g,190,{{value="auto",label="Auto (TSM, Auctionator, vendor)"},{value="tsm",label="TradeSkillMaster"},{value="auctionator",label="Auctionator"},{value="vendor",label="Vendor price"}},set("priceSource")),
         "Where the value of gathered items comes from.")
     switch("trackAllLoot","Count all loot","Every item you loot while a session runs, not only from gathering.")
+    slider("trackerIdle","Pause when idle",0,30,1,"%d min","A running session pauses after this long without gathering (counted up to your last node); the next node resumes it. 0: never.")
     g:Section("route","Route")
     g:Row("Route editor",UI:Button(g,"Open route editor",190,function() G.Editor:Toggle() end),
         {help="Its own map: choose zones and herbs or ores, paint no-go, preferred and high-risk areas, calculate a loop, save it and follow it as waypoints. Also /bv gather editor."})
@@ -108,6 +122,8 @@ local function build(parent)
     slider("routeDotAlpha","Route point opacity",10,100,5,"%d %%","How visible the small points of the route you follow are.")
     row("routeColor","Route colour",UI:ColorInput(g,190,function(hex) cfg().routeColor=hex:sub(1,6):upper();G:Changed();if page then page:Refresh() end end),"Lines and points of the route; empty: the style's accent.")
     row("routeNextColor","Next point colour",UI:ColorInput(g,190,function(hex) cfg().routeNextColor=hex:sub(1,6):upper();G:Changed();if page then page:Refresh() end end),"The next point and the line from you to it.")
+    g:Row("Expert settings",UI:Button(g,"Open expert settings...",190,function() G.Expert:Open() end),
+        {help="The fixed values behind route planning and following (levels, jumps, costs of slopes, water and roads, when a point counts as reached), for fine tuning. Most players never need them."})
     slider("worthLimit","Way per node",0,600,10,"%d yd","Worth the way: nodes that cost more way than this each are left out of new routes (a far group with few nodes). 0: every node. Also in the route editor.")
     slider("followRange","Joining range",100,1500,50,"%d yd","While you follow a route, only its legs this close to you are checked for joining or skipping; the rest of the route costs nothing.")
     g:Row("Following",UI:Button(g,"Stop following",190,function() G.Follow:Stop() end),{help="Ends the route you follow. Also /bv gather stop."})
@@ -184,6 +200,14 @@ ns.Config:RegisterPage("gather",{title="Gather",description="Herbs, ore, fishing
     category="questmap",module=G.ID,
     build=function(parent) return page or build(parent) end,
     refresh=function() if page then page:Refresh() end end})
+-- Key bindings (Bindings.xml; Florian 2026-10-09): in the game's key
+-- bindings under the category "BV Addon Suite" (a header attribute showed
+-- as "HEADER_BVGATHER" on this client), named after the module.
+_G.BINDING_NAME_BVGATHER_MODE="Gather: mode on or off"
+_G.BINDING_NAME_BVGATHER_HUD="Gather: show or hide the HUD"
+_G.BINDING_NAME_BVGATHER_WINDOW="Gather: window"
+_G.BINDING_NAME_BVGATHER_TRACKER="Gather: tracker"
+_G.BINDING_NAME_BVGATHER_EDITOR="Gather: route editor"
 ns.Commands:RegisterAction("gather",function(action)
     if action=="stop" then G.Follow:Stop();return end
     if action=="mode" then if G:Active() then G.Mode:Toggle();G:Print("Gather mode "..(G:Config().mode and "on" or "off")..".") end;return end
@@ -191,6 +215,7 @@ ns.Commands:RegisterAction("gather",function(action)
     if action=="hud" then if G:Active() then G.Hud:Toggle() end;return end
     if action=="window" then if G:Active() then G.Mode:Show() end;return end
     if action=="profile" then G.Editor:Profile();return end
+    if action=="wiki" then G.Wiki:Open();return end
     if action=="editor" then if G:Active() then G.Editor:Toggle() else G:Print("The Gather module is off (/bv gather on).") end;return end
     if action=="route" then if G:Active() then G.Route:Start() else G:Print("The Gather module is off (/bv gather on).") end;return end
     if action=="on" or action=="off" then

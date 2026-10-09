@@ -3,7 +3,7 @@
 ## Notes: Shared UI, media, profiles and layout editor. Install feature addons separately.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.8.97
+## Version: 0.8.98
 ## OptionalDeps: Masque
 ## SavedVariables: BVAddonSuiteDB, BVSpellIndexDB, BVRecordingDB
 

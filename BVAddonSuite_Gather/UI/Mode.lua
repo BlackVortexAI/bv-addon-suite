@@ -121,6 +121,7 @@ if ns.Launcher and ns.Launcher.AddEntry then
     ns.Launcher:AddEntry({id="gatherwindow",label="Gather window",order=31,shown=function() return G:Active() end,onClick=function() H:Show() end})
     ns.Launcher:AddEntry({id="routeeditor",label="Route editor",order=32,shown=function() return G:Active() end,onClick=function() G.Editor:Toggle() end})
     ns.Launcher:AddEntry({id="gathertracker",label="Gather tracker",order=33,shown=function() return G:Active() end,onClick=function() G.TrackerWindow:Show() end})
+    ns.Launcher:AddEntry({id="gatherwiki",label="Gather wiki",order=35,shown=function() return G:Active() end,onClick=function() G.Wiki:Open() end})
     ns.Launcher:AddEntry({id="gatherhud",label="Gather HUD",order=34,shown=function() return G:Active() end,state=function() return G.Hud:On() end,onClick=function() G.Hud:Toggle() end})
 end
 function H:Enable(context)

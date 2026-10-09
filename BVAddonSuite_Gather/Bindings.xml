@@ -1,0 +1,7 @@
+<Bindings>
+	<Binding name="BVGATHER_MODE" category="BV Addon Suite">SlashCmdList.BVADDONSUITE("gather mode")</Binding>
+	<Binding name="BVGATHER_HUD" category="BV Addon Suite">SlashCmdList.BVADDONSUITE("gather hud")</Binding>
+	<Binding name="BVGATHER_WINDOW" category="BV Addon Suite">SlashCmdList.BVADDONSUITE("gather window")</Binding>
+	<Binding name="BVGATHER_TRACKER" category="BV Addon Suite">SlashCmdList.BVADDONSUITE("gather tracker")</Binding>
+	<Binding name="BVGATHER_EDITOR" category="BV Addon Suite">SlashCmdList.BVADDONSUITE("gather editor")</Binding>
+</Bindings>

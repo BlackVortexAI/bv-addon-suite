@@ -97,7 +97,11 @@ function P:Nodes(s,chosen,area)
             for _,node in ipairs(G.Data:Nodes(t.id,zone) or {}) do
                 if usable(node,t.id,zone) and chosen[P.Key(t.id,label(t.id,node))] and P.InArea(area,zone,node) then
                     local x,y=Grid.ToSpace(s,zone,node.x,node.y)
-                    if x then out[#out+1]={x=x,y=y,X=x*s.width,Y=y*s.height,kind=t.id,node=node,mapID=zone} end
+                    -- Known spawns nobody has found yet count half for "worth the
+                    -- way": something grows there only some of the time.
+                    local src=G.Data:Sources(t.id,zone,node)
+                    local unseen=not src.own and src.known and not (src.gathermate or src.text or src.import or src.shared)
+                    if x then out[#out+1]={x=x,y=y,X=x*s.width,Y=y*s.height,kind=t.id,node=node,mapID=zone,weight=unseen and P.KNOWN or 1} end
                 end
             end
         end
@@ -108,7 +112,34 @@ end
 -- Stops: nodes join a stop while every one of them stays within the radius
 -- of its middle (greedy, nearest stop first).
 local function yards(a,b) local dx,dy=a.X-b.X,a.Y-b.Y;return math.sqrt(dx*dx+dy*dy) end
-function P.Cluster(nodes,radius)
+-- The way between two stops for ordering them: the distance, plus P.CLIMB
+-- yards per yard of height when they lie on different levels (Florian
+-- 2026-10-09: a route went in and out of a ravine again and again; out of
+-- it there is only a long way round). Stops of one level come one after
+-- another, a ravine is entered once. Since the real ways to the nearest
+-- stops are measured (P.Ways) this only weighs pairs without a measured way;
+-- offline sweeps on Durotar 2026-10-09 gave the shortest routes with 0.
+P.CLIMB=0
+-- How much a known spawn you never found counts for "worth the way".
+P.KNOWN=.5
+-- Real ways between neighbouring stops (P.Ways during a calculation):
+-- where known they replace the estimate.
+P.real=nil
+local function way(a,b)
+    local known=P.real and P.real[a] and P.real[a][b]
+    if known then return known end
+    local d=yards(a,b)
+    if a.Z and b.Z then
+        local dz=math.abs(a.Z-b.Z)
+        if dz>P.LEVEL then d=d+dz*P.CLIMB end
+    end
+    return d
+end
+-- fits(a,b): may two nodes share a stop (beyond the radius)? Nodes on
+-- different levels never do (P.LEVEL, Florian 2026-10-09: a node down in a
+-- ravine is not reached from its edge; it gets its own stop down there).
+P.LEVEL=6
+function P.Cluster(nodes,radius,fits)
     table.sort(nodes,function(a,b) if a.X~=b.X then return a.X<b.X end return a.Y<b.Y end)
     local stops={}
     for i,node in ipairs(nodes) do
@@ -118,9 +149,11 @@ function P.Cluster(nodes,radius)
             if d<=radius*2 and (not bestDistance or d<bestDistance) then
                 local n=#stop.nodes+1
                 local mid={X=(stop.X*(n-1)+node.X)/n,Y=(stop.Y*(n-1)+node.Y)/n}
-                local fits=yards(mid,node)<=radius
-                for _,member in ipairs(stop.nodes) do if fits and yards(mid,member)>radius then fits=false end end
-                if fits then best,bestDistance=stop,d end
+                local ok=yards(mid,node)<=radius
+                for _,member in ipairs(stop.nodes) do
+                    if ok and (yards(mid,member)>radius or (fits and not fits(member,node))) then ok=false end
+                end
+                if ok then best,bestDistance=stop,d end
             end
         end
         if best then
@@ -140,7 +173,7 @@ local function successor(order,i,loop)
 end
 function P.Length(order,loop)
     local total=0
-    for i=1,#order do local b=successor(order,i,loop);if b then total=total+yards(order[i],b) end end
+    for i=1,#order do local b=successor(order,i,loop);if b then total=total+way(order[i],b) end end
     return total
 end
 -- Worth the way (Florian 2026-10-09: not a long walk for one ore): a run of
@@ -151,6 +184,13 @@ end
 -- group of three stops looks cheap one by one but not together. Returns the
 -- tour and the removed stops.
 P.WORTHRUN=8
+-- Orders worked out for a loop (from different stops), the shortest kept.
+P.RESTARTS=8
+P.JUMPLENGTH=25
+-- How far a calculation is (Florian 2026-10-09: "Calculating..." looked as
+-- if it hung): 0..1 and what it is doing; the editor shows it as a bar.
+P.progress={value=0,text=""}
+function P.Report(value,text) P.progress.value=math.max(0,math.min(1,value));if text then P.progress.text=text end end
 function P.Prune(order,loop,start,limit)
     local removed={}
     if not (limit and limit>0) then return order,removed end
@@ -168,17 +208,18 @@ function P.Prune(order,loop,start,limit)
                 if not loop and i+k-1>n then break end
                 local prev,nxt=at(i-1),at(i+k)
                 local through=0
-                for m=i,i+k-2 do through=through+yards(at(m),at(m+1)) end
-                if prev then through=through+yards(prev,at(i)) end
-                if nxt then through=through+yards(at(i+k-1),nxt) end
-                local shortcut=(prev and nxt) and yards(prev,nxt) or 0
+                for m=i,i+k-2 do through=through+way(at(m),at(m+1)) end
+                if prev then through=through+way(prev,at(i)) end
+                if nxt then through=through+way(at(i+k-1),nxt) end
+                local shortcut=(prev and nxt) and way(prev,nxt) or 0
                 local nodes=0
-                for m=i,i+k-1 do nodes=nodes+#at(m).nodes end
+                for m=i,i+k-1 do for _,node in ipairs(at(m).nodes) do nodes=nodes+(type(node)=="table" and node.weight or 1) end end
                 local ratio=(through-shortcut)/math.max(1,nodes)
                 if not bestRatio or ratio>bestRatio then best,bestRatio,bestLength=i,ratio,k end
             end
         end
         if not bestRatio or bestRatio<=limit then break end
+        P.Report(.4,"Checking which stops are worth the way")
         local cut={}
         for m=best,best+bestLength-1 do cut[#cut+1]=at(m) end
         local gone={};for _,stop in ipairs(cut) do gone[stop]=true;removed[#removed+1]=stop end
@@ -188,13 +229,154 @@ function P.Prune(order,loop,start,limit)
     end
     return order,removed
 end
+-- For each stop the real way to its P.NEIGHBOURS nearest stops (A*, or
+-- the straight line where it is clear), kept both ways for ordering and the
+-- path for the route itself. A way that is not found within the search
+-- limit counts P.LOST times the straight line (3 gave the shortest routes
+-- in the Durotar sweeps 2026-10-09; 5 kept detours to avoid lost legs).
+P.NEIGHBOURS=6;P.LOST=3;P.SEARCH=15000
+P.paths={}
+local function pathYards(s,path)
+    local total=0
+    for k=2,#path do total=total+Grid.Yards(s,path[k-1][1],path[k-1][2],path[k][1],path[k][2]) end
+    return total
+end
+-- One search per stop reaches all its neighbours at once (Florian
+-- 2026-10-09: calculating took long; before, one search per pair). It stops
+-- once every neighbour is reached or the way would cost more than P.BOUND
+-- times P.LOST times the farthest straight line: such a way counts as lost
+-- for the order anyway.
+P.BOUND=3
+-- Stops you can walk to and back from (Florian 2026-10-09: "if there is no
+-- way to a spot, why use it at all?"; red straight lines to stops on
+-- plateaus and in pits). One search over the whole map from a stop, one the
+-- other way round: the stops both reach belong together. Tried from up to
+-- P.ROOTS stops (one might itself sit on an island); the biggest group wins,
+-- the rest stays out of the route. With a start (where you stand) the
+-- stops are those you can reach from there (and, in a loop, come back from).
+-- Returns kept, left out.
+P.ROOTS=3;P.REACH=600000;P.MARGIN=400
+function P.Reachable(s,stops,start,loop)
+    if #stops<2 then return stops,{} end
+    local cells={}
+    for i,stop in ipairs(stops) do local cx,cy=Grid.Cell(s,stop.x,stop.y);cells[i]=cx and cy*s.cols+cx end
+    -- Only round the stops (and P.MARGIN yards beyond): ways far outside
+    -- them do not matter for the route.
+    local box={math.huge,math.huge,-math.huge,-math.huge}
+    for i in ipairs(stops) do
+        local cell=cells[i]
+        if cell then
+            local cx,cy=cell%s.cols,math.floor(cell/s.cols)
+            box[1],box[2],box[3],box[4]=math.min(box[1],cx),math.min(box[2],cy),math.max(box[3],cx),math.max(box[4],cy)
+        end
+    end
+    if start then
+        local cx,cy=Grid.Cell(s,start.X/s.width,start.Y/s.height)
+        if cx then box[1],box[2],box[3],box[4]=math.min(box[1],cx),math.min(box[2],cy),math.max(box[3],cx),math.max(box[4],cy) end
+    end
+    local margin=math.ceil(P.MARGIN/Grid.CELL)
+    box={box[1]-margin,box[2]-margin,box[3]+margin,box[4]+margin}
+    local best,tried={},{}
+    local from
+    if start then
+        local cx,cy=Grid.Cell(s,start.X/s.width,start.Y/s.height)
+        -- (Standing on blocked ground, e.g. inside a painted no-go area:
+        -- the stops decide among themselves.)
+        from=cx and Grid.Cost(s,cx,cy) and cy*s.cols+cx or nil
+    end
+    for _=1,from and 1 or P.ROOTS do
+        local root=from
+        if not root then
+            for i,stop in ipairs(stops) do if cells[i] and not tried[stop] and not best[stop] then root=cells[i];tried[stop]=true;break end end
+        end
+        if not root then break end
+        local there=Grid.Flood(s,root,false,box)
+        local back=(loop or not from) and Grid.Flood(s,root,true,box) or there
+        -- A node at the foot of a rock lies on a cell nobody walks onto;
+        -- you mine it from beside it: a neighbouring cell will do (the stop
+        -- moves there).
+        local group,count={},0
+        for i,stop in ipairs(stops) do
+            local cell=cells[i]
+            if cell then
+                local cx,cy=cell%s.cols,math.floor(cell/s.cols)
+                local spot
+                if there[cell] and back[cell] then spot=cell
+                else
+                    for dy=-1,1 do for dx=-1,1 do
+                        local nx,ny=cx+dx,cy+dy
+                        local near=ny*s.cols+nx
+                        if not spot and nx>=0 and ny>=0 and nx<s.cols and ny<s.rows and there[near] and back[near] then spot=near end
+                    end end
+                end
+                if spot then group[stop]=spot;count=count+1 end
+            end
+        end
+        local size=0;for _ in pairs(best) do size=size+1 end
+        if count>size then best=group end
+        if count*2>=#stops then break end
+    end
+    local kept,out={},{}
+    for i,stop in ipairs(stops) do
+        local spot=best[stop]
+        if spot then
+            if spot~=cells[i] then
+                stop.x,stop.y=Grid.Center(s,spot%s.cols,math.floor(spot/s.cols))
+                stop.X,stop.Y=stop.x*s.width,stop.y*s.height
+            end
+            kept[#kept+1]=stop
+        else out[#out+1]=stop end
+    end
+    return kept,out
+end
+function P.Ways(s,stops)
+    P.real,P.paths={},{}
+    local n=#stops
+    if n<4 or P.NEIGHBOURS<=0 then return end
+    local function set(a,b,d)
+        P.real[a]=P.real[a] or {};P.real[b]=P.real[b] or {}
+        P.real[a][b]=d;if not P.real[b][a] then P.real[b][a]=d end
+    end
+    for i,a in ipairs(stops) do
+        P.Report(.08+.32*(i-1)/n,string.format("Measuring the ways (%d of %d)",i,n))
+        local near={}
+        for _,b in ipairs(stops) do if b~=a then near[#near+1]={b,yards(a,b)} end end
+        table.sort(near,function(p,q) return p[2]<q[2] end)
+        local wanted,goals,farthest={},{},0
+        for k=1,math.min(P.NEIGHBOURS,#near) do
+            local b,d=near[k][1],near[k][2]
+            if not (P.real[a] and P.real[a][b]) then
+                if Grid.Clear(s,a.x,a.y,b.x,b.y) then set(a,b,d)
+                else
+                    local cx,cy=Grid.Cell(s,b.x,b.y)
+                    if cx then wanted[#wanted+1]={b,d,cy*s.cols+cx};goals[cy*s.cols+cx]=true;farthest=math.max(farthest,d) end
+                end
+            end
+        end
+        local sx,sy=Grid.Cell(s,a.x,a.y)
+        -- (All stops here can reach each other: P.Reachable came first.)
+        if #wanted>0 and sx then
+            local start=sy*s.cols+sx
+            local _,from=Grid.Explore(s,start,nil,goals,P.SEARCH*2,farthest*P.LOST*P.BOUND)
+            for _,w in ipairs(wanted) do
+                local b,d,cell=w[1],w[2],w[3]
+                local path=not w.lost and (from[cell] or cell==start) and Grid.Trace(s,from,start,cell,a.x,a.y,b.x,b.y)
+                if path then
+                    set(a,b,pathYards(s,path))
+                    P.paths[a]=P.paths[a] or {};P.paths[a][b]=path
+                else set(a,b,d*P.LOST) end
+            end
+        end
+        if coroutine.running() then coroutine.yield() end
+    end
+end
 function P.Tour(stops,loop,start)
     local left,order={},{}
     for i,stop in ipairs(stops) do left[i]=stop end
     local current=start or stops[1]
     while #left>0 do
         local best,bestDistance=1,math.huge
-        for i,stop in ipairs(left) do local d=yards(current,stop);if d<bestDistance then best,bestDistance=i,d end end
+        for i,stop in ipairs(left) do local d=way(current,stop);if d<bestDistance then best,bestDistance=i,d end end
         current=table.remove(left,best);order[#order+1]=current
     end
     local n=#order
@@ -202,13 +384,14 @@ function P.Tour(stops,loop,start)
     local improved,passes=true,0
     while improved and passes<30 do
         improved,passes=false,passes+1
+        P.Report(.4+.04*passes/30,"Ordering the stops")
         -- 2-opt: reverse order[i+1..j] when the two new edges are shorter.
         for i=1,n-2 do
             for j=i+2,n do
                 local a,b,c,d=order[i],order[i+1],order[j],successor(order,j,loop)
                 if d~=a then
-                    local before=yards(a,b)+(d and yards(c,d) or 0)
-                    local after=yards(a,c)+(d and yards(b,d) or 0)
+                    local before=way(a,b)+(d and way(c,d) or 0)
+                    local after=way(a,c)+(d and way(b,d) or 0)
                     if after+1e-6<before then
                         local lo,hi=i+1,j
                         while lo<hi do order[lo],order[hi]=order[hi],order[lo];lo,hi=lo+1,hi-1 end
@@ -224,11 +407,11 @@ function P.Tour(stops,loop,start)
                 local first,last=i,i+size-1
                 local prev,nxt=order[first-1],successor(order,last,loop)
                 if nxt then
-                    local gain=yards(prev,order[first])+yards(order[last],nxt)-yards(prev,nxt)
+                    local gain=way(prev,order[first])+way(order[last],nxt)-way(prev,nxt)
                     for j=1,n do
                         local a,b=order[j],successor(order,j,loop)
                         if b and (j<first-1 or j>last) and b~=order[first] then
-                            local cost=yards(a,order[first])+yards(order[last],b)-yards(a,b)
+                            local cost=way(a,order[first])+way(order[last],b)-way(a,b)
                             if cost+1e-6<gain then
                                 local run={}
                                 for k=first,last do run[#run+1]=order[k] end
@@ -253,6 +436,7 @@ end
 -- stop, count}}, length (yards), stops, skipped (in blocked areas),
 -- detours, unreachable}.
 function P:Build(zones,chosen,options)
+    P.Report(0,"Reading the map")
     local s=Grid.Space(zones)
     Grid.Paint(s,self:Areas())
     Grid.Links(s,self:Links())
@@ -271,10 +455,26 @@ function P:Build(zones,chosen,options)
     -- sight of one; a stop that falls on blocked ground moves to its member
     -- nearest to the middle.
     local sight=options.goal=="sight"
-    local stops=P.Cluster(nodes,sight and (options.sight or 150) or options.radius or 30)
+    -- With heights: a stop only for nodes on one level (not "within sight":
+    -- there it is enough to see the node).
+    local level
+    if s.terrain and not sight then
+        for _,node in ipairs(nodes) do
+            local cx,cy=Grid.Cell(s,node.x,node.y)
+            node.Z=cx and Grid.Height(s,cx,cy) or nil
+        end
+        level=function(a,b) return not (a.Z and b.Z) or math.abs(a.Z-b.Z)<=P.LEVEL end
+    end
+    local stops=P.Cluster(nodes,sight and (options.sight or 150) or options.radius or 30,level)
     local open,skipped={},0
     for _,stop in ipairs(stops) do
         stop.x,stop.y=stop.X/s.width,stop.Y/s.height
+        -- The stop's level: the mean height of its nodes (with heights).
+        if level then
+            local sum,n=0,0
+            for _,node in ipairs(stop.nodes) do if node.Z then sum,n=sum+node.Z,n+1 end end
+            stop.Z=n>0 and sum/n or nil
+        end
         local cx,cy=Grid.Cell(s,stop.x,stop.y)
         if sight and cx and not Grid.Cost(s,cx,cy) then
             local best,bestDistance
@@ -292,33 +492,183 @@ function P:Build(zones,chosen,options)
         local x,y=Grid.ToSpace(s,options.start.mapID,options.start.x,options.start.y)
         if x then start={X=x*s.width,Y=y*s.height} end
     end
+    -- The real ways to the nearest stops first (Florian 2026-10-09: two
+    -- hollows 81 yd apart were 1,463 yd apart on foot; ordered by the
+    -- straight line, the route went to and fro between them).
+    -- From here on the cells' costs stay as they are: kept for the searches.
+    s.costs={}
+    P.Report(.05,"Finding the stops you can reach")
+    local cut
+    open,cut=P.Reachable(s,open,start,options.loop)
+    P.lastCut=cut
+    local cutoff=0;for _,stop in ipairs(cut) do cutoff=cutoff+#stop.nodes end
+    P.Ways(s,open)
+    P.Report(.4,"Ordering the stops")
     local order=P.Tour(open,options.loop,start)
+    -- A loop has no fixed start: the order is also worked out from other
+    -- stops and the shortest is kept (Florian 2026-10-09; the order fell
+    -- into very different local optima, 21,500 to 24,500 yd).
+    if options.loop and #open>=8 then
+        local best=P.Length(order,true)
+        for k=1,P.RESTARTS-1 do
+            local from=open[math.floor(k*#open/P.RESTARTS)+1]
+            local other=P.Tour(open,true,from)
+            local length=P.Length(other,true)
+            if length<best then best,order=length,other end
+        end
+    end
     local removed
     order,removed=P.Prune(order,options.loop,start,options.worth)
     local unworth=0;for _,stop in ipairs(removed) do unworth=unworth+#stop.nodes end
-    local result={points={},length=0,stops=#order,nodes=#nodes,skipped=skipped,enemy=enemy,unworth=unworth,unworthStops=#removed,worth=options.worth,detours=0,unreachable=0,zones=zones,loop=options.loop,goal=sight and "sight" or "visit"}
+    local result={points={},length=0,stops=#order,nodes=#nodes,skipped=skipped,enemy=enemy,unworth=unworth,unworthStops=#removed,cutoff=cutoff,cutoffStops=#cut,worth=options.worth,detours=0,unreachable=0,zones=zones,loop=options.loop,goal=sight and "sight" or "visit"}
+    local spots={}
     local function add(x,y,stop)
         local mapID,zx,zy=Grid.FromSpace(s,x,y)
         result.points[#result.points+1]={mapID=mapID,x=zx,y=zy,stop=stop and true or nil,count=stop and #stop.nodes or nil}
+        spots[#result.points]={x,y}
     end
+    -- A leg without a way round stays a straight line: its end point is
+    -- marked gap, drawn red and never counted as a jump.
+    local gap=false
     for i,stop in ipairs(order) do
+        P.Report(.45+.55*(i-1)/math.max(1,#order),string.format("Finding the ways (%d of %d)",i,#order))
         add(stop.x,stop.y,stop)
+        if gap then result.points[#result.points].gap=true;gap=false end
         local nxt=successor(order,i,options.loop)
         if nxt and #order>1 then
             local legs={{stop.x,stop.y},{nxt.x,nxt.y}}
             if not Grid.Clear(s,stop.x,stop.y,nxt.x,nxt.y) then
-                local path=Grid.Search(s,stop.x,stop.y,nxt.x,nxt.y)
+                local path=P.paths[stop] and P.paths[stop][nxt] or Grid.Search(s,stop.x,stop.y,nxt.x,nxt.y)
+                -- Both are reachable: a way exists, only farther than the
+                -- first search went.
+                if not path and s.terrain then path=Grid.Search(s,stop.x,stop.y,nxt.x,nxt.y,P.REACH) end
                 if path and options.smooth then path=P.Smooth(s,path) end
                 if path then
                     legs=path
                     if #path>2 then result.detours=result.detours+1 end
                     for k=2,#path-1 do add(path[k][1],path[k][2]) end
-                else result.unreachable=result.unreachable+1 end
+                else result.unreachable=result.unreachable+1;gap=true end
             end
             for k=2,#legs do result.length=result.length+Grid.Yards(s,legs[k-1][1],legs[k-1][2],legs[k][1],legs[k][2]) end
         end
     end
+    -- The pieces that drop down a cliff: drop on the point they lead to
+    -- (in a loop the first point for the closing piece).
+    local n=#result.points
+    local peak
+    for j=1,n do
+        local a,b=spots[j-1] or (options.loop and n>2 and spots[n]),spots[j]
+        if j==1 and gap then result.points[1].gap=true end
+        local jump,ground=false,nil
+        if a and b and not result.points[j].gap then jump,ground=Grid.Drops(s,a[1],a[2],b[1],b[2],peak) end
+        peak=ground and math.max(ground,(peak or ground)-Grid.Yards(s,a[1],a[2],b[1],b[2])/2) or nil
+        if jump then
+            result.points[j].drop=true
+            -- Pieces in a row are one jump.
+            if not (result.points[j-1] and result.points[j-1].drop) then result.drops=(result.drops or 0)+1 end
+        end
+        if j%200==0 and coroutine.running() then coroutine.yield() end
+    end
+    -- A jump is drawn over at least P.JUMPLENGTH yards from where it starts
+    -- (Florian 2026-10-09: the edge fell on a 7-yard piece just before it,
+    -- too short to see on the minimap).
+    local starts={}
+    for j=1,n do if result.points[j].drop and not (result.points[j-1] and result.points[j-1].drop) then starts[#starts+1]=j end end
+    for _,j in ipairs(starts) do
+        local length,k=0,j
+        while k<=n and length<P.JUMPLENGTH do
+            local a,b=spots[k-1],spots[k]
+            if not (a and b) or result.points[k].gap then break end
+            result.points[k].drop=true
+            length=length+Grid.Yards(s,a[1],a[2],b[1],b[2])
+            k=k+1
+        end
+    end
+    result.issues=P.Issues(s,result,spots,order,cut,options.loop)
+    P.real,P.paths=nil,{}
+    P.Report(1,"Done")
     return result
+end
+-- Difficult spots (Florian 2026-10-09: "we will never know every map
+-- perfectly; tell the player, who can paint a no-go area and calculate
+-- again"). Along the route: runs over hard ground (Grid.Hazard) at least
+-- P.ISSUERUN yards long (any length for magma, enemies and high risk), legs
+-- far longer than the straight line (a shortcut may exist: a transition),
+-- legs without a way, and the stops left out. Close ones of a kind are one.
+-- Each: {kind, mapID, x, y, yards}.
+P.ISSUERUN={steep=24,swim=20,magma=0,enemy=0,risk=0}
+-- Hard ground this close to a stop is the node's own rock; jumps are
+-- already orange: neither counts as steep ground.
+P.ISSUENEAR=15
+P.DETOUR=3;P.DETOURYARDS=200;P.ISSUEMERGE=60
+function P.Issues(s,result,spots,order,cut,loop)
+    local found={}
+    local function add(kind,x,y,yards)
+        for _,issue in ipairs(found) do
+            if issue.kind==kind and Grid.Yards(s,issue.sx,issue.sy,x,y)<P.ISSUEMERGE then
+                issue.yards=(issue.yards or 0)+(yards or 0);return
+            end
+        end
+        found[#found+1]={kind=kind,sx=x,sy=y,yards=yards}
+    end
+    local points=result.points
+    local n=#points
+    local run,runKind,runX,runY=0,nil,nil,nil
+    local function close()
+        if runKind and run>=(P.ISSUERUN[runKind] or 0) then add(runKind,runX,runY,run) end
+        run,runKind=0,nil
+    end
+    for j=1,n do
+        local a,b=spots[j-1] or (loop and n>2 and spots[n]),spots[j]
+        if a and b and not points[j].gap then
+            local yards=Grid.Yards(s,a[1],a[2],b[1],b[2])
+            local stopA=points[j-1] and points[j-1].stop or (j==1 and points[n].stop)
+            local stopB=points[j].stop
+            local steps=math.max(1,math.ceil(yards/(Grid.CELL/2)))
+            for i=1,steps do
+                local px,py=a[1]+(b[1]-a[1])*i/steps,a[2]+(b[2]-a[2])*i/steps
+                local cx,cy=Grid.Cell(s,px,py)
+                local kind=cx and Grid.Hazard(s,cx,cy)
+                if kind=="steep" and (points[j].drop or (stopA and yards*i/steps<P.ISSUENEAR) or (stopB and yards*(steps-i)/steps<P.ISSUENEAR)) then kind=nil end
+                if kind~=runKind then close() end
+                if kind then
+                    if not runKind then runKind,runX,runY=kind,px,py end
+                    run=run+yards/steps
+                end
+            end
+        elseif points[j].gap and a and b then
+            close()
+            add("gap",(a[1]+b[1])/2,(a[2]+b[2])/2)
+        end
+        if j%200==0 and coroutine.running() then coroutine.yield() end
+    end
+    close()
+    -- Long ways round between two stops next to each other.
+    local stopAt={}
+    for j=1,n do if points[j].stop then stopAt[#stopAt+1]=j end end
+    for k=1,#stopAt do
+        local i,j=stopAt[k],stopAt[k+1] or (loop and stopAt[1])
+        if j and j~=i then
+            local way,q=0,i
+            while q~=j do
+                local nq=q%n+1
+                if points[nq].gap then way=nil;break end
+                way=way+Grid.Yards(s,spots[q][1],spots[q][2],spots[nq][1],spots[nq][2])
+                q=nq
+            end
+            local straight=Grid.Yards(s,spots[i][1],spots[i][2],spots[j][1],spots[j][2])
+            if way and way>straight*P.DETOUR and way-straight>P.DETOURYARDS then
+                add("detour",(spots[i][1]+spots[j][1])/2,(spots[i][2]+spots[j][2])/2,way-straight)
+            end
+        end
+    end
+    for _,stop in ipairs(cut or {}) do add("cut",stop.x,stop.y,#stop.nodes) end
+    local issues={}
+    for _,issue in ipairs(found) do
+        local mapID,x,y=Grid.FromSpace(s,issue.sx,issue.sy)
+        if mapID then issues[#issues+1]={kind=issue.kind,mapID=mapID,x=x,y=y,yards=issue.yards and math.floor(issue.yards+.5) or nil} end
+    end
+    return issues
 end
 -- Optional curves (Florian 2026-10-08: only when wanted): each corner of a
 -- way round is cut (Chaikin), twice; a cut whose new short piece would run
@@ -367,9 +717,13 @@ function P:Save(name,route)
     name=type(name)=="string" and name:gsub("^%s+",""):gsub("%s+$","") or ""
     if name=="" or not route then return false end
     local copy={zones={},chosen={},points={},loop=route.loop and true or false,radius=route.radius,length=route.length,goal=route.goal,sight=route.sight}
+    if route.issues then
+        copy.issues={}
+        for i,issue in ipairs(route.issues) do copy.issues[i]={kind=issue.kind,mapID=issue.mapID,x=issue.x,y=issue.y,yards=issue.yards} end
+    end
     for i,zone in ipairs(route.zones or {}) do copy.zones[i]=zone end
     for key,on in pairs(route.chosen or {}) do if on then copy.chosen[key]=true end end
-    for i,point in ipairs(route.points) do copy.points[i]={mapID=point.mapID,x=point.x,y=point.y,stop=point.stop,count=point.count} end
+    for i,point in ipairs(route.points) do copy.points[i]={mapID=point.mapID,x=point.x,y=point.y,stop=point.stop,count=point.count,drop=point.drop,gap=point.gap} end
     if route.area and route.area.poly then
         copy.area={mapID=route.area.mapID,poly={}}
         for i,v in ipairs(route.area.poly) do copy.area.poly[i]=v end

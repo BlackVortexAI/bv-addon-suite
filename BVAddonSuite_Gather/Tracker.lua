@@ -26,15 +26,16 @@ function T:State()
 end
 function T:Start()
     local s=self:Session()
-    if s and s.paused then s.paused=false;s.resumed=now();self:Changed();return end
+    if s and s.paused then s.paused=false;s.idle=nil;s.resumed=now();s.active=now();self:Changed();return end
     if s then return end
     local follow=G.Follow and G.Follow:State()
-    G.Data.db.session={started=time(),resumed=now(),elapsed=0,nodes=0,items={},route=follow and follow.name or nil}
+    G.Data.db.session={started=time(),resumed=now(),active=now(),elapsed=0,nodes=0,items={},route=follow and follow.name or nil}
     self:Changed()
 end
 function T:Pause()
     local s=self:Session()
     if not s or s.paused then return end
+    s.idle=nil
     s.elapsed=s.elapsed+(now()-s.resumed);s.paused=true
     self:Changed()
 end
@@ -105,8 +106,12 @@ end
 -- Gathering casts open the loot window; loot lines count while it is open.
 function T:Gathered(spellID)
     local s=self:Session()
-    if not s or s.paused or not G.Record:Kind(spellID) then return end
+    if not s or not G.Record:Kind(spellID) then return end
+    -- Paused by itself for idling: gathering again resumes it.
+    if s.paused and s.idle then self:Start() end
+    if s.paused then return end
     s.nodes=s.nodes+1
+    s.active=now()
     self.lootUntil=now()+T.WINDOW
     self:Changed()
 end
@@ -143,9 +148,25 @@ function T:Loot(text)
     self:Changed()
 end
 function T:Changed() if G.TrackerWindow and G.TrackerWindow.Refresh then G.TrackerWindow:Refresh() end end
+-- No gathering for a while (Florian 2026-10-09): the clock pauses at the
+-- last node, so gold per hour stays honest; the next node resumes it.
+function T:CheckIdle()
+    local s=self:Session()
+    local minutes=G:Config().trackerIdle
+    if not s or s.paused or minutes<=0 then return end
+    local last=s.active or s.resumed
+    if now()-last>=minutes*60 then
+        -- Counted up to the last activity, not the time spent idling.
+        s.elapsed=s.elapsed+math.max(0,last-s.resumed);s.paused=true;s.idle=true
+        G:Print(string.format("Tracker paused: no gathering for %d min. The next node resumes it.",minutes))
+        self:Changed()
+    end
+end
 function T:Enable(context)
     pcall(context.Subscribe,context,"UNIT_SPELLCAST_SUCCEEDED",function(_,unit,_,spellID) if unit=="player" then T:Gathered(spellID) end end)
     pcall(context.Subscribe,context,"CHAT_MSG_LOOT",function(_,text) T:Loot(text) end)
+    T.idleTicker=C_Timer.NewTicker(15,function() T:CheckIdle() end)
+    context:Defer(function() if T.idleTicker then T.idleTicker:Cancel();T.idleTicker=nil end end)
     -- Item data arriving from the server: names, icons and vendor prices complete.
     pcall(context.Subscribe,context,"GET_ITEM_INFO_RECEIVED",function() T:Changed() end)
     -- A running session pauses when the module goes off (and on a reload its clock restarts there).

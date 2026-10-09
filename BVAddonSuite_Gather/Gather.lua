@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.1.1","0.8.96",1) then return end
+if not ns:RequireCore(package,"0.1.2","0.8.96",1) then return end
 -- Gather package (docs/map-gather-plan.md phase 3/4, own package by
 -- Florian's choice): herbs, ore, fishing pools and treasure you gather are
 -- recorded where you stood and shown on the world map and the minimap
@@ -59,7 +59,7 @@ G.DEFAULTS={enabled=false,
     record=true,merge=15,spawn=8,forceRecord=false,forceShow=false,routeUnderground=false,
     -- Route editor: loop, pass-by radius (yards), high-risk areas ("ignore",
     -- "avoid" where possible, "block" like no-go).
-    loop=true,passRadius=30,risk="avoid",
+    loop=true,passRadius=45,risk="avoid",
     -- Route editor: terrain tiles (local Map Art data) over Blizzard's map.
     editorTerrain=true,editorNames=true,
     -- Route planning with the terrain data (slopes, water): use it, and how
@@ -103,6 +103,11 @@ G.DEFAULTS={enabled=false,
     routeGoal="visit",sightRadius=150,sightCircle=false,
     -- Worth the way: yards of way a node may cost at most (0 = every node).
     worthLimit=0,
+    -- Nodes you gathered show grey this many minutes (0: never); the tracker
+    -- pauses after this many minutes without gathering (0: never).
+    respawnMinutes=10,trackerIdle=5,
+    -- When each kind shows (Visibility.lua): always, with the profession, with tracking on.
+    herbWhen="always",oreWhen="always",fishWhen="always",treasureWhen="always",
     -- The circle's colour (empty: the style's accent) and its ring's opacity.
     sightColor="",sightAlpha=55,sightWidth=3,
     -- Following: only legs this close are looked at for joining (Florian 2026-10-09).
@@ -121,11 +126,12 @@ function G:Config()
     local cfg=ns.Settings:Module(self.ID)
     for key,value in pairs(self.DEFAULTS) do if cfg[key]==nil then cfg[key]=value end end
     for _,key in ipairs({"world","minimap","minimapEdge","herb","ore","fish","treasure","record","forceRecord","forceShow","shareReceive","routeUnderground","loop","editorTerrain","editorNames","routeTerrain","avoidWater","editorRelief","ownFlights","routeSmooth","preferRoads","recordWays","preferWalked","editorHeat","mode","modeWindow","routeLines","trackAllLoot","trackerWindow","hudRotate","knownSpawns","routeKnown","sightCircle","hudCompass","ownFinds"}) do cfg[key]=cfg[key]==true end
-    cfg.passRadius=num(cfg.passRadius,30,10,80)
+    cfg.passRadius=num(cfg.passRadius,45,10,80)
     cfg.hudSize=num(cfg.hudSize,80,40,100);cfg.hudAlpha=num(cfg.hudAlpha,55,10,100)
     cfg.sightRadius=num(cfg.sightRadius,150,40,230);cfg.sightAlpha=num(cfg.sightAlpha,55,5,100);cfg.sightWidth=num(cfg.sightWidth,3,1,16)
     cfg.followRange=num(cfg.followRange,300,100,1500)
     cfg.worthLimit=num(cfg.worthLimit,0,0,600)
+    cfg.respawnMinutes=num(cfg.respawnMinutes,10,0,60);cfg.trackerIdle=num(cfg.trackerIdle,5,0,30)
     if cfg.routeGoal~="sight" then cfg.routeGoal="visit" end
     cfg.routeLineAlpha=num(cfg.routeLineAlpha,80,10,100);cfg.routeDotAlpha=num(cfg.routeDotAlpha,100,10,100)
     for key,default in pairs({routeColor="",routeNextColor="5FD16B",sightColor=""}) do
@@ -138,6 +144,11 @@ function G:Config()
     if not ({auto=true,tsm=true,auctionator=true,vendor=true})[cfg.priceSource] then cfg.priceSource="auto" end
     if not ({keep=true,square=true,round=true})[cfg.hudShape] then cfg.hudShape="keep" end
     if type(cfg.sourceOff)~="table" then cfg.sourceOff={} end
+    for _,t in ipairs(G.TYPES) do
+        local key,ok=t.id.."When",false
+        for _,value in ipairs(G.Visibility and G.Visibility.CHOICES[t.id] or {"always"}) do if cfg[key]==value then ok=true end end
+        if not ok then cfg[key]="always" end
+    end
     if not ({turn=true,north=true,keep=true})[cfg.hudTurn] then cfg.hudTurn=cfg.hudRotate==false and "keep" or "turn" end
     cfg.merge=num(cfg.merge,15,3,60);cfg.spawn=num(cfg.spawn,8,0,30);cfg.size=num(cfg.size,14,8,30)
     if type(cfg.filter)~="string" then cfg.filter="" end
@@ -191,6 +202,8 @@ ns.Modules:Register({id=G.ID,OnEnable=function(context)
     G.Mode:Enable(context)
     G.Tracker:Enable(context)
     G.TrackerWindow:Enable(context)
+    G.Expert:Apply()
     G.Hud:Enable(context)
+    G.Visibility:Enable(context)
     G.Sight:Enable(context)
 end})

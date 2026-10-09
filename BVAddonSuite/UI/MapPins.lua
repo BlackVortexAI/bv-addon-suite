@@ -204,7 +204,12 @@ local function paintIcon(pin,point,size)
     -- many points stay readable, Florian 2026-10-08).
     if point.dot then
         local c=point.color or {1,.82,.2}
-        pin.disc:SetVertexColor(c[1],c[2],c[3],1);pin.ring:Hide();pin.icon:Hide()
+        -- point.hollow: a ring only (Florian 2026-10-09: a filled dot looked
+        -- like the game's own tracking dot).
+        if point.hollow then
+            pin.disc:SetVertexColor(0,0,0,0);pin.ring:Show();pin.ring:SetVertexColor(c[1],c[2],c[3],1)
+        else pin.disc:SetVertexColor(c[1],c[2],c[3],1);pin.ring:Hide() end
+        pin.icon:Hide()
         return
     end
     pin.ring:Show();pin.icon:Show()
