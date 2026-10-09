@@ -14,6 +14,7 @@ function P:Changed()
     if self.Reveal then self.Reveal:Apply() end
     if self.Terrain then self.Terrain:Apply() end
     if self.Flights then self.Flights:Filter() end
+    if self.Zoom then self.Zoom:Apply() end
     if self.Path then self.Path:Refresh() end
 end
 local page
@@ -53,12 +54,15 @@ local function build(parent)
     switch("forceMove","Move: use ours anyway","Our moving although another addon moves the map; switch the other addon's option off so the two never fight.")
     switch("forceScale","Scale: use ours anyway","Our scale although another addon scales the map; switch the other addon's option off so the two never fight.")
     switch("rememberZoom","Remember zoom","The map reopens on the same map, zoom and section while you are in the same zone.")
+    dropdown("extraZoom","Extra zoom",{{value="off",label="Off"},{value="x2",label="2x closer"},{value="x4",label="4x closer"}},
+        "Zoom in closer than Blizzard allows, on Blizzard's map and the terrain map. The map art only grows, so it gets softer: 2x is fine, 4x clearly blurred.")
     slider("scale","Scale",50,150,5,"%d %%","Size of the map in its window; maximized it stays Blizzard's. Also Ctrl+mouse wheel on the title bar.")
     switch("movable","Movable","Drag the map's title bar to move it; double-click resets the position.")
     page.resetPosition=g:Row("Position",UI:Button(g,"Reset position",170,function() P.Window:Reset() end),{help="Back to Blizzard's place."})
     g:Section("content","Map content")
     row("mapStyle","Map style",UI:Dropdown(g,190,{{value="blizzard",label="Blizzard's map"},{value="terrain",label="Terrain"}},set("mapStyle")),
         "Zone maps as Blizzard's art or as terrain (the game's own minimap tiles) with our area names. Also the layers button beside the map's search.")
+    slider("terrainAlpha","Terrain opacity",20,100,5,"%d %%","How much of the terrain map covers Blizzard's map: below 100 % Blizzard's map shows through, below 70 % with its own area names instead of ours.")
     switch("ownFlights","Own flight masters only","Flight masters of the other faction are hidden on the world map and in the search; neutral ones stay.")
     switch("learnFlights","Learn flight times","Your own flights are timed; the flight master's map then shows the time to each destination you have flown to.")
     switch("unexplored","Show unexplored areas","Areas you have not discovered yet show on the world map as if explored.")

@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.1.2","0.8.96",1) then return end
+if not ns:RequireCore(package,"0.1.3","0.8.96",1) then return end
 -- Gather package (docs/map-gather-plan.md phase 3/4, own package by
 -- Florian's choice): herbs, ore, fishing pools and treasure you gather are
 -- recorded where you stood and shown on the world map and the minimap

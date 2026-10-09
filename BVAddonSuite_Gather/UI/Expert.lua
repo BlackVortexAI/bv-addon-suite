@@ -14,6 +14,7 @@ X.VALUES={
     {"climb","Plan","CLIMB",0,0,30,1,"x%d","Level change","When ordering the stops, each yard of height between two levels counts this many yards of way where no real way was measured. 0: the measured ways alone decide.","Route planning"},
     {"neighbours","Plan","NEIGHBOURS",6,0,15,1,"%d","Real ways measured","For each stop the real way (round cliffs and water) to this many nearest stops is measured before ordering them; more is better in mazes like ravines but slower. 0: straight lines only."},
     {"lost","Plan","LOST",3,1,10,.5,"x%.1f","Way not found","A way to a neighbouring stop that the search does not find counts this many times the straight line."},
+    {"trim","Plan","TRIM",10,0,20,1,"%d yd","Side trip shortened by","A stop off the main way is reached and left by one way; its tip is shortened by this much (following counts a point reached at 20 yd). 0: to the stop itself."},
     {"worthRun","Plan","WORTHRUN",8,1,15,1,"%d","Stops checked together","\"Way per node\" looks at runs of up to this many neighbouring stops."},
     {"known","Plan","KNOWN",.5,0,1,.05,"x%.2f","Known spawn weight","How much a known spawn you never found counts for \"Way per node\" (1 = like your own find)."},
     {"road","Grid","ROAD",.6,.3,1,.05,"x%.2f","Road and walked way cost","Ground cost on roads and often walked ways (1 = like any other ground)."},

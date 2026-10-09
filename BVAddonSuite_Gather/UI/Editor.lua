@@ -202,6 +202,10 @@ function E:BuildSide(c)
     self.progress=UI:StatusBar(side,SIDE,4);M.Point(self.progress,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y+40);self.progress:SetValue(0);self.progress:Hide()
     y=y+44
     self.calculate=UI:Button(side,"Calculate",SIDE,function() E:Calculate() end,true);M.Point(self.calculate,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y);y=y+40
+    UI:AttachTooltip(self.calculate,"Calculate the route","Plans the route through the chosen nodes. Warning: the game's performance drops noticeably for a moment at the start, while the terrain is read; after that it runs smoothly in the background.")
+    -- Florian 2026-10-09: warn before the first click, the start lags.
+    self.lagNote=UI:Label(side,"Warning: performance drops for a moment when calculating starts.",10,"muted");M.Point(self.lagNote,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y-2);M.Size(self.lagNote,SIDE,14)
+    self.lagNote:SetTextColor(1,.78,.2);y=y+14
     local function option(title,control,height)
         local l=UI:Label(side,title,12,"text");M.Point(l,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y+4);M.Size(l,110,20)
         self.lastLabel=l

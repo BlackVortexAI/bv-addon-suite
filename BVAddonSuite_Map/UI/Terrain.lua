@@ -7,12 +7,15 @@ if not P.ready then return end
 -- area names come from Core's overlay labels, in our font. Continents and
 -- the world keep Blizzard's map. A button beside the search switches it;
 -- the setting "Map style" too. Tiles load a few per frame and stay cached
--- (with their textures) while you switch zones.
+-- (with their textures) while you switch zones. Opacity (Florian
+-- 2026-10-09): below 100 % Blizzard's map shows through; below
+-- LABELALPHA its painted names do, and ours stay away (no names twice).
 local ns=P.ns
 local UI,M=ns.UI,ns.DesignSystem.Metrics
 local R={shown={},cache={},order={},labels={},spare={}}
 P.Terrain=R
 local BATCH,CACHE=24,128
+R.LABELALPHA=.7
 
 function R:On() return P:Active() and P:Config().mapStyle=="terrain" end
 -- Our layer on the canvas: above the exploration overlays (Blizzard's and
@@ -95,7 +98,7 @@ function R:Refresh()
                         elseif u1>u0 and v1>v0 then
                             tex:SetTexCoord((u0-x0)/(x1-x0),(u1-x0)/(x1-x0),(v0-y0)/(y1-y0),(v1-y0)/(y1-y0))
                             tex:ClearAllPoints();tex:SetPoint("TOPLEFT",layer,"TOPLEFT",u0*w,-v0*h)
-                            tex:SetSize((u1-u0)*w,(v1-v0)*h);tex:SetVertexColor(1,1,1,1);tex:Show()
+                            tex:SetSize((u1-u0)*w,(v1-v0)*h);tex:Show()
                             self.shown[key]=tex
                         else self.cache[key]=tex;self.order[#self.order+1]=key end
                     end
@@ -103,8 +106,10 @@ function R:Refresh()
             end
         end
     end
+    local alpha=(P:Config().terrainAlpha or 100)/100
+    for _,tex in pairs(self.shown) do tex:SetVertexColor(1,1,1,alpha) end
     -- Area names in our font, kept the same size at every zoom.
-    local labels=ns.MapOverlays and ns.MapOverlays:Labels(mapID) or {}
+    local labels=alpha>=self.LABELALPHA and ns.MapOverlays and ns.MapOverlays:Labels(mapID) or {}
     local named={}
     for _,label in ipairs(labels) do if label.name~="" then named[#named+1]=label end end
     labels=named

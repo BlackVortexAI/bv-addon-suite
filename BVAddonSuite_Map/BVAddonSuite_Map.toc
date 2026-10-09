@@ -3,7 +3,7 @@
 ## Notes: Coordinates, transparency while moving, map size and waypoints (TomTom-compatible). Requires BV Core.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.2.1
+## Version: 0.2.2
 ## Dependencies: BVAddonSuite
 ## OptionalDeps: TomTom
 
@@ -19,6 +19,7 @@ FlightTimes.lua
 UI\Reveal.lua
 UI\Terrain.lua
 UI\Flights.lua
+UI\Zoom.lua
 Probe.lua
 ZoneBanner.lua
 UI\Coords.lua

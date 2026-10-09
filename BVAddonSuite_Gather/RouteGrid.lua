@@ -438,6 +438,25 @@ function R.Clear(s,x1,y1,x2,y2)
     return true
 end
 
+-- Can you walk the straight line from one space point to the other, in
+-- this direction? Every step from cell to cell as the search would allow
+-- it (blocked cells, walls up, climbs; corners not cut).
+function R.Walkable(s,x1,y1,x2,y2)
+    local steps=math.max(1,math.ceil(R.Yards(s,x1,y1,x2,y2)/(R.CELL/2)))
+    local lx,ly
+    for i=0,steps do
+        local cx,cy=R.Cell(s,x1+(x2-x1)*i/steps,y1+(y2-y1)*i/steps)
+        if not cx then return false end
+        if lx and (cx~=lx or cy~=ly) then
+            local cost=R.Cost(s,cx,cy)
+            if not cost or not R.Step(s,lx,ly,cx,cy,cost,false) then return false end
+            if cx~=lx and cy~=ly and (not R.Cost(s,cx,ly) or not R.Cost(s,lx,cy)) then return false end
+        elseif not lx and not R.Cost(s,cx,cy) then return false end
+        lx,ly=cx,cy
+    end
+    return true
+end
+
 -- A* on the cells (8 neighbours, octile heuristic), yielding every 400 steps.
 local SQRT2=math.sqrt(2)
 -- A binary heap in two flat arrays (keys, values): no table per entry.

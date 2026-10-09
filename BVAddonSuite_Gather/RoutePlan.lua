@@ -552,6 +552,8 @@ function P:Build(zones,chosen,options)
             for k=2,#legs do result.length=result.length+Grid.Yards(s,legs[k-1][1],legs[k-1][2],legs[k][1],legs[k][2]) end
         end
     end
+    -- Side trips to a stop: one way there and back, the tip shortened.
+    if P.SPURS then P.Spurs(s,result,spots) end
     -- The pieces that drop down a cliff: drop on the point they lead to
     -- (in a loop the first point for the closing piece).
     local n=#result.points
@@ -669,6 +671,113 @@ function P.Issues(s,result,spots,order,cut,loop)
         if mapID then issues[#issues+1]={kind=issue.kind,mapID=mapID,x=x,y=y,yards=issue.yards and math.floor(issue.yards+.5) or nil} end
     end
     return issues
+end
+-- Side trips (Florian 2026-10-09, after the release: the route liked
+-- little loops). A stop off the main way is reached by one leg and left by
+-- the next; both are searched and pulled tight on their own, so they cross
+-- and draw a loop, or run side by side. Where they meet again (within
+-- P.SPURJOIN yards, or crossing), the shorter of the two is used both ways -
+-- only if it can be walked back: no jump on it (a jump stays one way,
+-- Florian), no wall, every step allowed the other way round. Then the tip
+-- is shortened by up to P.TRIM yards (following counts a point reached at
+-- 20 yards anyway).
+P.SPURS=true;P.SPURJOIN=8;P.TRIM=10
+local function crosses(a,b,c,d)
+    local function o(p,q,r) return (q[1]-p[1])*(r[2]-p[2])-(q[2]-p[2])*(r[1]-p[1]) end
+    return o(a,b,c)*o(a,b,d)<0 and o(c,d,a)*o(c,d,b)<0
+end
+function P.Spurs(s,result,spots)
+    local seq={}
+    for i,point in ipairs(result.points) do seq[i]={spots[i][1],spots[i][2],point} end
+    local function yd(a,b) return Grid.Yards(s,a[1],a[2],b[1],b[2]) end
+    local function length(list) local l=0;for q=2,#list do l=l+yd(list[q-1],list[q]) end;return l end
+    local function back(list)
+        for q=1,#list-1 do
+            local a,b=list[q],list[q+1]
+            if b[3].gap or b[3].link or Grid.Drops(s,a[1],a[2],b[1],b[2]) or not Grid.Walkable(s,b[1],b[2],a[1],a[2]) then return false end
+        end
+        return true
+    end
+    local function copy(e) return {e[1],e[2],{mapID=e[3].mapID,x=e[3].x,y=e[3].y}} end
+    local changed=0
+    local k=2
+    while k<#seq do
+        if seq[k][3].stop and not seq[k][3].gap and not (seq[k+1] and seq[k+1][3].gap) then
+            local lo=k-1;while lo>1 and not seq[lo][3].stop do lo=lo-1 end
+            local hi=k+1;while hi<#seq and not seq[hi][3].stop do hi=hi+1 end
+            -- The meeting farthest from the stop.
+            local i0,o0
+            for i=lo,k-1 do
+                for o=hi,k+1,-1 do
+                    if not i0 then
+                        local near=yd(seq[i],seq[o])<=P.SPURJOIN
+                        local crossed=i<k-1 and o>k+1 and crosses(seq[i],seq[i+1],seq[o-1],seq[o])
+                        if (near or crossed) and (near and yd(seq[i],seq[o])<.5 or Grid.Walkable(s,seq[i][1],seq[i][2],seq[o][1],seq[o][2])) then i0,o0=i,o end
+                    end
+                end
+            end
+            if i0 then
+                local into,out={},{}
+                for q=i0,k do into[#into+1]=seq[q] end
+                for q=k,o0 do out[#out+1]=seq[q] end
+                local useIn=back(into) and length(into)
+                local useOut=back(out) and length(out)
+                local spur
+                if useIn and (not useOut or useIn<=useOut) then
+                    -- There by the first leg, back the same way.
+                    spur={};for q=k,i0,-1 do spur[#spur+1]=seq[q] end
+                    local new={}
+                    for q=1,k do new[#new+1]=seq[q] end
+                    for q=k-1,i0,-1 do new[#new+1]=copy(seq[q]) end
+                    for q=o0,#seq do new[#new+1]=seq[q] end
+                    seq=new;changed=changed+1
+                elseif useOut then
+                    -- There the way the second leg comes back.
+                    spur={};for q=k,o0 do spur[#spur+1]=seq[q] end
+                    local new={}
+                    for q=1,i0 do new[#new+1]=seq[q] end
+                    for q=o0,k+1,-1 do new[#new+1]=copy(seq[q]) end
+                    local at=#new+1
+                    for q=k,#seq do new[#new+1]=seq[q] end
+                    seq=new;k=at;changed=changed+1
+                end
+                -- The tip: both sides of the stop are now the same way.
+                if spur and P.TRIM>0 and #spur>=2 and length(spur)>P.TRIM+2 then
+                    local stop=seq[k]
+                    local left,walked,q=P.TRIM,0,1
+                    while q<#spur and walked+yd(spur[q],spur[q+1])<left do walked=walked+yd(spur[q],spur[q+1]);q=q+1 end
+                    local a,b=spur[q],spur[q+1]
+                    local t=(left-walked)/math.max(.01,yd(a,b))
+                    local x,y=a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t
+                    local mapID,zx,zy=Grid.FromSpace(s,x,y)
+                    if mapID then
+                        local p=stop[3]
+                        local tip={x,y,{mapID=mapID,x=zx,y=zy,stop=p.stop,count=p.count}}
+                        -- q points of the way lie between the stop and the new tip on each side.
+                        local new={}
+                        for r=1,k-q do new[#new+1]=seq[r] end
+                        new[#new+1]=tip
+                        local at=#new
+                        for r=k+q,#seq do new[#new+1]=seq[r] end
+                        seq=new;k=at
+                    end
+                end
+            end
+        end
+        k=k+1
+        if k%50==0 and coroutine.running() then coroutine.yield() end
+    end
+    if changed==0 then return end
+    local points,newSpots={},{}
+    local total=0
+    for i,e in ipairs(seq) do
+        points[i]=e[3];newSpots[i]={e[1],e[2]}
+        if i>1 then total=total+yd(seq[i-1],e) end
+    end
+    if result.loop and #seq>2 then total=total+yd(seq[#seq],seq[1]) end
+    for i=1,#points do result.points[i]=points[i];spots[i]=newSpots[i] end
+    for i=#points+1,#result.points do result.points[i]=nil;spots[i]=nil end
+    result.length=total;result.spurs=changed
 end
 -- Optional curves (Florian 2026-10-08: only when wanted): each corner of a
 -- way round is cut (Chaikin), twice; a cut whose new short piece would run
