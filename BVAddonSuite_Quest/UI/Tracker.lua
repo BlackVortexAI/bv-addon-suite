@@ -459,26 +459,47 @@ function T:ToggleFocus()
     self:AutoFocus();self:Update()
 end
 
--- Blizzard's own tracker: hidden while ours is shown (option), never in
--- combat (it holds secure item buttons); given back when off.
+-- Blizzard's own tracker: hidden while ours is shown (option); given back
+-- when off. ObjectiveTrackerFrame belongs to Edit Mode: Hide() and Show() are
+-- blocked in combat. Blizzard shows it again on quest progress, mostly in
+-- combat (Florian 2026-10-10: it came back now and then; nothing hid it again
+-- after the fight). Like EllesmereUI's tracker: in combat it only turns
+-- invisible (alpha 0), after the fight it is hidden for real.
+local function combat() return InCombatLockdown and InCombatLockdown() end
 function T:Blizzard(hide)
     local frame=rawget(_G,"ObjectiveTrackerFrame")
     if not frame then return end
-    if hide==(self.hidingBlizzard==true) then return end
-    if InCombatLockdown and InCombatLockdown() then self.pendingBlizzard=hide;return end
+    if hide and not self.blizzardHooked then
+        self.blizzardHooked=true
+        frame:HookScript("OnShow",function(own)
+            if not T.hidingBlizzard then return end
+            if combat() then own:SetAlpha(0);T.blizzardInCombat=true else own:Hide() end
+        end)
+    end
     if hide then
-        if not self.blizzardHooked then
-            self.blizzardHooked=true
-            frame:HookScript("OnShow",function(own)
-                if T.hidingBlizzard and not (InCombatLockdown and InCombatLockdown()) then own:Hide() end
-            end)
-        end
-        self.hidingBlizzard=true;frame:Hide()
-    else
-        self.hidingBlizzard=false;frame:Show()
+        self.hidingBlizzard=true
+        if combat() then
+            if frame:IsShown() then frame:SetAlpha(0);self.blizzardInCombat=true end
+        else frame:SetAlpha(1);frame:Hide();self.blizzardInCombat=nil end
+    elseif self.hidingBlizzard then
+        self.hidingBlizzard=false
+        frame:SetAlpha(1)
+        if combat() then self.pendingBlizzard=false;return end
+        frame:Show();self.blizzardInCombat=nil
         -- Blizzard lays its tracker out again on its own update.
         if ObjectiveTracker_Update then pcall(ObjectiveTracker_Update) end
         if frame.Update then pcall(frame.Update,frame) end
+    end
+end
+-- After the fight: what Blizzard showed meanwhile is hidden for real, a
+-- give-back from the fight is done now.
+function T:BlizzardAfterCombat()
+    local frame=rawget(_G,"ObjectiveTrackerFrame")
+    if not frame then return end
+    if self.pendingBlizzard==false then
+        self.pendingBlizzard=nil;self.hidingBlizzard=true;self:Blizzard(false)
+    elseif self.hidingBlizzard and (self.blizzardInCombat or frame:IsShown()) then
+        frame:SetAlpha(1);frame:Hide();self.blizzardInCombat=nil
     end
 end
 
@@ -489,7 +510,7 @@ function T:Enable(context)
     pcall(context.Subscribe,context,"PLAYER_REGEN_DISABLED",function() T.combat=true;T:Update() end)
     pcall(context.Subscribe,context,"PLAYER_REGEN_ENABLED",function()
         T.combat=false
-        if T.pendingBlizzard~=nil then local hide=T.pendingBlizzard;T.pendingBlizzard=nil;T:Blizzard(hide) end
+        T:BlizzardAfterCombat()
         T:Update()
     end)
     for _,event in ipairs({"PLAYER_ENTERING_WORLD","ZONE_CHANGED_NEW_AREA"}) do pcall(context.Subscribe,context,event,function() T:Update() end) end

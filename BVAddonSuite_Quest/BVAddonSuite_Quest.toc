@@ -3,7 +3,7 @@
 ## Notes: Quest log beside the world map: compact list, details beside the map, smart sorting and grouping. Requires BV Core.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.1.1
+## Version: 0.1.2
 ## Dependencies: BVAddonSuite
 
 Quest.lua

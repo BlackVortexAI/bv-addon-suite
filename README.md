@@ -16,7 +16,7 @@ This development version is undergoing in-game acceptance testing.
 | `BVAddonSuite_MicroMenu` | 0.8.89 |
 | `BVAddonSuite_Loot` | 0.8.92 |
 | `BVAddonSuite_CombatText` | 0.7.6 |
-| `BVAddonSuite_Quest` | 0.1.1 |
+| `BVAddonSuite_Quest` | 0.1.2 |
 | `BVAddonSuite_Map` | 0.2.3 |
 | `BVAddonSuite_Gather` | 0.1.6 |
 | `BVAddonSuite_GatherData` | 0.1.0 |

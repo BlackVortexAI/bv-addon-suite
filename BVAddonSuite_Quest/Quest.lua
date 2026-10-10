@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.1.1","0.8.96",1) then return end
+if not ns:RequireCore(package,"0.1.2","0.8.96",1) then return end
 -- Quest package (docs/map-quest-concept.md): the quest log beside the world
 -- map. Files fill Q (package-private): Data (quest log model, sorting),
 -- Panes (docking beside the map, splitters), List, Details, Options.
