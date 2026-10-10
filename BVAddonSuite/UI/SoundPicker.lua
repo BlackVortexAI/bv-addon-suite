@@ -1,23 +1,35 @@
 local _,ns=...
 local UI,D=ns.UI,ns.DesignSystem.Metrics
-function UI:SoundPicker(owner,config,choose)
-    local w=self:Dialog(nil,560,470,owner);local selected
+-- choose(value, source): value is a SoundKit id or a SharedMedia reference.
+-- opts.sources (Florian 2026-10-10): buttons switch between the game's
+-- sounds and the SharedMedia sounds of other addons; without it the picker
+-- keeps the source of config (AuraStudio's nodes choose it in their own field).
+function UI:SoundPicker(owner,config,choose,opts)
+    -- The source tabs take a row of their own under the title.
+    local top=opts and opts.sources and 40 or 0
+    local w=self:Dialog(nil,560,470+top,owner);local selected
     local options={};local page,query=1,""
-    if config.source=="sharedmedia" then options=ns.Media:SoundOptions()
-    else
-        for name,id in pairs(SOUNDKIT or {}) do
-            if type(name)=="string" and ns.GraphModel.Number(id) and id>0 then options[#options+1]={value=id,label=name:gsub("_"," ").." ["..id.."]"} end
+    local source=config.source=="sharedmedia" and "sharedmedia" or "soundkit"
+    local function load()
+        options={}
+        if source=="sharedmedia" then for _,e in ipairs(ns.Media:SoundOptions()) do options[#options+1]=e end
+        else
+            for name,id in pairs(SOUNDKIT or {}) do
+                if type(name)=="string" and ns.GraphModel.Number(id) and id>0 then options[#options+1]={value=id,label=name:gsub("_"," ").." ["..id.."]"} end
+            end
+            if ns.GraphModel.Number(config.soundKit) then options[#options+1]={value=config.soundKit,label="Current SoundKit ["..config.soundKit.."]"} end
         end
-        options[#options+1]={value=config.soundKit,label="Current SoundKit ["..config.soundKit.."]"}
+        table.sort(options,function(a,b)return a.label:lower()<b.label:lower()end)
     end
-    table.sort(options,function(a,b)return a.label:lower()<b.label:lower()end)
+    load()
     UI:Place(UI:Label(w,"Choose sound",18,"text",true),w,16,14)
-    local hint=UI:Place(UI:Label(w,"Preview a sound before selecting it. Playback uses the node's channel and supported volume.",12,"muted"),w,16,46);D.Size(hint,528,34)
+    local hint=UI:Place(UI:Label(w,"Preview a sound before selecting it. Playback uses the node's channel and supported volume.",12,"muted"),w,16,46+top);D.Size(hint,528,34)
     local rows,filtered={},{}
-    local status=UI:Place(UI:Label(w,"",11,"muted"),w,16,388);D.Size(status,528,24)
+    local status=UI:Place(UI:Label(w,"",11,"muted"),w,16,388+top);D.Size(status,528,24)
     local function candidate(entry)
         local c=ns.GraphModel.Copy(config)
-        if c.source=="sharedmedia" then c.sound=entry.value else c.soundKit=entry.value end
+        c.source=source
+        if source=="sharedmedia" then c.sound=entry.value else c.soundKit=entry.value end
         return c
     end
     local function refresh()
@@ -29,21 +41,35 @@ function UI:SoundPicker(owner,config,choose)
         end
         status:SetText(#filtered.." sounds / page "..page.." of "..math.max(1,math.ceil(#filtered/7)))
     end
-    local search=UI:Place(UI:Input(w,528),w,16,84);search:SetAutoFocus(false)
+    local search=UI:Place(UI:Input(w,528),w,16,84+top);search:SetAutoFocus(false)
     search:SetScript("OnTextChanged",function()query=search:GetText():lower();page=1;refresh()end)
     for i=1,7 do
         local row={};rows[i]=row
-        row.pick=UI:Place(UI:Button(w,"",436,function()selected=row.entry;refresh()end,"nav"),w,16,122+(i-1)*36)
+        row.pick=UI:Place(UI:Button(w,"",436,function()selected=row.entry;refresh()end,"nav"),w,16,122+top+(i-1)*36)
         row.play=UI:Place(UI:Button(w,"Play",80,function()
             if row.entry then local _,message=ns.Sound:Play(w,"preview",candidate(row.entry));status:SetText(message)end
-        end,"ghost"),w,464,122+(i-1)*36)
+        end,"ghost"),w,464,122+top+(i-1)*36)
         D.Height(row.pick,32);D.Height(row.play,32)
     end
-    UI:Place(UI:Button(w,"Previous",88,function()page=page-1;refresh()end,"ghost"),w,16,422)
-    UI:Place(UI:Button(w,"Next",72,function()page=page+1;refresh()end,"ghost"),w,108,422)
-    UI:Place(UI:Button(w,"Stop",72,function()ns.Sound:Release(w)end),w,190,422)
-    UI:Place(UI:Button(w,"Cancel",104,function()w:Hide()end),w,274,422)
-    UI:Place(UI:Button(w,"Select",152,function()if selected then choose(selected.value);w:Hide()end end,true),w,392,422)
+    UI:Place(UI:Button(w,"Previous",88,function()page=page-1;refresh()end,"ghost"),w,16,422+top)
+    UI:Place(UI:Button(w,"Next",72,function()page=page+1;refresh()end,"ghost"),w,108,422+top)
+    UI:Place(UI:Button(w,"Stop",72,function()ns.Sound:Release(w)end),w,190,422+top)
+    UI:Place(UI:Button(w,"Cancel",104,function()w:Hide()end),w,274,422+top)
+    UI:Place(UI:Button(w,"Select",152,function()if selected then choose(selected.value,source);w:Hide()end end,true),w,392,422+top)
     w:HookScript("OnHide",function()ns.Sound:Release(w)end)
+    if opts and opts.sources then
+        -- The SharedMedia count says why a list is empty (no sound packs loaded).
+        local shared=#ns.Media:SoundOptions()
+        w.tabs=UI:Place(UI:Tabs(w,{{id="soundkit",label="Game sounds"},{id="sharedmedia",label="Shared ("..shared..")"}},function(id) w:Source(id) end),w,16,46)
+        w.tabs.bvHeight=30;w.tabs:Arrange(528)
+        w.game,w.shared=w.tabs.buttons.soundkit,w.tabs.buttons.sharedmedia
+        UI:AttachTooltip(w.shared,"Shared sounds","SharedMedia: sounds other addons share through LibSharedMedia (SharedMedia packs, boss mods, WeakAuras packs). None loaded: the list is empty.")
+        function w:Source(value)
+            source=value;selected=nil;page=1;load()
+            self.tabs:SetValue(source)
+            refresh()
+        end
+        w.tabs:SetValue(source)
+    end
     refresh();w:Show();return w
 end

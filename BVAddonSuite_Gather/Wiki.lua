@@ -18,7 +18,7 @@ Gather keeps your **herbs, ore, fishing pools and treasure** on the world map an
 
 **Example:** you farm Silverleaf and Peacebloom in Silverpine. Gather for a while, open the editor, choose Silverpine, leave only those two herbs on, Calculate, Follow route. The minimap now leads you from node to node.
 
-Use the list on the left for every part. Settings are under `/bv gather` in the tabs General, Gather mode, Routes and Recording & sharing.
+Use the list on the left for every part. Settings are under `/bv gather` in the tabs General, Gather mode, Routes, Recording & sharing and Scanner.
 ]]},
 {id="nodes",title="Your nodes on the maps",text=[[
 # Your nodes on the maps
@@ -67,7 +67,7 @@ Its own map window: `/bv gather editor`, the route editor button in the settings
 1. **Zones:** up to four zones of one continent ("Add a zone..."). Zones of another continent are listed after them with the continent's name: choosing one starts over there.
 2. **Herbs and ore:** switch the names on that the route should visit; the number is how many nodes are known, the level in brackets is the skill you need. **All** / **None** switch every name.
 3. **Area:** limits the route to a search area. Click Area, click the corners on the map (a banner and a frame show the mode), click the first corner or Finish. Right-click takes the last corner back.
-4. **Calculate:** a bar shows how far it is. The line under it tells you the stops, the length and the time, and what was left out (no-go areas, enemy bases, not worth the way).
+4. **Calculate:** a bar shows how far it is; while it runs the button reads **Cancel** and stops it (the route you had stays). The line under it tells you the stops, the length and the time, and what was left out (no-go areas, enemy bases, not worth the way).
 5. **Save** with a name, **Saved routes...** to load, **Export** / **Import** to share, **Follow route** to walk it.
 
 **Example:** a route only through the south of Silverpine: Area, five clicks round the south, Finish, Calculate. Nodes outside are faint and stay out of the route.
@@ -161,6 +161,32 @@ The **gather window** (`/bv gather window`): the gather mode switch, the route t
 - **Pause when idle:** after this many minutes without gathering the session pauses, counted up to your last node; the next node resumes it.
 
 **Example:** you stop for ten minutes to talk in town. With "Pause when idle" at 5, the clock stops at your last herb, so gold per hour stays honest.
+]]},
+{id="scanner",title="Minimap scanner",text=[[
+# Minimap scanner
+Warns when a herb or ore of your list shows on the minimap: **Black Lotus**, **Mithril**, whatever you hunt. Settings in the tab **Scanner**.
+
+**How it works:** while the **HUD** is open and the mouse rests on its minimap, the scanner reads the names of the minimap's dots every 2 seconds. **Find Herbs** or **Find Minerals** must be on (the list says "needs Find Herbs" when not). It never scans in combat or while a mouse button is down.
+
+**Status in the HUD**, beside "Close HUD" (a click switches the scanner):
+
+| Text | Meaning |
+|---|---|
+| Scanner off | switched off |
+| Scanner active (green) | reading the minimap |
+| Scanner paused: mouse not on the minimap (red) | move the mouse onto the HUD's minimap |
+| Scanner paused: combat (red) | waits until the fight is over |
+
+| Setting | What it does | Example |
+|---|---|---|
+| Warn for | your list; each entry with its own sound or the default, Test plays it. The sound choice switches between **Game sounds** and **Shared sounds** (SharedMedia sounds of other addons) | Black Lotus with a loud shared alarm, Mageroyal with no sound |
+| On-screen message | a short message besides the sound | "Black Lotus · On the minimap · 140 yd NE" |
+| Default sound, Sound channel | the sound of entries set to Default; Master plays even when sound effects are off | |
+| Warn again after | a node warns once; gone this long (or gathered), it warns again when it shows | 5 min: it grew back or you came back |
+
+**Minimap finds:** a window with the last 20 herbs and ores the scanner saw, newest first, your list's names in the accent colour. Distance and direction follow you as you move. **Click a find:** a purple ring with a line from you to it on the minimap and the map (like the route's green next point); click again to clear. It also ends when you get there or gather it, when the scanner no longer sees it at its place (someone else took it), and when you walk away more than twice the minimap's view radius. The gather window can open the finds and the tracker together with the gather mode.
+
+**Good to know:** distance and direction are estimates (they can be 10 to 20 % off). While the scanner reads, the minimap takes clicks for about two frames every 2 seconds; a click then may ping the minimap instead of reaching the world.
 ]]},
 {id="commands",title="Commands and keys",text=[[
 # Commands and keys

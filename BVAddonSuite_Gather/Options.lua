@@ -9,6 +9,9 @@ function G:Changed()
     if self.Visibility then self.Visibility.state=nil end
     if self.Hud then self.Hud:Apply() end
     if self.Sight then self.Sight:Update() end
+    if self.Scanner then self.Scanner:Update() end
+    if self.Hud.ScanStatus then self.Hud:ScanStatus() end
+    if self.Finds then self.Finds:Refresh() end
     if self.Pins.registered and ns.MapPins and ns.MapPins.providers["gather:minimap"] then
         ns.MapPins.providers["gather:minimap"].edge=self:Config().minimapEdge
     end
@@ -138,6 +141,31 @@ local function build(parent)
     g:Row("Export",UI:Button(g,"Export nodes",190,function() G.Exchange:Open("export") end),{help="All your nodes as text to share."})
     g:Row("Import",UI:Button(g,"Import nodes",190,function() G.Exchange:Open("import") end),{help="Nodes someone shared as text; marked as shared until you find them yourself."})
     g:Row("Forget",UI:Button(g,"Forget shared nodes",190,function() G.Exchange:ForgetShared() end),{help="Removes the nodes you only got from others and never found yourself."})
+    -- Minimap scanner (Florian 2026-10-10): warnings for the herbs and ores
+    -- of a list when they show on the HUD's minimap.
+    g:Section("scanner","Minimap scanner")
+    page.scanInfo=g:Row("How it works",UI:Label(g,"",11,"muted"),{width=420,
+        help="While the HUD is open and the mouse rests on its minimap, the scanner reads the names of the dots every 2 seconds. Find Herbs or Find Minerals must be on; never in combat."})
+    switch("scanner","Scanner","Warns when a herb or ore of the list below shows on the minimap. Also by clicking the status text in the HUD.")
+    switch("scanStage","On-screen message","A short message in the upper middle of the screen (the notification stage) besides the sound.")
+    controls.scanSoundButton=g:Row("Default sound",UI:Button(g,"",190,function()
+        G.WatchList:Choose(page,cfg().scanSound,function(sound) cfg().scanSound=sound;G:Changed();if page then page:Refresh() end;G.Scanner:Play({}) end)
+    end),{help="The sound of every entry set to Default sound. Choose one with a preview."})
+    local channels={}
+    for _,name in ipairs(G.Scanner.CHANNELS) do channels[#channels+1]={value=name,label=name} end
+    row("scanChannel","Sound channel",UI:Dropdown(g,190,channels,set("scanChannel")),"Master plays even when the game's sound effects are low or off.")
+    g:Row("Test",UI:Button(g,"Play the default sound",190,function() G.Scanner:Play({}) end),{help="Plays the default sound on the chosen channel."})
+    slider("scanRepeat","Warn again after",1,60,1,"%d min","A node warns once. Gone from the minimap this long (or gathered), it warns again when it shows: it grew back or you came back.")
+    g:Row("Finds",UI:Button(g,"Open minimap finds",190,function() G.Finds:Show(true) end),
+        {help="A window with the last 20 herbs and ores the scanner saw, newest first; also in the gather mode window."})
+    g:Section("watch","Warn for")
+    local function listChanged()
+        G:Changed()
+        if page then page:Refresh();page:Arrange(page.width or 880) end
+        if ns.Config.window then ns.Config:Layout() end
+    end
+    page.watchList=G.WatchList:Build(g,listChanged)
+    g:Block(page.watchList,60,function(width) return page.watchList:Resize(width) end)
     -- Tabs in the settings window header (Florian 2026-10-09: one long page
     -- was too much): which sections each one shows.
     local TABS={
@@ -145,6 +173,7 @@ local function build(parent)
         {id="mode",label="Gather mode",sections={"mode","hud","sight","tracker"}},
         {id="routes",label="Routes",sections={"route"}},
         {id="record",label="Recording & sharing",sections={"record","share","exchange"}},
+        {id="scanner",label="Scanner",sections={"scanner","watch"}},
     }
     local definitions={}
     for i,tab in ipairs(TABS) do definitions[i]={id=tab.id,label=tab.label,sections=tab.sections} end
@@ -176,6 +205,7 @@ local function build(parent)
             elseif key=="sightColor" then control:SetValue((c.sightColor~="" and c.sightColor or G.Hex({G:Style():Color("accent")})).."FF")
             elseif key:match("Color$") then control:SetValue(G.Hex(G:Color(key:gsub("Color$",""))).."FF")
             elseif key=="forgetGathermate" then
+            elseif key=="scanSoundButton" then control:SetText(G.WatchList.SoundLabel(c.scanSound))
             elseif control.SetValue then control:SetValue(c[key])
             elseif control.SetText and key=="filter" then control:SetText(c.filter) end
         end
@@ -186,6 +216,14 @@ local function build(parent)
         end
         if self.summary.SetText then self.summary:SetText(#parts>0 and table.concat(parts,"  ·  ").." (own finds)" or "None of your own yet.") end
         self.sourceList:Refresh()
+        self.watchList:Refresh()
+        if self.scanInfo.SetText then
+            local hints={}
+            for _,kind in ipairs({"herb","ore"}) do local hint=G.Scanner:Hint(kind);if hint then hints[#hints+1]=hint end end
+            local available=G.Scanner:Available()
+            self.scanInfo:SetText(not available and "This client cannot read the minimap's dots." or
+                ("Works in the HUD while the mouse rests on its minimap."..(#hints==2 and " Find Herbs and Find Minerals are both off now." or "")))
+        end
         g:SetRowEnabled(controls.forgetGathermate,G.Data:SourceCount("gathermate")>0)
         local other=G.Hud:Other()
         if self.hudOther.SetText then self.hudOther:SetText(other and (other.." is loaded: use only one HUD at a time.") or "None.") end
@@ -195,6 +233,11 @@ local function build(parent)
     end
     select("general");page:Refresh()
     return page
+end
+-- The Scanner tab (from the gather mode window).
+function G:OpenScanner()
+    ns.Config:OpenPage("gather")
+    if page and page.navigation then page.navigation.select("scanner") end
 end
 ns.Config:RegisterPage("gather",{title="Gather",description="Herbs, ore, fishing pools and treasure on your maps; GatherMate2 import.",
     category="questmap",module=G.ID,

@@ -3,7 +3,7 @@
 ## Notes: Herbs, ore, fishing pools and treasure on the world map and the minimap; GatherMate2 import. Requires BV Core.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.1.5
+## Version: 0.1.6
 ## Dependencies: BVAddonSuite
 ## OptionalDeps: GatherMate2
 ## SavedVariables: BVGatherDB
@@ -23,10 +23,13 @@ RoutePlan.lua
 Trace.lua
 Follow.lua
 Tracker.lua
+Scanner.lua
 UI\Exchange.lua
 UI\Editor.lua
 UI\Mode.lua
 UI\Tracker.lua
+UI\Finds.lua
+UI\WatchList.lua
 UI\Hud.lua
 UI\Sight.lua
 UI\SourceList.lua

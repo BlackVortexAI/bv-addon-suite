@@ -201,8 +201,9 @@ function E:BuildSide(c)
     -- While calculating: a bar over the status line, filling up.
     self.progress=UI:StatusBar(side,SIDE,4);M.Point(self.progress,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y+40);self.progress:SetValue(0);self.progress:Hide()
     y=y+44
-    self.calculate=UI:Button(side,"Calculate",SIDE,function() E:Calculate() end,true);M.Point(self.calculate,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y);y=y+40
-    UI:AttachTooltip(self.calculate,"Calculate the route","Plans the route through the chosen nodes. Warning: the game's performance drops noticeably for a moment at the start, while the terrain is read; after that it runs smoothly in the background.")
+    -- While it runs the button cancels it (Florian 2026-10-10).
+    self.calculate=UI:Button(side,"Calculate",SIDE,function() if E.job then E:Cancel() else E:Calculate() end end,true);M.Point(self.calculate,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y);y=y+40
+    UI:AttachTooltip(self.calculate,"Calculate the route","Plans the route through the chosen nodes. While it runs, the button cancels it; the route you had stays. Warning: the game's performance drops noticeably for a moment at the start, while the terrain is read; after that it runs smoothly in the background.")
     -- Florian 2026-10-09: warn before the first click, the start lags.
     self.lagNote=UI:Label(side,"Warning: performance drops for a moment when calculating starts.",10,"muted");M.Point(self.lagNote,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y-2);M.Size(self.lagNote,SIDE,14)
     self.lagNote:SetTextColor(1,.78,.2);y=y+14
@@ -521,10 +522,12 @@ function E:Status()
         local p=G.Plan.progress
         self.status:SetText(string.format("Calculating... %d %%  ·  %s",math.floor(p.value*100+.5),p.text or ""))
         if self.progress then self.progress:Show();self.progress:SetValue(p.value) end
+        if self.calculate then self.calculate:SetText("Cancel") end
         self:Warn(nil)
         return
     end
     if self.progress then self.progress:Hide() end
+    if self.calculate then self.calculate:SetText("Calculate") end
     if not r then self.status:SetText("Choose zones and nodes, paint areas if you like, then Calculate.");self:Warn(nil);return end
     local stops=0;for _,point in ipairs(r.points) do if point.stop then stops=stops+1 end end
     local length=r.length or 0
@@ -1825,6 +1828,16 @@ function E:Calculate()
         E:Status();E:Layout()
     end)
     self:Status()
+end
+-- Stops the calculation; the route calculated before stays.
+function E:Cancel()
+    if not self.job then return false end
+    self.job:Cancel();self.job=nil
+    if self.progressTicker then self.progressTicker:Cancel();self.progressTicker=nil end
+    G.Plan.Report(0,"")
+    G:Print("Calculation cancelled.")
+    self:Status()
+    return true
 end
 function E:Save()
     if not self.route then G:Print("Calculate a route first.");return end

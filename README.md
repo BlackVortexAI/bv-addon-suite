@@ -8,7 +8,7 @@ This development version is undergoing in-game acceptance testing.
 
 | Folder | Version |
 | --- | --- |
-| `BVAddonSuite` | 0.8.98 |
+| `BVAddonSuite` | 0.8.99 |
 | `BVAddonSuite_AuraStudio` | 0.8.91 |
 | `BVAddonSuite_Experience` | 0.8.91 |
 | `BVAddonSuite_Reputation` | 0.8.89 |
@@ -18,7 +18,7 @@ This development version is undergoing in-game acceptance testing.
 | `BVAddonSuite_CombatText` | 0.7.6 |
 | `BVAddonSuite_Quest` | 0.1.1 |
 | `BVAddonSuite_Map` | 0.2.3 |
-| `BVAddonSuite_Gather` | 0.1.5 |
+| `BVAddonSuite_Gather` | 0.1.6 |
 | `BVAddonSuite_GatherData` | 0.1.0 |
 
 ## Installation

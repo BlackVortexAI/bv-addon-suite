@@ -24,6 +24,13 @@ function H:Frame()
         f.close:SetFrameStrata("HIGH");f.close:SetAlpha(.45);f.close:Hide()
         f.close:HookScript("OnEnter",function(self) self:SetAlpha(1) end)
         f.close:HookScript("OnLeave",function(self) self:SetAlpha(.45) end)
+        -- The minimap scanner's state beside it (Florian 2026-10-10): off,
+        -- active (green), or why it waits (red); a click switches it.
+        f.scan=CreateFrame("Button",nil,UIParent);f.scan:SetFrameStrata("HIGH");f.scan:SetSize(320,22);f.scan:Hide()
+        f.scan.text=ns.UI:Label(f.scan,"",12,"text",true);f.scan.text:SetAllPoints(f.scan);f.scan.text:SetJustifyH("LEFT")
+        if f.scan.text.SetShadowOffset then f.scan.text:SetShadowOffset(1,-1);f.scan.text:SetShadowColor(0,0,0,1) end
+        f.scan:SetScript("OnClick",function() local c=G:Config();c.scanner=not c.scanner;G:Changed();if ns.Config then ns.Config:Refresh() end end)
+        ns.UI:AttachTooltip(f.scan,"Minimap scanner","Click: on or off. Warns when a herb or ore of your list (Gather settings, Scanner tab) shows on this minimap; it reads the minimap only while the mouse rests on it.")
         -- Compass letters at the edge (north a little red).
         f.compass={}
         for _,d in ipairs({{"N",0,1},{"E",1,0},{"S",0,-1},{"W",-1,0}}) do
@@ -49,6 +56,9 @@ function H:Place()
     local close=self.frame.close
     -- Fixed at the top of the screen (under the HUD it hid behind the bars).
     close:ClearAllPoints();close:SetPoint("TOP",UIParent,"TOP",0,-90);close:Show()
+    local scan=self.frame.scan
+    scan:ClearAllPoints();scan:SetPoint("LEFT",close,"RIGHT",12,0);scan:Show()
+    self:ScanStatus()
     self.placing=nil
 end
 function H:Hook(minimap)
@@ -114,6 +124,7 @@ function H:Show()
     self:Compass()
     if ns.MapPins then ns.MapPins:Refresh() end
     if G.Mode then G.Mode:Refresh() end
+    if G.Scanner then G.Scanner:Update() end
     return true
 end
 function H:Hide()
@@ -141,12 +152,22 @@ function H:Hide()
     self:Compass()
     -- The pin layer back on the minimap, after its strata and level are back.
     if ns.MapPins and ns.MapPins.SetMinimapHost then ns.MapPins:SetMinimapHost(nil) end
-    if self.frame then self.frame:Hide();self.frame.close:Hide() end
+    if self.frame then self.frame:Hide();self.frame.close:Hide();self.frame.scan:Hide() end
+    if G.Scanner then G.Scanner:Update() end
     if ns.MapPins then ns.MapPins:Refresh() end
     if G.Mode then G.Mode:Refresh() end
     return true
 end
 function H:Toggle() if self:On() then self:Hide() else self:Show() end end
+local SCAN={off={"Scanner off",{.62,.62,.62}},active={"Scanner active",{.37,.85,.42}},
+    mouse={"Scanner paused: mouse not on the minimap",{1,.38,.32}},combat={"Scanner paused: combat",{1,.38,.32}},
+    missing={"Scanner unavailable on this client",{1,.38,.32}}}
+function H:ScanStatus()
+    local scan=self.frame and self.frame.scan
+    if not (scan and self.saved) then return end
+    local state=SCAN[G.Scanner and G.Scanner.status or "off"] or SCAN.off
+    scan.text:SetText(state[1]);scan.text:SetTextColor(state[2][1],state[2][2],state[2][3],1)
+end
 -- Turning as chosen; your own setting comes back on close.
 function H:Turn()
     local saved=self.saved

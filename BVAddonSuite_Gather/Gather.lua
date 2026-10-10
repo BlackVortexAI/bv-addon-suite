@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.1.5","0.8.96",1) then return end
+if not ns:RequireCore(package,"0.1.6","0.8.96",1) then return end
 -- Gather package (docs/map-gather-plan.md phase 3/4, own package by
 -- Florian's choice): herbs, ore, fishing pools and treasure you gather are
 -- recorded where you stood and shown on the world map and the minimap
@@ -115,6 +115,12 @@ G.DEFAULTS={enabled=false,
     -- Live sharing: send your new nodes ("off", "group", "guild", "both"),
     -- receive those of your group and guild.
     shareSend="off",shareReceive=true,
+    -- Minimap scanner (Florian 2026-10-10): on, the list of herbs and ores
+    -- with their sounds, the on-screen message, the default sound and its
+    -- channel, minutes a node must be gone before it warns again.
+    scanner=false,scanWatch={},scanStage=true,scanSound={source="soundkit",soundKit=8959},scanChannel="Master",scanRepeat=5,
+    -- Windows opened and closed with the gather mode; the finds window.
+    modeTracker=false,modeFinds=false,findsWindow=false,
     -- Pin colours per kind (hex RRGGBB); empty = the kind's own colour.
     herbColor="",oreColor="",fishColor="",treasureColor="",
     size=14,styleFamily="inherit"}
@@ -125,7 +131,7 @@ end
 function G:Config()
     local cfg=ns.Settings:Module(self.ID)
     for key,value in pairs(self.DEFAULTS) do if cfg[key]==nil then cfg[key]=value end end
-    for _,key in ipairs({"world","minimap","minimapEdge","herb","ore","fish","treasure","record","forceRecord","forceShow","shareReceive","routeUnderground","loop","editorTerrain","editorNames","routeTerrain","avoidWater","editorRelief","ownFlights","routeSmooth","preferRoads","recordWays","preferWalked","editorHeat","mode","modeWindow","routeLines","trackAllLoot","trackerWindow","hudRotate","knownSpawns","routeKnown","sightCircle","hudCompass","ownFinds"}) do cfg[key]=cfg[key]==true end
+    for _,key in ipairs({"world","minimap","minimapEdge","herb","ore","fish","treasure","record","forceRecord","forceShow","shareReceive","routeUnderground","loop","editorTerrain","editorNames","routeTerrain","avoidWater","editorRelief","ownFlights","routeSmooth","preferRoads","recordWays","preferWalked","editorHeat","mode","modeWindow","routeLines","trackAllLoot","trackerWindow","hudRotate","knownSpawns","routeKnown","sightCircle","hudCompass","ownFinds","scanner","scanStage","modeTracker","modeFinds","findsWindow"}) do cfg[key]=cfg[key]==true end
     cfg.passRadius=num(cfg.passRadius,45,10,80)
     cfg.hudSize=num(cfg.hudSize,80,40,100);cfg.hudAlpha=num(cfg.hudAlpha,55,10,100)
     cfg.sightRadius=num(cfg.sightRadius,150,40,230);cfg.sightAlpha=num(cfg.sightAlpha,55,5,100);cfg.sightWidth=num(cfg.sightWidth,3,1,16)
@@ -144,6 +150,29 @@ function G:Config()
     if not ({auto=true,tsm=true,auctionator=true,vendor=true})[cfg.priceSource] then cfg.priceSource="auto" end
     if not ({keep=true,square=true,round=true})[cfg.hudShape] then cfg.hudShape="keep" end
     if type(cfg.sourceOff)~="table" then cfg.sourceOff={} end
+    cfg.scanRepeat=num(cfg.scanRepeat,5,1,60)
+    if not ns.Sound.channels[cfg.scanChannel] then cfg.scanChannel="Master" end
+    local function sound(value)
+        if type(value)~="table" then return nil end
+        if value.source=="soundkit" and type(value.soundKit)=="number" and value.soundKit>0 then return {source="soundkit",soundKit=math.floor(value.soundKit)} end
+        if value.source=="sharedmedia" and type(value.sound)=="string" and value.sound~="" then return {source="sharedmedia",sound=value.sound} end
+    end
+    cfg.scanSound=sound(cfg.scanSound) or {source="soundkit",soundKit=8959}
+    -- In place: rows of the settings hold these entries and change their sound.
+    if type(cfg.scanWatch)~="table" then cfg.scanWatch={} end
+    local seen={}
+    for i=#cfg.scanWatch,1,-1 do
+        local entry=cfg.scanWatch[i]
+        if type(entry)~="table" or type(entry.name)~="string" or entry.name=="" then table.remove(cfg.scanWatch,i)
+        else
+            if entry.sound~=false then entry.sound=sound(entry.sound) end
+            seen[entry.name]=(seen[entry.name] or 0)+1
+        end
+    end
+    for i=#cfg.scanWatch,1,-1 do
+        local name=cfg.scanWatch[i].name
+        if seen[name]>1 then seen[name]=seen[name]-1;table.remove(cfg.scanWatch,i) end
+    end
     for _,t in ipairs(G.TYPES) do
         local key,ok=t.id.."When",false
         for _,value in ipairs(G.Visibility and G.Visibility.CHOICES[t.id] or {"always"}) do if cfg[key]==value then ok=true end end
@@ -206,4 +235,6 @@ ns.Modules:Register({id=G.ID,OnEnable=function(context)
     G.Hud:Enable(context)
     G.Visibility:Enable(context)
     G.Sight:Enable(context)
+    G.Scanner:Enable(context)
+    G.Finds:Enable(context)
 end})

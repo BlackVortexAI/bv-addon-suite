@@ -10,12 +10,16 @@ local UI,M=ns.UI,ns.DesignSystem.Metrics
 local H={}
 G.Mode=H
 local WIDTH=270
-local HEIGHT=410
+local HEIGHT=466
 
 function H:On() return G:Active() and G:Config().mode==true end
 function H:Set(on)
-    G:Config().mode=on and true or false
+    local c=G:Config()
+    c.mode=on and true or false
     if not on and G.Hud then G.Hud:Hide() end
+    -- Windows that come and go with the mode (Florian 2026-10-10).
+    if c.modeTracker then G.TrackerWindow:Show(on and true or false) end
+    if c.modeFinds then G.Finds:Show(on and true or false) end
     if on and G.Follow:Active() then G.Follow:Watch(true) else G.Follow:Watch(false) end
     if G.Sight then G.Sight:Update() end
     G:Changed()
@@ -69,8 +73,20 @@ function H:Build()
             "The route's lines and arrows; off: only its points.")
         self.hud=row("HUD",UI:Switch(c,false,function(value) if value then G.Hud:Show() else G.Hud:Hide() end;H:Refresh() end),
             "The minimap large and see-through in the middle of the screen, with the yellow dots of Find Herbs and Find Minerals; the mouse passes through.")
+        local function coupled(key,window)
+            return function(value)
+                G:Config()[key]=value
+                if H:On() then window:Show(value) end
+                H:Refresh()
+            end
+        end
+        self.trackerWindow=row("Tracker window",UI:Switch(c,false,coupled("modeTracker",G.TrackerWindow)),
+            "The tracker's window opens with the gather mode and closes with it.")
+        self.findsWindow=row("Minimap finds",UI:Switch(c,false,coupled("modeFinds",G.Finds)),
+            "The window of the herbs and ores the scanner saw opens with the gather mode and closes with it (the scanner works in the HUD).")
         self.editor=UI:Button(c,"Route editor",(WIDTH-30)/2,function() G.Editor:Toggle() end,"ghost");M.Point(self.editor,"TOPLEFT",c,"TOPLEFT",12,y)
-        self.tracker=UI:Button(c,"Tracker",(WIDTH-30)/2,function() G.TrackerWindow:Show() end,"ghost");M.Point(self.tracker,"TOPRIGHT",c,"TOPRIGHT",-12,y)
+        self.scanner=UI:Button(c,"Scanner",(WIDTH-30)/2,function() G:OpenScanner() end,"ghost");M.Point(self.scanner,"TOPRIGHT",c,"TOPRIGHT",-12,y)
+        UI:AttachTooltip(self.scanner,"Scanner","The minimap scanner's settings: which herbs and ores warn, and their sounds.")
         w.drag:HookScript("OnDragStop",function() UI:SaveWindowPosition(w) end)
         w:HookScript("OnShow",function() H:Refresh() end)
         -- Closed with its X it stays closed after a reload (like the tracker).
@@ -106,6 +122,8 @@ function H:Refresh()
     self.mode:SetValue(c.mode)
     self.lines:SetValue(c.routeLines)
     self.hud:SetValue(G.Hud:On())
+    self.trackerWindow:SetValue(c.modeTracker)
+    self.findsWindow:SetValue(c.modeFinds)
     for id,box in pairs(self.kinds) do box.switch:SetValue(c[id]) end
     local state=G.Follow:State()
     if state then
@@ -123,6 +141,7 @@ if ns.Launcher and ns.Launcher.AddEntry then
     ns.Launcher:AddEntry({id="gatherwindow",label="Gather window",order=31,shown=function() return G:Active() end,onClick=function() H:Show() end})
     ns.Launcher:AddEntry({id="routeeditor",label="Route editor",order=32,shown=function() return G:Active() end,onClick=function() G.Editor:Toggle() end})
     ns.Launcher:AddEntry({id="gathertracker",label="Gather tracker",order=33,shown=function() return G:Active() end,onClick=function() G.TrackerWindow:Show() end})
+    ns.Launcher:AddEntry({id="gatherfinds",label="Minimap finds",order=33.5,shown=function() return G:Active() end,onClick=function() G.Finds:Show() end})
     ns.Launcher:AddEntry({id="gatherwiki",label="Gather wiki",order=35,shown=function() return G:Active() end,onClick=function() G.Wiki:Open() end})
     ns.Launcher:AddEntry({id="gatherhud",label="Gather HUD",order=34,shown=function() return G:Active() end,state=function() return G.Hud:On() end,onClick=function() G.Hud:Toggle() end})
 end

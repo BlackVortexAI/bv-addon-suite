@@ -67,6 +67,7 @@ function R:Succeeded(unit,castGUID)
     local node,new=G.Data:Add(pending.kind,pending.mapID,pending.x,pending.y,pending.name,{under=pending.under,place=pending.place})
     if node then G.Pins:Refresh() end
     if node and new and G.Share then G.Share:Recorded(pending.kind,pending.mapID,node) end
+    if G.Scanner then G.Scanner:Gathered(pending.name,pending.mapID,pending.x,pending.y) end
     return node,new
 end
 function R:Stopped(unit) if unit=="player" then self.pending=nil end end
