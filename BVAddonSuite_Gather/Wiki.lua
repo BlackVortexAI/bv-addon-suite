@@ -64,7 +64,7 @@ In **Sources** (General tab) each source has a check, its name and its number of
 # Route editor
 Its own map window: `/bv gather editor`, the route editor button in the settings or the gather window.
 
-1. **Zones:** up to four zones of one continent ("Add a zone...").
+1. **Zones:** up to four zones of one continent ("Add a zone..."). Zones of another continent are listed after them with the continent's name: choosing one starts over there.
 2. **Herbs and ore:** switch the names on that the route should visit; the number is how many nodes are known, the level in brackets is the skill you need. **All** / **None** switch every name.
 3. **Area:** limits the route to a search area. Click Area, click the corners on the map (a banner and a frame show the mode), click the first corner or Finish. Right-click takes the last corner back.
 4. **Calculate:** a bar shows how far it is. The line under it tells you the stops, the length and the time, and what was left out (no-go areas, enemy bases, not worth the way).

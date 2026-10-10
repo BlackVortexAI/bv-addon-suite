@@ -35,6 +35,10 @@ function W:Build()
         w.drag:HookScript("OnDragStop",function() UI:SaveWindowPosition(w) end)
         w:HookScript("OnShow",function() W:Refresh();W:Watch(true) end)
         w:HookScript("OnHide",function() W:Watch(false) end)
+        -- Closed with its X it stays closed after a reload (Florian 2026-10-10:
+        -- only Show(false) remembered it). Not OnHide: hiding the interface
+        -- (Alt+Z) or switching the module off hides it too.
+        if w.close then w.close:HookScript("OnClick",function() G:Config().trackerWindow=false end) end
         if not UI:RestoreWindowPosition(w) then w:ClearAllPoints();w:SetPoint("RIGHT",UIParent,"RIGHT",-120,-260) end
         w:Hide()
     end)

@@ -73,6 +73,8 @@ function H:Build()
         self.tracker=UI:Button(c,"Tracker",(WIDTH-30)/2,function() G.TrackerWindow:Show() end,"ghost");M.Point(self.tracker,"TOPRIGHT",c,"TOPRIGHT",-12,y)
         w.drag:HookScript("OnDragStop",function() UI:SaveWindowPosition(w) end)
         w:HookScript("OnShow",function() H:Refresh() end)
+        -- Closed with its X it stays closed after a reload (like the tracker).
+        if w.close then w.close:HookScript("OnClick",function() G:Config().modeWindow=false end) end
         if not UI:RestoreWindowPosition(w) then w:ClearAllPoints();w:SetPoint("RIGHT",UIParent,"RIGHT",-120,60) end
         w:Hide()
     end)

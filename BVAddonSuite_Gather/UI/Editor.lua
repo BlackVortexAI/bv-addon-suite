@@ -338,22 +338,37 @@ function E:ZoneName(mapID)
     return type(info)=="table" and info.name or ("Map "..tostring(mapID))
 end
 -- Zones that can join: those of the continent of the first zone (or any
--- zone with nodes when none is chosen yet).
+-- zone with nodes when none is chosen yet). Zones of another continent
+-- follow, named with their continent: choosing one starts over there
+-- (Florian 2026-10-10: after loading a Kalimdor route the editor kept to
+-- Kalimdor while he stood in the Eastern Kingdoms).
 function E:ZoneOptions()
-    local seen,out={},{}
+    local pins=ns.MapPins
+    local seen,out,other={},{},{}
     local function add(mapID)
         if type(mapID)~="number" or seen[mapID] then return end
         seen[mapID]=true
         for _,zone in ipairs(self.zones) do if zone==mapID then return end end
-        if #self.zones>0 and not self:SameContinent(mapID) then return end
-        out[#out+1]={value=mapID,label=self:ZoneName(mapID)}
+        if #self.zones>0 and not self:SameContinent(mapID) then
+            local continent=pins and pins:Continent(mapID)
+            if continent then other[#other+1]={value=mapID,label=self:ZoneName(mapID).." ("..self:ZoneName(continent)..")"} end
+            return
+        end
+        if #self.zones<MAXZONES then out[#out+1]={value=mapID,label=self:ZoneName(mapID)} end
     end
-    local continent=self.zones[1] and ns.MapPins and ns.MapPins:Continent(self.zones[1])
-    local children=continent and G.Call("C_Map.GetMapChildrenInfo",continent,3,true)
-    if type(children)=="table" then for _,child in ipairs(children) do if type(child)=="table" then add(child.mapID) end end end
+    local function zonesOf(continent)
+        local children=continent and G.Call("C_Map.GetMapChildrenInfo",continent,3,true)
+        if type(children)=="table" then for _,child in ipairs(children) do if type(child)=="table" then add(child.mapID) end end end
+    end
+    zonesOf(self.zones[1] and pins and pins:Continent(self.zones[1]))
     for _,t in ipairs(G.TYPES) do for mapID in pairs(G.Data:Maps(t.id)) do add(mapID) end end
-    add((G.Record:Position()))
-    table.sort(out,function(a,b) return a.label<b.label end)
+    -- Where you are, and the other zones of your continent.
+    local here=G.Record:Position()
+    add(here)
+    zonesOf(here and pins and pins:Continent(here))
+    local function byLabel(a,b) return a.label<b.label end
+    table.sort(out,byLabel);table.sort(other,byLabel)
+    for _,option in ipairs(other) do out[#out+1]=option end
     if #out==0 then out[1]={value=0,label="No other zone of this continent"} end
     return out
 end
@@ -363,9 +378,16 @@ function E:SameContinent(mapID)
     return continent~=nil and pins:Continent(mapID)==continent
 end
 function E:AddZone(mapID)
-    if type(mapID)~="number" or mapID==0 or #self.zones>=MAXZONES then return end
+    if type(mapID)~="number" or mapID==0 then return end
     for _,zone in ipairs(self.zones) do if zone==mapID then return end end
-    if #self.zones>0 and not self:SameContinent(mapID) then G:Print("Zones of one route lie on one continent.");return end
+    -- Zones of one route lie on one continent: another one starts over
+    -- there, without the loaded route (Delete would still name it).
+    if #self.zones>0 and not self:SameContinent(mapID) then
+        self.current=nil;self.saved:SetLabelText("Saved routes...")
+        self:SetZones({mapID})
+        return
+    end
+    if #self.zones>=MAXZONES then return end
     local zones={unpack(self.zones)};zones[#zones+1]=mapID
     self:SetZones(zones)
 end
