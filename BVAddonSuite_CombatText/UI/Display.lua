@@ -16,6 +16,11 @@ local ANCHORS={
     {key="outgoing",layout="bv:combattext_outgoing",label="Combat Text: Outgoing",x=260,y=60},
     {key="incoming",layout="bv:combattext_incoming",label="Combat Text: Incoming",x=-260,y=60},
     {key="notice",layout="bv:combattext_notice",label="Combat Text: Notifications",x=0,y=200},
+    -- Three more places to choose (0.7.7, Florian 2026-10-13); no category
+    -- uses them by default.
+    {key="highlights",layout="bv:combattext_highlights",label="Combat Text: Highlights",x=0,y=280},
+    {key="auras",layout="bv:combattext_auras",label="Combat Text: Auras",x=-260,y=180},
+    {key="custom",layout="bv:combattext_custom",label="Combat Text: Custom",x=260,y=180},
 }
 local LANES={0,-36,36,-18,18}
 for _,def in ipairs(ANCHORS) do
@@ -47,8 +52,13 @@ for _,def in ipairs(ANCHORS) do
 end
 
 -- Text frames -------------------------------------------------------------------------
-local function fontPath(cfg)
-    -- "inherit": the style family's font (WoW, Clean), else the suite font (BV).
+local function fontPath(cfg,style)
+    -- The category's own font (0.7.7), else Combat Text's: "inherit" is the
+    -- style family's font (WoW, Clean), else the suite font (BV).
+    if style and style.font and style.font~="inherit" and ns.Media then
+        local ok,path=pcall(ns.Media.Font,ns.Media,style.font)
+        if ok and path then return path end
+    end
     if cfg.font=="inherit" then
         local path=ns.Styles:FontPath((ns.Styles:Family(L.ID)),"bold")
         if path then return path end
@@ -137,15 +147,24 @@ function Display:Show(entry,override)
     if not override and style.stagger then return self:Stagger(entry,style) end
     return self:Place(entry,override)
 end
--- Staggered output (0.7.1): per category and place (anchor, or the unit at
--- its nameplate) one text every staggerDelay ms; each takes the lowest line
--- not held by a text still on screen, staggerSpacing px apart against the
--- animation's direction (below for texts that rise). A flood of more than
--- STAGGER_MAX waiting texts is shown without further delay.
+-- Staggered output (0.7.1): per place (anchor, or the unit at its nameplate)
+-- one text every staggerDelay ms; each takes the lowest line not held by a
+-- text still on screen, staggerSpacing px apart against the animation's
+-- direction (below for texts that rise). A flood of more than STAGGER_MAX
+-- waiting texts is shown without further delay. Since 0.7.7 the place alone
+-- counts, not the category: a buff and a killing blow at the same anchor
+-- take turns instead of covering each other (a CurseForge wish 2026-10-12).
 Display.STAGGER_MAX,Display.STAGGER_LINES=12,8
 Display.QUEUED={queued=true}
+-- Where a text will be shown, as Place decides it: an anchor or "plate:unit".
+function Display:PlaceKey(entry,style)
+    local anchor=style.anchor
+    if anchor~="nameplate" and anchor~="auto" then return anchor end
+    if entry.unit and entry.unit~="player" and self:Plate(entry.unit) then return "plate:"..entry.unit end
+    return anchor=="auto" and entry.incoming and "incoming" or "outgoing"
+end
 function Display:Stagger(entry,style)
-    local key=entry.category..":"..tostring((style.anchor=="nameplate" or style.anchor=="auto") and entry.unit or style.anchor)
+    local key=self:PlaceKey(entry,style)
     local q=self.queues[key]
     if not q then q={next=0,pending=0,lines={}};self.queues[key]=q end
     local now=GetTime()
@@ -187,7 +206,7 @@ function Display:Place(entry,override)
     item.live=true;item.serial=item.serial+1
     local frame,text=item.frame,item.text
     local size=style.size*(entry.crit and style.crit or 1)
-    text:SetFont(fontPath(cfg),size,cfg.outline)
+    text:SetFont(fontPath(cfg,style),size,cfg.outline)
     local r,g,b,a=L.Format.Color(style.color)
     if style.school and entry.r then r,g,b=entry.r,entry.g,entry.b end
     -- Values on enemies not fighting you: own color (optional) and transparency.

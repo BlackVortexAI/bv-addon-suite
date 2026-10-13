@@ -42,7 +42,7 @@ end
 local MESSAGES={
     {.1,"notice","+Combat","combat start"},{.9,"buff","+Power Word: Fortitude","gain"},{1.3,"power","+250 Mana","power"},
     {1.6,"debuff","+Curse of Weakness","gain"},{2.2,"notice","Overpower!","proc"},{2.6,"buff","-Power Word: Fortitude","fade"},
-    {2.9,"notice","Stormwind +25","reputation"},{3.2,"notice","-Combat","combat end"},
+    {2.9,"notice","Stormwind +25","reputation"},{3,"kill","Killing Blow!","killing blow"},{3.2,"notice","-Combat","combat end"},
 }
 local runMessages=Sim.Run
 function Sim:Run()
@@ -77,7 +77,9 @@ local EASES={{value="NONE",label="Linear"},{value="IN",label="Ease in (slow star
 local EASES_Y={{value="SAME",label="Same as easing"}}
 for _,option in ipairs(EASES) do EASES_Y[#EASES_Y+1]=option end
 local POSITIONS={{value="nameplate",label="At the nameplate"},{value="outgoing",label="Outgoing anchor"},
-    {value="incoming",label="Incoming anchor"},{value="notice",label="Notification anchor"},{value="auto",label="Where it happened"}}
+    {value="incoming",label="Incoming anchor"},{value="notice",label="Notification anchor"},
+    {value="highlights",label="Highlights anchor"},{value="auras",label="Auras anchor"},{value="custom",label="Custom anchor"},
+    {value="auto",label="Where it happened"}}
 local PETS={{value="mine",label="As mine"},{value="dimmed",label="Dimmed"},{value="hidden",label="Hidden"}}
 local SCOPES={{value="mine",label="Only mine"},{value="dimmed",label="Mine, others dimmed"},{value="all",label="All, full color"}}
 local SCOPE_TEXT={world={"Open world","Outside instances."},pvp={"Battlegrounds & arenas","Against players."},
@@ -96,6 +98,7 @@ local CATEGORY_TEXT={
     buffgiven={"Buffs you give","Your buffs on your friendly target, at its nameplate (or your outgoing anchor). Shown when the buff landed: out of combat Combat Text checks the target's buffs. In combat buffs cannot be read; there only spells already seen landing as a buff are shown. Off by default."},
     power={"Power gains","Mana, rage, energy and other power you gain from spells and effects, e.g. +250 Mana."},
     notice={"Notifications","Combat start and end, reputation, honor and procs such as Overpower!"},
+    kill={"Killing blows","Killing Blow! when your own hit kills an enemy. Your pet's kills do not count."},
 }
 local SWITCH_TEXT={
     gains={"Show gained","Shows the aura when you get it."},
@@ -104,8 +107,14 @@ local SWITCH_TEXT={
     reputation={"Reputation","Faction name and the reputation you gained or lost."},
     honor={"Honor","Honor you gain."},
     procs={"Procs","Abilities that become usable, e.g. Overpower! or Revenge!"},
-    kills={"Killing blows","Killing Blow! when your own hit kills an enemy. Your pet's kills do not count."},
 }
+-- Fonts (0.7.7): the suite's and SharedMedia's; the first row inherits.
+local function fonts(inheritLabel)
+    local options=ns.Media:FontOptions(true)
+    options[1].label=inheritLabel
+    return options
+end
+local MODULE_FONT,CATEGORY_FONT="Style family font","Same as Combat Text"
 local page
 local function build(parent)
     page=UI:Panel(parent,880,600,"surface");UI:HideSurface(page)
@@ -136,8 +145,11 @@ local function build(parent)
     row("styleFamily","Style family",UI:Dropdown(g,190,ns.Styles:Choices(true),function(value) cfg().styleFamily=value;ns.Styles:Changed() end),
         "The suite's in-game style or an own one: font of the combat texts (WoW, Clean) and the status display's border. BV uses the suite font.")
     controls.styleFamily:SetOptionsProvider(function() return ns.Styles:Choices(true) end)
+    row("font","Font",UI:Dropdown(g,190,fonts(MODULE_FONT),set("font")),
+        "Font of all combat texts; the menus keep the suite font. \"Style family font\": the one of the style family above. A category can pick its own below.")
+    controls.font:SetOptionsProvider(function() return fonts(MODULE_FONT) end)
     g:Row("Position",UI:Button(g,"Open Layout Editor",170,function() ns.LayoutEditor:Open("bv:combattext_outgoing") end),
-        {help="Outgoing, incoming and notification anchors are movable elements. Texts start in the middle of the anchor."})
+        {help="All six anchors are movable elements: outgoing, incoming, notifications and the free ones highlights, auras and custom, which no category uses until you pick them under Position. Texts start in the middle of the anchor."})
     if ns.Tutorial and ns.Tutorial.Open then
         g:Row("Guide",UI:Button(g,"Show guide",170,function() ns.Tutorial:Open(L.GUIDE_ID) end),
             {help="Step by step: what Combat Text needs (Combat Log, its filter) and what the main settings do. Shown once when the module is first turned on."})
@@ -279,9 +291,11 @@ local function build(parent)
         end
         g:Section("cat_"..name,text[1])
         srow("enabled","Show",UI:Switch(g,true,sset("enabled")),text[2])
-        srow("anchor","Position",UI:Dropdown(g,190,POSITIONS,sset("anchor")),"Nameplate, one of the two anchors, or where it happened (enemy nameplate or incoming anchor).")
+        srow("anchor","Position",UI:Dropdown(g,190,POSITIONS,sset("anchor")),"Nameplate, one of the six anchors (move them in the Layout Editor), or where it happened (enemy nameplate or incoming anchor).")
         srow("animation","Animation",UI:Dropdown(g,190,ANIMATIONS,sset("animation")),"Movement of the text: a preset or one of your custom animations. Crits start with an extra pop.")
         srow("mirror","Direction",UI:Dropdown(g,190,MIRRORS,sset("mirror")),"Flips the animation, e.g. a scroll up becomes a scroll down, a fountain to the right goes left.")
+        srow("font","Font",UI:Dropdown(g,190,fonts(CATEGORY_FONT),sset("font")),"Own font for this category, or the one set for all of Combat Text (General tab).")
+        list.font:SetOptionsProvider(function() return fonts(CATEGORY_FONT) end)
         srow("size","Font size",UI:InlineSlider(g,190,8,64,1,"%d",sset("size")),"Size of normal hits.")
         if L.CRIT_CATEGORIES[name] then srow("crit","Crit size",UI:InlineSlider(g,190,1,3,.1,"x%.1f",sset("crit")),"Crits are this much larger.") end
         srow("color","Color",UI:ColorInput(g,150,sset("color")),"Text color.",{width=150})
@@ -315,7 +329,7 @@ local function build(parent)
     local TABS={
         {id="general",label="General",sections={"module","scope","combatlog","schools"}},
         {id="categories",label="Combat",sections={"cat_outgoing","cat_incoming","cat_heal","cat_outheal","cat_miss"}},
-        {id="messages",label="Auras & messages",sections={"cat_buff","cat_debuff","cat_buffgiven","cat_power","cat_notice"}},
+        {id="messages",label="Auras & messages",sections={"cat_buff","cat_debuff","cat_buffgiven","cat_power","cat_notice","cat_kill"}},
         {id="animations",label="Animations",sections={"custom"}},
         {id="experimental",label="Experimental",sections={"icons"}},
     }

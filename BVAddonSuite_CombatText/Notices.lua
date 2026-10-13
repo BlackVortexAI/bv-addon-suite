@@ -91,14 +91,15 @@ function N:Update(messageType)
     return self:Show(category,core,kind)
 end
 -- Your killing blow (0.7.2): PARTY_KILL names the attacker, readable for you
--- (signal probe 2026-10-07: 3 of 3). Your pet's kills do not count.
+-- (signal probe 2026-10-07: 3 of 3). Your pet's kills do not count. Own
+-- category "kill" since 0.7.7.
 function N:Kill(attacker)
-    if not L:Config().categories.notice.kills then return nil end
+    if not L:Config().categories.kill.enabled then return nil end
     if not readable(attacker) then L.Sources.Count("kill: attacker secret");return nil end
     local ok,me=pcall(UnitGUID,"player")
     if not ok or not readable(me) or attacker~=me then return nil end
     local text=type(KILLING_BLOW)=="string" and KILLING_BLOW or "Killing Blow"
-    return self:Show("notice",join(text,"!"),"killing blow")
+    return self:Show("kill",join(text,"!"),"killing blow")
 end
 -- Combat start and end (Blizzard: ENTERING_COMBAT / LEAVING_COMBAT texts).
 function N:Combat(entering)

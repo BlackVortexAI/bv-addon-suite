@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.7.6","0.8.95",1) then return end
+if not ns:RequireCore(package,"0.7.7","0.8.95",1) then return end
 -- Combat text module. Everything specific to it lives in this package, never
 -- in Core, so Core stays free for fixes.
 L.ns=ns
@@ -27,9 +27,11 @@ function L.Secret(v)
 end
 
 -- Categories: where a number comes from and how it looks. Anchors: "outgoing",
--- "incoming" (movable in the Layout Editor) or "nameplate" (falls back to
--- outgoing without a plate). Animations: see UI/Animation.lua.
-L.CATEGORY_ORDER={"outgoing","incoming","heal","outheal","miss","buff","debuff","buffgiven","power","notice"}
+-- "incoming", "notice" and since 0.7.7 "highlights", "auras", "custom"
+-- (movable in the Layout Editor), "nameplate" (falls back to outgoing without
+-- a plate) or "auto". Animations: see UI/Animation.lua.
+L.PLACES={outgoing=true,incoming=true,notice=true,highlights=true,auras=true,custom=true,nameplate=true,auto=true}
+L.CATEGORY_ORDER={"outgoing","incoming","heal","outheal","miss","buff","debuff","buffgiven","power","notice","kill"}
 L.CATEGORY_DEFAULTS={
     outgoing={anchor="nameplate",animation="fountain",size=20,color="FFFFFFFF",school=true,label=false,prefix="",suffix="",duration=1.4,distance=70,crit=1.5},
     incoming={anchor="incoming",animation="down",size=18,color="FF5050FF",school=false,label=false,prefix="-",suffix="",duration=1.6,distance=90,crit=1.4},
@@ -44,26 +46,33 @@ L.CATEGORY_DEFAULTS={
     buffgiven={enabled=false,anchor="nameplate",animation="up",size=16,color="66E07AFF",school=false,prefix="",suffix="",duration=1.8,distance=60,crit=1},
     power={anchor="incoming",animation="up",size=15,color="5AA0FFFF",school=false,prefix="",suffix="",duration=1.4,distance=60,crit=1},
     notice={anchor="notice",animation="pop",size=22,color="FFD100FF",school=false,prefix="",suffix="",duration=2,distance=40,crit=1,
-        combat=true,reputation=true,honor=true,procs=true,kills=true},
+        combat=true,reputation=true,honor=true,procs=true},
+    -- Your killing blows (0.7.7, a CurseForge wish 2026-10-12): their own
+    -- category, split from the notifications, with their own place and look.
+    kill={anchor="notice",animation="slam",size=26,color="FF5A3CFF",school=false,prefix="",suffix="",duration=1.8,distance=40,crit=1},
 }
 -- Staggered output (0.7.1, UI/Display.lua): texts of a category that come
 -- together one after another (staggerDelay ms apart) and a line apart
 -- (staggerSpacing px) while the ones before are on screen. On by default for
 -- messages, auras and power; damage and heals spread by fountain and plates.
-L.STAGGER_ON={buff=true,debuff=true,buffgiven=true,power=true,notice=true}
+L.STAGGER_ON={buff=true,debuff=true,buffgiven=true,power=true,notice=true,kill=true}
 for name,d in pairs(L.CATEGORY_DEFAULTS) do
     d.stagger=L.STAGGER_ON[name]==true
     d.staggerDelay=250
     d.staggerSpacing=math.floor(d.size*1.3+.5)
+    -- Font per category (0.7.7): "inherit" takes Combat Text's font.
+    d.font="inherit"
 end
 -- Only damage and heals can be critical (UNIT_COMBAT's CRITICAL flag): crit
 -- options only there.
 L.CRIT_CATEGORIES={outgoing=true,incoming=true,heal=true,outheal=true}
 -- Switches of the message categories (only where the defaults have them).
-L.CATEGORY_SWITCHES={"gains","fades","combat","reputation","honor","procs","kills"}
+L.CATEGORY_SWITCHES={"gains","fades","combat","reputation","honor","procs"}
 L.DEFAULTS={enabled=false,hideBlizzard=true,hideBlizzardSelf=true,plates=true,
     -- Texts at a nameplate start this much higher (a CurseForge wish
     -- 2026-10-09: above the enemy's debuffs).
+    -- Font of all texts (0.7.7, in the options): "inherit" takes the style
+    -- family's font, else a suite or SharedMedia font.
     plateOffset=0,numbers="short",font="inherit",outline="OUTLINE",
     -- Numbers on enemies not fighting you: own color (optional) and transparency.
     foreignTint=true,foreignColor="A0A0A0FF",foreignAlpha=.6,
@@ -98,6 +107,9 @@ function L.ContentType()
     if kind=="party" or kind=="scenario" then return "dungeon" end
     return "world"
 end
+-- A font choice: "inherit" or a font reference Core's media knows (a
+-- SharedMedia font not loaded right now is kept; the text falls back).
+local function fontChoice(v) return v=="inherit" or ns.Media:Reference("font",v)==true end
 local function num(v,default,low,high) if type(v)~="number" or v~=v then v=default end;return math.max(low,math.min(high,v)) end
 local ANIMATIONS={up=true,down=true,fountain=true,rain=true,pop=true,custom1=true,custom2=true,custom3=true,
     curveright=true,curveleft=true,curveup=true,curvedown=true,arc=true,slideright=true,slideleft=true,wave=true,bounce=true,slam=true,shake=true,zoom=true}
@@ -110,6 +122,7 @@ function L:Config()
     for key,value in pairs(self.DEFAULTS) do if cfg[key]==nil then cfg[key]=value end end
     cfg.hideBlizzard=cfg.hideBlizzard==true;cfg.hideBlizzardSelf=cfg.hideBlizzardSelf==true;cfg.plates=cfg.plates==true
     if cfg.numbers~="short" and cfg.numbers~="full" and cfg.numbers~="plain" then cfg.numbers="short" end
+    if not fontChoice(cfg.font) then cfg.font="inherit" end
     if cfg.outline~="OUTLINE" and cfg.outline~="THICKOUTLINE" and cfg.outline~="" then cfg.outline="OUTLINE" end
     cfg.foreignTint=cfg.foreignTint==true;cfg.foreignAlpha=num(cfg.foreignAlpha,.6,.1,1)
     cfg.plateOffset=math.floor(num(cfg.plateOffset,0,-50,150)+.5)
@@ -151,6 +164,13 @@ function L:Config()
         if v~="mine" and v~="dimmed" and v~="all" then cfg.whose[kind]=default end
     end
     if type(cfg.categories)~="table" then cfg.categories={} end
+    -- Until 0.7.7 killing blows were a switch of the notifications: off
+    -- there stays off in their own category.
+    local notice=cfg.categories.notice
+    if type(notice)=="table" and notice.kills~=nil then
+        if notice.kills==false and cfg.categories.kill==nil then cfg.categories.kill={enabled=false} end
+        notice.kills=nil
+    end
     for name,defaults in pairs(self.CATEGORY_DEFAULTS) do
         local c=cfg.categories[name]
         if type(c)~="table" then c={};cfg.categories[name]=c end
@@ -158,7 +178,7 @@ function L:Config()
         c.enabled=c.enabled~=false
         if not ANIMATIONS[c.animation] then c.animation=defaults.animation end
         if not MIRRORS[c.mirror] then c.mirror="none" end
-        if c.anchor~="outgoing" and c.anchor~="incoming" and c.anchor~="notice" and c.anchor~="nameplate" and c.anchor~="auto" then c.anchor=defaults.anchor end
+        if not L.PLACES[c.anchor] then c.anchor=defaults.anchor end
         for _,key in ipairs(L.CATEGORY_SWITCHES) do if defaults[key]~=nil then c[key]=c[key]~=false end end
         c.size=num(c.size,defaults.size,8,64);c.duration=num(c.duration,defaults.duration,.3,5)
         c.distance=num(c.distance,defaults.distance,0,300);c.crit=num(c.crit,defaults.crit,1,3)
@@ -169,6 +189,7 @@ function L:Config()
         -- Prefix/suffix (also only for crits) with {school} {spell} {name}.
         for _,key in ipairs({"prefix","suffix","critPrefix","critSuffix"}) do c[key]=L.Format.CleanAffix(c[key],defaults[key] or "") end
         c.school=c.school==true;c.label=c.label==true
+        if not fontChoice(c.font) then c.font="inherit" end
     end
     return cfg
 end
