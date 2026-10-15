@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.1.0","0.8.101",1) then return end
+if not ns:RequireCore(package,"0.1.3","0.8.101",1) then return end
 -- BV Routing (Florian 2026-10-10, docs/module-structure-routing.md): ways
 -- you can really walk, round slopes, water, cliffs, enemy bases, painted
 -- areas and walls, through cities and between their levels, by flight,
@@ -44,7 +44,10 @@ R.DEFAULTS={
     -- Flight masters on a continent whose flight map you have not opened
     -- yet (Florian 2026-10-15): "leave" them out (asked once, a hint in the
     -- guide) or count "all" of your side.
-    flightsUnknown="leave"}
+    flightsUnknown="leave",
+    -- Colours of the way (Florian 2026-10-15: players set their own), as
+    -- RRGGBB; empty: the built-in one.
+    colorWalk="",colorFlight="",colorTransport="",colorTransition="",colorGoal=""}
 local CHOICES={flightsUnknown={leave=true,all=true},risk={ignore=true,avoid=true,block=true},enemy={ignore=true,avoid=true,block=true},cliffs={never=true,safe=true,always=true},guide={left=true,right=true,free=true,off=true}}
 function R:Config()
     local cfg=ns.Settings:Module(self.ID)

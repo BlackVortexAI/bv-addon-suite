@@ -702,7 +702,21 @@ function R.Ground(s,cx,cy)
     local x,y=R.Center(s,cx,cy)
     if s.cities then
         cost=cityCost(s,index,x,y)
-        if cost then s.ground[index]=cost;return cost end
+        if cost then
+            -- A city's rectangle reaches over the open ground around it
+            -- (Florian/Codex 2026-10-15: Undercity's covers the road to
+            -- Silverpine and the hills beside it, the way went over an 81
+            -- degree slope): on cells nobody walked or painted the terrain's
+            -- steep slopes still count, and its dry roads stay roads.
+            if s.cityWalked[index]==false then
+                local code=ns.MapTerrain:Code(f.instance,f.a[f.iy]+y*f.dy,f.a[f.ix]+x*f.dx)
+                if code then
+                    if code%4==3 then s.steep[index]=true end
+                    if code%64>=32 and math.floor(code/4)%4==0 and (s.cfg or Routing:Config()).preferRoads then cost=R.ROAD end
+                end
+            end
+            s.ground[index]=cost;return cost
+        end
     end
     local code=ns.MapTerrain:Code(f.instance,f.a[f.iy]+y*f.dy,f.a[f.ix]+x*f.dx)
     if not code then cost=1

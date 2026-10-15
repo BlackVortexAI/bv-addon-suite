@@ -62,6 +62,21 @@ N.CITIES={1453,1455,1457,1454,1456,1458}
 -- Transitions magenta (Florian 2026-10-14: purple was hard to see on
 -- Undercity's minimap; Route Studio keeps its own purple).
 N.COLOR={walk={.3,.85,1},flight={1,.8,.2},transport={.45,.6,1},transition={1,.3,.8},goal={1,1,1}}
+-- Your own colours (Florian 2026-10-15), set on Routing's settings page.
+N.COLORKEY={walk="colorWalk",flight="colorFlight",transport="colorTransport",transition="colorTransition",goal="colorGoal"}
+local hexColors={}
+function N:Color(kind)
+    local key=N.COLORKEY[kind] and kind or "walk"
+    local hex=Routing:Config()[N.COLORKEY[key]]
+    if type(hex)=="string" and hex:match("^%x%x%x%x%x%x") then
+        hex=hex:sub(1,6):upper()
+        local c=hexColors[hex]
+        if not c then c={tonumber(hex:sub(1,2),16)/255,tonumber(hex:sub(3,4),16)/255,tonumber(hex:sub(5,6),16)/255};hexColors[hex]=c end
+        return c
+    end
+    return N.COLOR[key]
+end
+function N.Hex(c) return string.format("%02X%02X%02X",math.floor(c[1]*255+.5),math.floor(c[2]*255+.5),math.floor(c[3]*255+.5)) end
 N.VERB={walk="Walk",lift="Take the lift",jump="Jump down",teleport="Use the teleport",transport="Ride"}
 
 local function call(...) return Routing.Call(...) end
@@ -209,15 +224,25 @@ function N:FlightSkips()
     all[who]=type(all[who])=="table" and all[who] or {}
     return all[who]
 end
+-- Known: the flight map's current and reachable ones. Forever lists the
+-- undiscovered flight points of the continent too, as DISTANT, and does not
+-- draw them (Florian 2026-10-15: Booty Bay counted as known, the map showed
+-- three points); so the map is the truth for its continent, earlier wrong
+-- entries there go.
+N.TAXIKNOWN={CURRENT=true,REACHABLE=true}
 function N:TaxiOpened()
     local known=self:Known()
+    local seen={}
     for i=1,(call("NumTaxiNodes") or 0) do
         local kind,name=call("TaxiNodeGetType",i),call("TaxiNodeName",i)
-        if type(name)=="string" and not Routing.Secret(name) and type(kind)=="string" and kind~="NONE" then known[name]=true end
+        if type(name)=="string" and not Routing.Secret(name) and N.TAXIKNOWN[kind] then seen[name]=true;known[name]=true end
     end
     local mapID,x,y=Routing:Position()
     local cont=mapID and Routing:OnContinent(mapID,x,y)
     if not cont then return end
+    for _,f in ipairs(self:FlightMasters()) do
+        if f.cont==cont and known[f.name] and not seen[f.name] then known[f.name]=nil end
+    end
     local first=not self:FlightConts()[cont]
     self:FlightConts()[cont]=true
     self:FlightSkips()[cont]=nil
@@ -721,6 +746,15 @@ end
 function N:Walk(cont,level,x1,y1,x2,y2,project)
     local Grid=Routing.Grid
     local zones=N.Zones(cont,x1,y1,x2,y2)
+    -- A known level is searched on its own city's map only (Florian/Codex
+    -- 2026-10-15: Undercity's lifts and North Main Gate fell apart on
+    -- "Ruins of Lordaeron 5": Tirisfal under the line made the space so big
+    -- that the cells grew from 2 to 8 yards).
+    local owner
+    if level and Routing.Level then
+        local _,map=Routing.Level:Find(level)
+        if type(map)=="number" then owner=map;zones={map} end
+    end
     if #zones==0 then return {{x1,y1},{x2,y2}},"no zone under the line: straight" end
     -- One space per continent and level, kept while you navigate: every leg
     -- and every new search on the way reuses what earlier ones worked out
@@ -732,6 +766,8 @@ function N:Walk(cont,level,x1,y1,x2,y2,project)
     local s=self.spaces[id]
     local covered=s~=nil
     if s then for _,zone in ipairs(zones) do if not s.has[zone] then covered=false end end end
+    -- A level's space grown over other maps earlier is built anew.
+    if s and owner and s.owner~=owner then covered=false end
     local warm=covered
     if not covered then
         local all={}
@@ -745,12 +781,13 @@ function N:Walk(cont,level,x1,y1,x2,y2,project)
             end
         end
         for _,zone in ipairs(zones) do all[#all+1]=zone end
-        if s then for zone in pairs(s.has) do all[#all+1]=zone end end
+        if s and not owner then for zone in pairs(s.has) do all[#all+1]=zone end end
         local has,list={},{}
         for _,zone in ipairs(all) do if not has[zone] then has[zone]=true;list[#list+1]=zone end end
         s=Grid.Space(list,level)
         if s.mapID~=cont then return {{x1,y1},{x2,y2}},"zones on another map: straight" end
         s.has=has
+        s.owner=owner
         if not level then Grid.Cities(s,N.CITIES) end
         Grid.Prepare(s)
         -- Cell costs kept while this space lives (Gather's routes do the same).
@@ -1543,7 +1580,7 @@ function N:Points()
     local here=now and now.from.level
     for i,step in ipairs(self.steps) do
         if i>=self.current then
-            local color=N.COLOR[step.kind] or N.COLOR.walk
+            local color=N:Color(step.kind)
             local from,to=step.from,step.to
             local dim=(from.level or 0)~=(here or 0) or nil
             local later=i>self.current
@@ -1578,11 +1615,11 @@ function N:Points()
             -- A teleport: no line between its ends (none to walk).
             local jump=N.Teleport(step)
             out[#out+1]={mapID=to.cont,x=to.x,y=to.y,dot=true,size=to.kind=="goal" and 14 or 10,hollow=true,dim=(to.level or 0)~=(here or 0) or nil,
-                color=to.kind=="goal" and N.COLOR.goal or color,alpha=(later and to.kind~="goal") and pa or 1,lineColor=color,lineAlpha=jump and 0 or la,noLine=jump or nil,lead=lead or nil,leadColor=color}
+                color=to.kind=="goal" and N:Color("goal") or color,alpha=(later and to.kind~="goal") and pa or 1,lineColor=color,lineAlpha=jump and 0 or la,noLine=jump or nil,lead=lead or nil,leadColor=color}
             -- The goal where the way cannot reach it (its NPC on no-go): a
             -- small mark of its own, no line to it.
             if to.npc then
-                out[#out+1]={mapID=to.cont,x=to.npc.x,y=to.npc.y,dot=true,size=9,color=N.COLOR.goal,alpha=.8,lineAlpha=0,noLine=true,dim=(to.level or 0)~=(here or 0) or nil}
+                out[#out+1]={mapID=to.cont,x=to.npc.x,y=to.npc.y,dot=true,size=9,color=N:Color("goal"),alpha=.8,lineAlpha=0,noLine=true,dim=(to.level or 0)~=(here or 0) or nil}
             end
         end
     end

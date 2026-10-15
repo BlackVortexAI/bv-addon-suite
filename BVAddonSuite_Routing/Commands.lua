@@ -13,6 +13,55 @@ if not Routing.ready then return end
 --            client's rectangle, its corners carried over, the cells)
 local ns=Routing.ns
 local N=Routing.Navigate
+
+-- Routing's own settings page (Florian 2026-10-15: colours of the way;
+-- until now its settings sat only in Gather's Routes tab).
+local page
+local function build(parent)
+    local UI=ns.UI
+    page=UI:Panel(parent,880,600,"surface");UI:HideSurface(page)
+    local g=UI:SettingsGrid(page);page.grid=g
+    local controls={}
+    local function cfg() return Routing:Config() end
+    local function redraw() if ns.MapPins then ns.MapPins:Refresh() end;if page then page:Refresh() end end
+    local function row(key,title,control,help) controls[key]=g:Row(title,control,{help=help});return controls[key] end
+    g:Section("colours","Way colours")
+    local function color(kind,title,help)
+        local key=N.COLORKEY[kind]
+        return row(key,title,UI:ColorInput(g,190,function(hex) cfg()[key]=hex:sub(1,6):upper();redraw() end),help)
+    end
+    color("walk","Walking","The way on foot on the map and the minimap.")
+    color("flight","Flights","A flight between two flight masters.")
+    color("transport","Ships, zeppelins, tram","Rides on ships, zeppelins and the Deeprun Tram.")
+    color("transition","Stairs, lifts, doors","Where the way changes the level in a city.")
+    color("goal","Goal","The pin where the way ends.")
+    g:Row("Colours",UI:Button(g,"Reset colours",170,function()
+        for _,key in pairs(N.COLORKEY) do cfg()[key]="" end;redraw()
+    end),{help="Back to the built-in colours."})
+    g:Section("flights","Flights")
+    local unknown=row("flightsUnknown","Unknown flight points",UI:Dropdown(g,190,{},function(value) cfg().flightsUnknown=value end),
+        "On a continent whose flight map you have not opened: leave its flight points out (you are asked once), or count all of your side.")
+    unknown:SetOptions({{value="leave",label="Leave out (asked)"},{value="all",label="Count all of yours"}})
+    g:Section("guide","Guide")
+    local guide=row("guide","Guide window",UI:Dropdown(g,190,{},function(value) if Routing.Guide then Routing.Guide:SetSide(value) else cfg().guide=value end end),
+        "Where the guide shows while you are led: beside the tour window, where you drag it, or not at all.")
+    guide:SetOptions({{value="right",label="Right of the tour"},{value="left",label="Left of the tour"},{value="free",label="Where you drag it"},{value="off",label="Off"}})
+    row("guideGround","Guide background",UI:Switch(g,false,function(value) if Routing.Guide then Routing.Guide:SetBare(value~=true) else cfg().guideGround=value==true end end),
+        "The guide's background panel; off it floats see-through.")
+    function page:Refresh()
+        local c=cfg()
+        for kind,key in pairs(N.COLORKEY) do
+            local hex=c[key]~="" and c[key] or N.Hex(N.COLOR[kind])
+            if controls[key] and controls[key].SetValue then controls[key]:SetValue(hex.."FF") end
+        end
+        controls.flightsUnknown:SetValue(c.flightsUnknown);controls.guide:SetValue(c.guide);controls.guideGround:SetValue(c.guideGround)
+    end
+    page:Refresh()
+    return page
+end
+ns.Config:RegisterPage("routing",{title="Routing",category="questmap",description="Ways you can really walk: colours of the way, flight points and the guide.",
+    build=function(parent) return page or build(parent) end,
+    refresh=function() if page then page:Refresh() end end})
 ns.Commands:RegisterAction("route",function(text)
     text=type(text)=="string" and text or ""
     if text=="" or text=="status" then Routing:Print(N:Status());return end

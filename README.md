@@ -18,7 +18,7 @@ This development version is undergoing in-game acceptance testing.
 | `BVAddonSuite_CombatText` | 0.7.8 |
 | `BVAddonSuite_Quest` | 0.1.2 |
 | `BVAddonSuite_Map` | 0.2.5 |
-| `BVAddonSuite_Routing` | 0.1.0 |
+| `BVAddonSuite_Routing` | 0.1.3 |
 | `BVAddonSuite_Codex` | 0.1.1 |
 | `BVAddonSuite_Gather` | 0.2.0 |
 | `BVAddonSuite_GatherData` | 0.1.0 |
