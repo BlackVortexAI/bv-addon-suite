@@ -32,6 +32,9 @@ local function createPopup(style)
         if key == "ESCAPE" then UI:CloseDropdown() end
     end)
     root.menu = UI:Panel(root, 300, 280, "raised")
+    -- Floating over the window: the soft shadow (Florian 2026-10-11, finer).
+    local DS=ns.DesignSystem
+    if DS.Slice and DS.SHADOW then DS.Slice(root.menu,DS.SHADOW,DS.SHADOWCORNER*.6,"BACKGROUND",-2,DS.SHADOWEXPAND*.6) end
     root.menu:SetClampedToScreen(true)
     root.menu:EnableMouse(true)
     root.menu:EnableMouseWheel(true)
@@ -85,7 +88,8 @@ local function createPopup(style)
                 previewFont(row.label,option.font,not tools and style or nil)
                 row.sample:SetShown(option.texture ~= nil)
                 if option.texture then local ok,ready=pcall(row.sample.SetTexture,row.sample,option.texture);row.sample:SetShown(ok and ready~=false) else row.sample:SetTexture(nil) end
-                local current=not owner.contextMenu and option.value == owner.value
+                -- A context menu's option may be marked checked (a setting's choice).
+                local current=(owner.contextMenu and option.checked==true) or (not owner.contextMenu and option.value == owner.value)
                 row:SetSelected(current); row.mark:SetColorTexture(style:Color("accent")); row.mark:SetShown(current)
             end
         end

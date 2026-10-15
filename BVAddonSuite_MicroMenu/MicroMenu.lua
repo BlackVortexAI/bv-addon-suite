@@ -1,11 +1,11 @@
 local package=...
 local ns=BVAddonSuiteCore
 if not ns or not ns.RequireCore then
-    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.89 or newer. Update Core; saved data is preserved.") end
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.101 or newer. Update Core; saved data is preserved.") end
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.8.89","0.8.89",1) then return end
+if not ns:RequireCore(package,"0.8.90","0.8.101",1) then return end
 local N,UI,D=ns.NativeButtons,ns.UI,ns.DesignSystem.Metrics
 
 -- Known micro buttons (Forever/Classic and Mainline names), default order,
@@ -116,6 +116,9 @@ Micro=N:Bar({
     entries=entries,
     -- Buttons stay MicroMenu children; see NativeButtons bar:Borrow (0.8.76).
     reparent=false,
+    -- Its empty frames take no mouse while ours shows the buttons (the
+    -- buttons themselves keep theirs).
+    shells=function() return {MicroMenuContainer,MicroMenu} end,
     decor=function()
         local list={}
         for _,key in ipairs({"BorderArt","BackgroundArt"}) do if MicroMenu and MicroMenu[key] then list[#list+1]=MicroMenu[key] end end

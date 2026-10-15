@@ -83,13 +83,21 @@ function Factory:Refresh()
     self.palette=DesignSystem.palettes[self.theme]
     for _,paint in ipairs(self.paints) do paint() end
 end
+-- Small type (13 and less) gets a faint shadow: on translucent glass over
+-- the game world it stays legible (Florian 2026-10-11: muddy small text).
+local function soften(region,size)
+    if not region.SetShadowOffset then return end
+    if size<=13 then region:SetShadowColor(0,0,0,.45); region:SetShadowOffset(1,-1)
+    else region:SetShadowOffset(0,0) end
+end
 function Factory:Font(region, size, weight)
     region.bvFontSize,region.bvFontWeight=size or 14,weight or "regular"
     local fontSize=M.ToNative(size or 14)
-    if self.fontResolver then self.fontResolver(region,fontSize,weight); return end
+    if self.fontResolver then self.fontResolver(region,fontSize,weight); soften(region,size or 14); return end
     if not region:SetFont(fonts[weight or "regular"],fontSize, "") then
         region:SetFont("Fonts\\FRIZQT__.TTF",fontSize,"")
     end
+    soften(region,size or 14)
 end
 function Factory:Label(parent, text, size, color, weight)
     local label=parent:CreateFontString(nil,"OVERLAY")
@@ -106,42 +114,154 @@ function Factory:Label(parent, text, size, color, weight)
     return label
 end
 
-local function slice(parent,path,corner,layer,sublevel,expand)
-    local pieces={}; local c=corner or 6; local e=expand or 0
-    local uv=path:find("shadow",1,true) and 20/64 or 8/64
+-- Surfaces per corner radius (tools/build_surface_assets.py; Florian
+-- 2026-10-11: pixelated, unpolished): the 8 px pair drawn at corner 4 made
+-- its 1 px line half a pixel, at 11 (pills) fat and soft. Each radius has
+-- its own pair (DesignLab\r<radius>\).
+--
+-- Drawn in screen pixels (Florian 2026-10-11, the pixel grid): the corner
+-- pieces are exactly the texture's radius in physical pixels, whatever the
+-- UI scale and window scale, so the 1 px line is one pixel and the curve is
+-- taken 1:1. The radius in pixels nearest the asked one (corner x scale)
+-- picks the pair. Placed again when the parent shows and when the scale
+-- changes (DesignSystem.Repixel). Without the screen size (tests): as
+-- designed, the pair nearest the corner.
+DesignSystem.RADII={2,3,4,6,8,12,16}
+-- Corners drawn at ROUND times the radius asked for (Florian 2026-10-11:
+-- smaller roundings, crisper and more precise, as in EllesmereUI): windows
+-- about 5 px, buttons and fields 2 to 3. Pills stay round.
+DesignSystem.ROUND=.5
+-- The window's shadow (Florian 2026-10-11, more refined): wide and faint,
+-- 30 units round the window instead of a hard ring at its edge. The
+-- texture's window edge lies 40 of its 48-pixel corner band in.
+DesignSystem.SHADOW="Interface\\AddOns\\BVAddonSuite\\Media\\DesignLab\\soft\\shadow.tga"
+DesignSystem.SHADOWCORNER=36
+DesignSystem.SHADOWEXPAND=30
+local function nearestRadius(want)
+    local best
+    for _,r in ipairs(DesignSystem.RADII) do if not best or math.abs(r-want)<math.abs(best-want) then best=r end end
+    return best
+end
+local function sized(path,corner)
+    local folder,name=path:match("^(.-DesignLab\\)(%a+%.tga)$")
+    if not folder or (name~="surface.tga" and name~="border.tga") then return path end
+    local best=nearestRadius(corner)
+    return folder.."r"..best.."\\"..name,best,folder,name
+end
+DesignSystem.Sized=sized
+-- Physical pixels per unit of a region; nil when the client does not tell.
+local function perPixel(region)
+    if not (GetPhysicalScreenSize and region.GetEffectiveScale) then return nil end
+    local _,h=GetPhysicalScreenSize()
+    local scale=region:GetEffectiveScale()
+    if type(h)~="number" or h<=0 or type(scale)~="number" or scale<=0 then return nil end
+    return scale*h/768
+end
+DesignSystem.PerPixel=perPixel
+local slices=setmetatable({},{__mode="k"})
+local function place(s,force)
+    local px=s.folder and perPixel(s.parent) or nil
+    local height=s.parent.GetHeight and s.parent:GetHeight() or 0
+    if not force and s.px==px and s.height==height then return end
+    s.px,s.height=px,height
+    local c,e=M.ToNative(s.corner),M.ToNative(s.expand)
+    local path,uv=s.path,s.uv
+    -- A pill (its corner half its height or more, Codex's badges): the
+    -- corners exactly half the height, a true capsule; the nearest pair's
+    -- curve scaled a little to it.
+    local h=s.parent.GetHeight and s.parent:GetHeight() or 0
+    local pill=s.folder and h>0 and c>=h/2-.5
+    if s.folder then
+        local round=pill and 1 or DesignSystem.ROUND
+        local radius=nearestRadius(px and (pill and h/2 or c*round)*px or s.corner*round)
+        path,uv=s.folder.."r"..radius.."\\"..s.name,radius/64
+        if pill then c=h/2 elseif px then c=radius/px else c=c*round end
+    end
     local bands={{0,uv},{uv,1-uv},{1-uv,1}}
+    local i=0
     for row=1,3 do for col=1,3 do
-        local t=parent:CreateTexture(nil,layer or "BACKGROUND",nil,sublevel or 0)
-        t:SetTexture(path); t:SetTexCoord(bands[col][1],bands[col][2],bands[row][1],bands[row][2])
-        if row==1 and col==1 then M.Point(t,"TOPLEFT",-e,e); M.Size(t,c,c)
-        elseif row==1 and col==3 then M.Point(t,"TOPRIGHT",e,e); M.Size(t,c,c)
-        elseif row==3 and col==1 then M.Point(t,"BOTTOMLEFT",-e,-e); M.Size(t,c,c)
-        elseif row==3 and col==3 then M.Point(t,"BOTTOMRIGHT",e,-e); M.Size(t,c,c)
-        elseif row==1 then M.Point(t,"TOPLEFT",c-e,e); M.Point(t,"TOPRIGHT",e-c,e); M.Height(t,c)
-        elseif row==3 then M.Point(t,"BOTTOMLEFT",c-e,-e); M.Point(t,"BOTTOMRIGHT",e-c,-e); M.Height(t,c)
-        elseif col==1 then M.Point(t,"TOPLEFT",-e,e-c); M.Point(t,"BOTTOMLEFT",-e,c-e); M.Width(t,c)
-        elseif col==3 then M.Point(t,"TOPRIGHT",e,e-c); M.Point(t,"BOTTOMRIGHT",e,c-e); M.Width(t,c)
-        else M.Point(t,"TOPLEFT",c-e,e-c); M.Point(t,"BOTTOMRIGHT",e-c,c-e) end
-        pieces[#pieces+1]=t
+        i=i+1
+        local t=s.pieces[i]
+        if t.bvPath~=path then t:SetTexture(path);t.bvPath=path end
+        t:SetTexCoord(bands[col][1],bands[col][2],bands[row][1],bands[row][2])
+        t:ClearAllPoints()
+        if row==1 and col==1 then t:SetPoint("TOPLEFT",-e,e); t:SetSize(c,c)
+        elseif row==1 and col==3 then t:SetPoint("TOPRIGHT",e,e); t:SetSize(c,c)
+        elseif row==3 and col==1 then t:SetPoint("BOTTOMLEFT",-e,-e); t:SetSize(c,c)
+        elseif row==3 and col==3 then t:SetPoint("BOTTOMRIGHT",e,-e); t:SetSize(c,c)
+        elseif row==1 then t:SetPoint("TOPLEFT",c-e,e); t:SetPoint("TOPRIGHT",e-c,e); t:SetHeight(c)
+        elseif row==3 then t:SetPoint("BOTTOMLEFT",c-e,-e); t:SetPoint("BOTTOMRIGHT",e-c,-e); t:SetHeight(c)
+        elseif col==1 then t:SetPoint("TOPLEFT",-e,e-c); t:SetPoint("BOTTOMLEFT",-e,c-e); t:SetWidth(c)
+        elseif col==3 then t:SetPoint("TOPRIGHT",e,e-c); t:SetPoint("BOTTOMRIGHT",e,c-e); t:SetWidth(c)
+        else t:SetPoint("TOPLEFT",c-e,e-c); t:SetPoint("BOTTOMRIGHT",e-c,c-e) end
     end end
+end
+-- Every surface placed again (the UI scale, the screen or a window's scale changed).
+function DesignSystem.Repixel()
+    for s in pairs(slices) do place(s) end
+end
+-- The scale watcher, made with the first surface (the UI stays lazy:
+-- nothing is created at load).
+local function watch()
+    if DesignSystem.watcher or not CreateFrame then return end
+    local watcher=CreateFrame("Frame")
+    for _,event in ipairs({"UI_SCALE_CHANGED","DISPLAY_SIZE_CHANGED"}) do pcall(watcher.RegisterEvent,watcher,event) end
+    watcher:SetScript("OnEvent",function() DesignSystem.Repixel() end)
+    DesignSystem.watcher=watcher
+end
+local function slice(parent,path,corner,layer,sublevel,expand)
+    local pieces={}
+    local _,_,folder,name=sized(path,corner or 6)
+    local s={parent=parent,pieces=pieces,corner=corner or 6,expand=expand or 0,path=path,folder=folder,name=name,
+        uv=path:find("soft\\shadow",1,true) and 48/128 or path:find("shadow",1,true) and 20/64 or 8/64}
+    for i=1,9 do pieces[i]=parent:CreateTexture(nil,layer or "BACKGROUND",nil,sublevel or 0) end
+    place(s,true)
+    if folder then
+        watch()
+        slices[s]=true
+        if parent.HookScript then
+            parent:HookScript("OnShow",function() place(s) end)
+            -- Pills follow their height.
+            if (corner or 6)>=4 then parent:HookScript("OnSizeChanged",function() place(s) end) end
+        end
+    end
     return pieces
 end
 DesignSystem.Slice=slice
+-- A fill shaded from top to bottom (Florian 2026-10-11: the primary button
+-- looked flat). On a nine-slice the top row takes the top colour, the
+-- bottom row the bottom one, the middle row runs between them, so the
+-- rounded corners stay clean. A single flat piece runs the whole height.
+local function shade(fills,top,bottom,alpha)
+    if not (CreateColor and #fills>0 and fills[1].SetGradient) then return false end
+    local a=alpha or 1
+    local function set(t,c1,c2) t:SetGradient("VERTICAL",CreateColor(c2[1],c2[2],c2[3],a),CreateColor(c1[1],c1[2],c1[3],a)) end
+    if #fills==9 then
+        for i=1,3 do set(fills[i],top,top) end
+        for i=4,6 do set(fills[i],top,bottom) end
+        for i=7,9 do set(fills[i],bottom,bottom) end
+    else
+        for _,t in ipairs(fills) do set(t,top,bottom) end
+    end
+    return true
+end
+DesignSystem.Shade=shade
 function Factory:Skin(frame,fill,corner,alpha,shadow)
     -- In-game style contexts (UI/StyleFamilies.lua) draw the family's border.
     if self.skinner then return self.skinner(frame,fill,corner,alpha,shadow) end
     local fills=slice(frame,media.."DesignLab\\surface.tga",corner,"BACKGROUND",0)
     local borders=slice(frame,media.."DesignLab\\border.tga",corner,"BORDER",0)
-    if shadow then slice(frame,media.."DesignLab\\shadow.tga",20,"BACKGROUND",-2,10) end
+    if shadow then slice(frame,DesignSystem.SHADOW,DesignSystem.SHADOWCORNER,"BACKGROUND",-2,DesignSystem.SHADOWEXPAND) end
     frame.fills,frame.borders=fills,borders
-    function frame:PaintSurface(background,edge,opacity)
+    function frame:PaintSurface(background,edge,opacity,top,bottom)
         for _,t in ipairs(fills) do t:SetVertexColor(unpack(background)) end
         for _,t in ipairs(borders) do t:SetVertexColor(unpack(edge)) end
         if opacity then for _,t in ipairs(fills) do t:SetAlpha(opacity) end end
+        if top and bottom then shade(fills,top,bottom,(background[4] or 1)) end
     end
     self:Bind(function()
         if frame.surfacePaintOwned then return end
-        frame:PaintSurface({self:Color(fill or "panel")},{self:Color("edge",.45)},type(alpha)=="function" and alpha() or alpha or 1)
+        frame:PaintSurface({self:Color(fill or "panel")},{self:Color("text",.1)},type(alpha)=="function" and alpha() or alpha or 1)
     end,frame)
     return frame
 end
@@ -150,7 +270,9 @@ function Factory:Panel(parent,width,height,fill,corner,alpha)
     local panel=CreateFrame("Frame",nil,parent); M.Size(panel,width or 100,height or 100)
     self:Skin(panel,fill or "panel",corner or 6,alpha)
     if fill=="panel" or fill=="raised" then
-        panel.sheen=self:Gradient(panel,"VERTICAL","secondary",.015,"accent",.045,corner or 6)
+        -- Over the whole surface, just inside its line (Florian 2026-10-11:
+        -- inset by the corner it showed as a box inside the smaller-rounded panel).
+        panel.sheen=self:Gradient(panel,"VERTICAL","secondary",.015,"accent",.045,1)
     end
     return panel
 end
@@ -177,7 +299,8 @@ function Factory:Logo(parent,size)
 end
 function Factory:Rule(parent,color)
     local rule=parent:CreateTexture(nil,"ARTWORK"); M.Height(rule,1)
-    self:Bind(function() rule:SetColorTexture(self:Color(color or "edge",.28)) end,rule)
+    -- A neutral hairline unless a colour is asked for.
+    self:Bind(function() if color then rule:SetColorTexture(self:Color(color,.28)) else rule:SetColorTexture(self:Color("text",.08)) end end,rule)
     return rule
 end
 local icons={
@@ -232,7 +355,7 @@ function Factory:Icon(parent,name,size,color)
         if ok and loaded~=false then
             glyph:SetAllPoints(icon);glyph:SetTexCoord(l,r,t,b);icon.glyph=glyph;icon.symbol=symbol
             function icon:SetColor(...) self.glyph:SetVertexColor(...) end
-            self:Bind(function() icon:SetColor(self:Color(icon.colorRole or color or "accent")) end,icon)
+            self:Bind(function() icon:SetColor(self:Color(icon.colorRole or color or "muted")) end,icon)
             return icon
         end
         glyph:Hide()
@@ -267,7 +390,7 @@ function Factory:Icon(parent,name,size,color)
         for _,ring in ipairs(self.circles) do ring:SetVertexColor(...) end
         for _,dot in ipairs(self.dots) do dot:SetVertexColor(...) end
     end
-    self:Bind(function() icon:SetColor(self:Color(icon.colorRole or color or "accent")) end,icon)
+    self:Bind(function() icon:SetColor(self:Color(icon.colorRole or color or "muted")) end,icon)
     return icon
 end
 
@@ -404,12 +527,12 @@ function Factory:Button(parent,text,width,callback,kind)
         fitLabel()
         local kind=button.presentationKind or kind
         local primary=kind=="primary" or (button.selected and kind~="nav" and kind~="tab" and kind~="menu")
-        local fill,fillAlpha,edge,edgeAlpha,textColor="raised",.7,"edge",.4,"text"
+        local fill,fillAlpha,edge,edgeAlpha,textColor="raised",.7,"text",.14,"text"
         if kind=="resize" then fill,fillAlpha,edge,edgeAlpha,textColor=button.hovered and "text" or "accent",1,"bg",1,"bg"
-        elseif primary then fill,fillAlpha,edge,edgeAlpha,textColor="accent",1,"accent",.65,"bg"
+        elseif primary then fill,fillAlpha,edge,edgeAlpha,textColor="accent",1,kind=="primary" and "text" or "accent",kind=="primary" and .12 or .65,kind=="primary" and "text" or "bg"
         elseif kind=="nav" then
             fill,fillAlpha="accent",button.selected and .14 or button.hovered and .07 or 0
-            edge,edgeAlpha="accent",button.selected and .18 or 0
+            edge,edgeAlpha="accent",0
             textColor=button.selected and "text" or button.hovered and "text" or "muted"
         elseif kind=="tab" then
             fillAlpha,edgeAlpha=0,0; textColor=button.selected and "text" or button.hovered and "accent" or "muted"
@@ -422,20 +545,54 @@ function Factory:Button(parent,text,width,callback,kind)
             textColor=button.hovered and "text" or "muted"
         elseif kind=="danger" then fill,fillAlpha,edge,edgeAlpha,textColor="danger",.045,"danger",.25,"danger"
         elseif button.hovered then fill,fillAlpha,edge,edgeAlpha="accent",.13,"accent",.48 end
-        button:PaintSurface({self:Color(fill)},{self:Color(edge,edgeAlpha)},fillAlpha)
-        button.label:SetTextColor(self:Color(textColor))
-        if button.icon then button.icon.colorRole=textColor; button.icon:SetColor(self:Color(textColor)) end
+        local r,g,b=self:Color(fill)
+        local er,eg,eb,ea=self:Color(edge,edgeAlpha)
+        -- Depth (Florian 2026-10-11): the primary lit from above, lighter on
+        -- hover, darker and flatter while pressed; plain buttons a little.
+        local top,bottom
+        local function mix(c,toward,amount) return {c[1]+(toward-c[1])*amount,c[2]+(toward-c[2])*amount,c[3]+(toward-c[3])*amount} end
+        if kind=="primary" then
+            -- A deep shade of the accent with light text and the neutral
+            -- hairline (Florian 2026-10-11: darker allowed; the bright rim stood out).
+            local base=mix({r,g,b},0,.42)
+            local live=button:IsEnabled()
+            if live and button.hovered and not button.pressed then
+                base=mix(base,1,.1)
+                ea=.2
+            end
+            if live and button.pressed then top,bottom=mix(base,0,.25),mix(base,0,.1)
+            else top,bottom=mix(base,1,.16),mix(base,0,.22) end
+            r,g,b=base[1],base[2],base[3]
+        elseif (kind=="secondary" or kind==nil) and fillAlpha>0 then
+            top,bottom=mix({r,g,b},1,.06),mix({r,g,b},0,.18)
+            -- Pressed: a little darker, flatter.
+            if button.pressed then top,bottom=mix({r,g,b},0,.18),mix({r,g,b},0,.08) end
+        end
+        -- Off (Florian 2026-10-11: finer than a washed-out whole): the text
+        -- muted, the surface and its edge faint; the button itself stays opaque.
+        if not button:IsEnabled() then
+            textColor="muted"
+            fillAlpha=fillAlpha*.45; ea=(ea or 1)*.5
+            top,bottom=nil,nil
+        end
+        button:PaintSurface({r,g,b},{er,eg,eb,ea},fillAlpha,top,bottom)
+        button.label:SetTextColor(self:Color(textColor,not button:IsEnabled() and .7 or nil))
+        -- A button may keep its symbol lit (iconRole: the tool in use).
+        if button.icon then local role=button.iconRole or textColor; button.icon.colorRole=role; button.icon:SetColor(self:Color(role)) end
         if button.selection then button.selection:SetColorTexture(self:Color("accent")); button.selection:SetShown(button.selected==true) end
-        button:SetAlpha(button:IsEnabled() and 1 or .4)
+        button:SetAlpha(1)
     end
     self:Bind(render,button)
     button:SetScript("OnEnter",function() button.hovered=true; render() end)
-    button:SetScript("OnLeave",function() button.hovered=false; render() end)
-    button:SetScript("OnHide",function() button.hovered=false; render() end)
+    button:SetScript("OnLeave",function() button.hovered=false; button.pressed=false; render() end)
+    button:SetScript("OnHide",function() button.hovered=false; button.pressed=false; render() end)
     button:SetScript("OnShow",render)
     button:SetScript("OnEnable",render); button:SetScript("OnDisable",render)
-    button:SetScript("OnMouseDown",function() if button:IsEnabled() then button:SetAlpha(.8) end end)
-    button:SetScript("OnMouseUp",render)
+    button:SetScript("OnMouseDown",function()
+        if not button:IsEnabled() then return end
+        button.pressed=true; render()
+    end)
+    button:SetScript("OnMouseUp",function() button.pressed=false; render() end)
     button:SetScript("OnClick",function() if callback then callback(button) end end)
     function button:SetSelected(value) self.selected=value; render() end
     self:Tooltip(button)
@@ -448,14 +605,22 @@ function Factory:IconButton(parent,name,callback,kind)
 end
 function Factory:Input(parent,width,multiline,initial,changed,bare)
     local box=CreateFrame("EditBox",nil,parent); M.Size(box,width or 240,multiline and 72 or 32)
-    if not bare then self:Skin(box,"bg",4,.85) end
+    if not bare then
+        self:Skin(box,"bg",4,.85)
+        -- A soft ring round the field while you type (Florian 2026-10-11, more refined).
+        box.ring=slice(box,media.."DesignLab\\border.tga",6,"BORDER",2,2)
+        for _,t in ipairs(box.ring) do t:Hide() end
+    end
     self:Font(box,14)
     box:SetAutoFocus(false); box:SetMaxLetters(multiline and 400 or 64)
     box:SetMultiLine(multiline==true); M.TextInsets(box,10,10,multiline and 9 or 0,multiline and 9 or 0)
     box:SetJustifyH("LEFT"); box:SetJustifyV(multiline and "TOP" or "MIDDLE")
     box:SetText(initial or "")
     local function paint()
-        if not bare then box:PaintSurface({self:Color("bg")},{self:Color(box.invalid and "danger" or box.focused and "accent" or "edge",.7)},.85) end
+        if not bare then box:PaintSurface({self:Color("bg")},{self:Color(box.invalid and "danger" or box.focused and "accent" or "text",(box.invalid or box.focused) and .8 or .18)},.85) end
+        if box.ring then
+            for _,t in ipairs(box.ring) do t:SetVertexColor(self:Color(box.invalid and "danger" or "accent",.3)); t:SetShown(box.focused==true) end
+        end
         box:SetTextColor(self:Color("text"))
     end
     self:Bind(function() self:Font(box,14); paint() end,box)
@@ -473,10 +638,36 @@ function Factory:Slider(parent,width,min,max,step,value,changed)
     local slider=CreateFrame("Slider",nil,parent); M.Size(slider,width or 160,24)
     slider:SetOrientation("HORIZONTAL"); slider:SetMinMaxValues(min,max); slider:SetValueStep(step)
     slider:SetObeyStepOnDrag(true)
-    slider.track=slider:CreateTexture(nil,"BACKGROUND"); M.Point(slider.track,"LEFT",0,0); M.Point(slider.track,"RIGHT",0,0); M.Height(slider.track,4)
-    slider:SetThumbTexture(media.."DesignLab\\surface.tga")
-    M.Size(slider:GetThumbTexture(),10,16)
-    self:Bind(function() slider.track:SetColorTexture(self:Color("edge",.45)); slider:GetThumbTexture():SetVertexColor(self:Color("accent")) end,slider)
+    -- A fine track whose filled part glows in the accent, a round grip
+    -- (Florian 2026-10-11: finer, more modern).
+    slider.track=slider:CreateTexture(nil,"BACKGROUND"); M.Point(slider.track,"LEFT",0,0); M.Point(slider.track,"RIGHT",0,0); M.Height(slider.track,3)
+    slider:SetThumbTexture(media.."DesignLab\\radio-dot.tga")
+    local thumb=slider:GetThumbTexture()
+    M.Size(thumb,14,14)
+    slider.fill=slider:CreateTexture(nil,"BORDER"); M.Height(slider.fill,3)
+    slider.fill:SetPoint("LEFT",slider.track,"LEFT",0,0); slider.fill:SetPoint("RIGHT",thumb,"CENTER",0,0)
+    self:Bind(function()
+        slider.track:SetColorTexture(self:Color("text",slider.scrollbar and .06 or .14))
+        slider.fill:SetColorTexture(self:Color("accent",.85))
+        slider.fill:SetShown(not slider.scrollbar)
+        thumb:SetVertexColor(self:Color(slider.scrollbar and "muted" or "text",slider.scrollbar and .55 or 1))
+    end,slider)
+    -- As a scroll bar (Forms): a slim quiet bar as its grip, no fill.
+    function slider:AsScrollbar()
+        self.scrollbar=true
+        self:SetThumbTexture(media.."DesignLab\\r2\\surface.tga")
+        thumb=self:GetThumbTexture()
+        self.fill:Hide()
+        self.track:SetColorTexture(1,1,1,.06)
+        thumb:SetVertexColor(.7,.7,.75,.55)
+        return thumb
+    end
+    -- Every vertical one is a scroll bar (settings pages, lists, dialogs).
+    local orient=slider.SetOrientation
+    function slider:SetOrientation(value)
+        orient(self,value)
+        if value=="VERTICAL" and not self.scrollbar then self:AsScrollbar() end
+    end
     slider:SetValue(value)
     slider:SetScript("OnValueChanged",function(_,v) if changed then changed(v) end end)
     return slider
@@ -510,15 +701,22 @@ function Factory:Check(parent,text,value,changed,radio)
     control:SetScript("OnEnable",render); control:SetScript("OnDisable",render)
     return control
 end
+-- A pill track with a round light knob; on: the track filled in the accent
+-- (Florian 2026-10-11: the square knob looked dated).
 function Factory:Switch(parent,value,changed)
-    local button=CreateFrame("Button",nil,parent); M.Size(button,36,20); self:Skin(button,"raised",4)
-    button.thumb=self:Panel(button,12,12,"muted",3); button.thumb.surfacePaintOwned=true
+    local button=CreateFrame("Button",nil,parent); M.Size(button,36,20); self:Skin(button,"raised",10)
+    button.thumb=button:CreateTexture(nil,"OVERLAY"); button.thumb:SetTexture(media.."DesignLab\\radio-dot.tga"); M.Size(button.thumb,14,14)
     local function paint()
         button:SetAlpha(button:IsEnabled() and 1 or .4)
-        button:PaintSurface({self:Color(button.value and "accent" or "raised")},{self:Color("edge",.6)},button.value and .22 or 1)
-        button.thumb:ClearAllPoints(); M.Point(button.thumb,button.value and "RIGHT" or "LEFT",button.value and -4 or 4,0)
-        button.thumb:PaintSurface({self:Color(button.value and "accent" or "muted")},{self:Color(button.value and "accent" or "muted")},1)
+        local on=button.value
+        local r,g,b=self:Color(on and "accent" or "raised")
+        if on then r,g,b=r*.8,g*.8,b*.8 end
+        button:PaintSurface({r,g,b},{self:Color(on and "accent" or "text",on and .5 or (button.hovered and .26 or .16))},on and 1 or .9)
+        button.thumb:ClearAllPoints(); M.Point(button.thumb,on and "RIGHT" or "LEFT",on and -3 or 3,0)
+        button.thumb:SetVertexColor(self:Color(on and "text" or "muted"))
     end
+    button:SetScript("OnEnter",function() button.hovered=true; paint() end)
+    button:SetScript("OnLeave",function() button.hovered=false; paint() end)
     function button:SetValue(v) self.value=v==true; paint() end
     button:SetValue(value); self:Bind(paint,button)
     button:SetScript("OnEnable",paint); button:SetScript("OnDisable",paint)

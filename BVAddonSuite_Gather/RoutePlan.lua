@@ -5,7 +5,9 @@ if not G.ready then return end
 -- another become one stop (you see and reach them from there), the stops
 -- become the shortest loop (nearest neighbour, 2-opt, Or-opt), and every
 -- leg that crosses a painted no-go or high-risk area goes round it
--- (G.Grid). Routes and painted areas are kept account-wide in BVGatherDB.
+-- (G.Grid). Routes are kept account-wide in BVGatherDB; painted areas and
+-- transitions are BV Routing's since 2026-10-10 (BVRoutingDB, shared with
+-- Route Studio and /bv route).
 local ns=G.ns
 local Grid=G.Grid
 local P={}
@@ -15,26 +17,21 @@ P.FOOT,P.MOUNT=7,11.2
 function P:Store()
     local db=G.Data.db or G.Data:Init()
     if type(db.routes)~="table" then db.routes={} end
-    if type(db.areas)~="table" then db.areas={} end
-    if type(db.links)~="table" then db.links={} end
+    -- Areas and transitions painted before 2026-10-10 move to BV Routing once.
+    if db.areas~=nil or db.links~=nil then
+        G.Routing:Adopt(db.areas,db.links)
+        db.areas,db.links=nil,nil
+    end
     return db
 end
--- Painted strokes per zone: {x, y (zone), r (yards), kind}.
-function P:Areas() return self:Store().areas end
-function P:Strokes(mapID)
-    local areas=self:Areas()
-    if type(areas[mapID])~="table" then areas[mapID]={} end
-    return areas[mapID]
-end
+-- Painted strokes per zone: {x, y (zone), r (yards), kind} (BV Routing's).
+function P:Areas() self:Store();return G.Routing:Areas() end
+function P:Strokes(mapID) self:Store();return G.Routing:Strokes(mapID) end
 
--- Transitions: {a = {mapID, x, y}, b = {...}, oneway, name}.
-function P:Links() return self:Store().links end
-function P:AddLink(a,b,oneway,name)
-    local links=self:Links()
-    links[#links+1]={a=a,b=b,oneway=oneway or nil,name=name or ("Transition "..(#links+1))}
-    return links[#links]
-end
-function P:RemoveLink(index) table.remove(self:Links(),index) end
+-- Transitions: {a = {mapID, x, y}, b = {...}, oneway, name} (BV Routing's).
+function P:Links() self:Store();return G.Routing:Links() end
+function P:AddLink(a,b,oneway,name) self:Store();return G.Routing:AddLink(a,b,oneway,name) end
+function P:RemoveLink(index) G.Routing:RemoveLink(index) end
 -- A search area (Florian 2026-10-09: "only the south of Silverpine", a
 -- choice for this route, not a no-go area): {mapID, poly = {x1, y1, ...}}.
 function P.InArea(area,zone,node)
@@ -438,13 +435,14 @@ end
 function P:Build(zones,chosen,options)
     P.Report(0,"Reading the map")
     local s=Grid.Space(zones)
-    Grid.Paint(s,self:Areas())
-    Grid.Links(s,self:Links())
+    -- Painted areas, walls and transitions (BV Routing's store).
+    self:Store()
+    Grid.Prepare(s)
     local nodes=self:Nodes(s,chosen,options.area)
     -- Nodes in enemy bases stay out unless enemies are ignored (Florian
     -- 2026-10-09: a Horde route led into Southshore for its herbs).
     local enemy=0
-    if G:Config().enemy~="ignore" then
+    if G.Routing:Config().enemy~="ignore" then
         local kept={}
         for _,node in ipairs(nodes) do
             if Grid.InEnemy(s,node.x,node.y) then enemy=enemy+1 else kept[#kept+1]=node end
@@ -616,7 +614,7 @@ function P.Issues(s,result,spots,order,cut,loop)
     local points=result.points
     local n=#points
     -- Drops higher than "Short drops" allows (no way round them was found).
-    local mode=G:Config().cliffs
+    local mode=G.Routing:Config().cliffs
     if mode~="always" then
         for j=2,n do
             local a,b=spots[j-1],spots[j]
@@ -902,7 +900,7 @@ function P:ExportAreas(zones)
 end
 -- Reads shared areas and transitions; apply=false only counts. Areas and
 -- transitions already there are not doubled.
-local KINDS={nogo=true,prefer=true,risk=true}
+local KINDS={nogo=true,prefer=true,risk=true,swim=true}
 function P:ImportAreas(text,apply)
     if type(text)~="string" or not text:find(AREAS,1,true) then return nil end
     local count={areas=0,links=0,new=0}

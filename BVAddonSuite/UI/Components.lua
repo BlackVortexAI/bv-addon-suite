@@ -272,6 +272,16 @@ function UI:TooltipFrame()
     tooltip.edges[2]:SetPoint("BOTTOMLEFT");tooltip.edges[2]:SetPoint("BOTTOMRIGHT");tooltip.edges[2]:SetHeight(1)
     tooltip.edges[3]:SetPoint("TOPLEFT");tooltip.edges[3]:SetPoint("BOTTOMLEFT");tooltip.edges[3]:SetWidth(1)
     tooltip.edges[4]:SetPoint("TOPRIGHT");tooltip.edges[4]:SetPoint("BOTTOMRIGHT");tooltip.edges[4]:SetWidth(1)
+    -- Rounded and crisp like the windows, with their soft shadow (Florian
+    -- 2026-10-11, finer); the square ground and edges stay as the fallback.
+    if DS.Slice and DS.SHADOW then
+        local lab="Interface\\AddOns\\BVAddonSuite\\Media\\DesignLab\\"
+        tooltip.fills=DS.Slice(tooltip,lab.."surface.tga",8,"BACKGROUND",0)
+        tooltip.lines=DS.Slice(tooltip,lab.."border.tga",8,"BORDER",0)
+        tooltip.shade=DS.Slice(tooltip,DS.SHADOW,DS.SHADOWCORNER*.6,"BACKGROUND",-2,DS.SHADOWEXPAND*.6)
+        tooltip.ground:Hide()
+        for _,edge in ipairs(tooltip.edges) do edge:Hide() end
+    end
     tooltip.title=tipRegion(tooltip,TIP.TITLE,"text",true);tooltip.title:SetWordWrap(false)
     tooltip.tag=tipRegion(tooltip,TIP.SMALL,"muted");tooltip.tag:SetWordWrap(false);tooltip.tag:SetJustifyH("RIGHT")
     tooltip.body=tipRegion(tooltip,TIP.BODY,"text")
@@ -300,7 +310,10 @@ function UI:ShowTooltip(owner,title,text)
     if not title or not ns.Settings:Get("tooltips") then return end
     local tooltip=self:TooltipFrame()
     tooltip.owner=owner
-    tooltip:SetScale(owner:GetEffectiveScale()/UIParent:GetEffectiveScale())
+    -- Its owner's scale; a pin on a zoomed map: the map's, not the zoom
+    -- (Florian 2026-10-14: zoomed in, the tooltip grew with it).
+    local ref=owner.tooltipScaleFrame or owner
+    tooltip:SetScale(ref:GetEffectiveScale()/UIParent:GetEffectiveScale())
     local content=text or owner.tooltipText or ""
     if type(content)~="table" then content={text=content} end
     local rows=type(content.rows)=="table" and content.rows or {}
@@ -311,6 +324,8 @@ function UI:ShowTooltip(owner,title,text)
     local br,bg,bb=Theme:Color("bg")
     tooltip.ground:SetColorTexture(br*.6,bg*.6,bb*.6,.95)
     for _,edge in ipairs(tooltip.edges) do edge:SetColorTexture(1,1,1,.1) end
+    for _,t in ipairs(tooltip.fills or {}) do t:SetVertexColor(br*.6,bg*.6,bb*.6,.96) end
+    for _,t in ipairs(tooltip.lines or {}) do t:SetVertexColor(1,1,1,.12) end
     tooltip.rule:SetColorTexture(1,1,1,.08)
     tooltip.title:SetTextColor(Theme:Color("text"))
     if content.tagColor then tooltip.tag:SetTextColor(content.tagColor[1],content.tagColor[2],content.tagColor[3]) else tooltip.tag:SetTextColor(Theme:Color("muted")) end
@@ -382,7 +397,6 @@ function UI:WindowChrome(window,style,options)
     local bar=CreateFrame("Frame",nil,window); chrome.titlebar=bar
     M.Point(bar,"TOPLEFT"); M.Point(bar,"TOPRIGHT"); M.Height(bar,44)
     bar:EnableMouse(true); bar:RegisterForDrag("LeftButton")
-    style:Gradient(bar,"HORIZONTAL","accent",.055,"accent",0,1)
     local rule=style:Rule(bar); M.Point(rule,"BOTTOMLEFT"); M.Point(rule,"BOTTOMRIGHT")
     chrome.brand=style:Logo(bar,24)
     M.Point(chrome.brand,"LEFT",14,0)

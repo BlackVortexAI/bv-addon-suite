@@ -173,7 +173,7 @@ function R:Apply()
         local parent=self.button:GetParent()
         self.button:ClearAllPoints()
         if search and search:IsShown() then M.Point(self.button,"LEFT",search,"RIGHT",6,0)
-        else M.Point(self.button,"TOPLEFT",parent,"TOPLEFT",6,-6) end
+        else self.button:SetPoint("TOPLEFT",parent,"TOPLEFT",P:WorldMap() and P.Search and P.Search:Left(P:WorldMap(),parent) or 6,-6) end
     end
     local map=P:WorldMap()
     self:Refresh()

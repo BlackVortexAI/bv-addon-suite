@@ -48,7 +48,7 @@ P.Call,P.XY=call,xy
 -- it, e.g. a loop closing on its first point), point.lead (a line from you
 -- to it in point.leadColor: the leg you walk now), point.dot (a small dot
 -- instead of a pin), point.alpha / point.lineAlpha (opacity of its pin and
--- of the line to it), arrows (true: chevrons
+-- of the line to it; point.leadAlpha that of the lead), arrows (true: chevrons
 -- along the lines show the way, Florian 2026-10-08),
 -- edge (true: far points stick to the minimap's edge), world (false: the
 -- minimap only, for a provider that splits world map and minimap lists),
@@ -255,8 +255,11 @@ end
 function P:WorldPin(index,canvas)
     local pin=self.worldPins[index]
     local overlay=self:Overlay(canvas)
-    if pin then if pin:GetParent()~=overlay then pin:SetParent(overlay) end;return pin end
+    -- Its tooltip at the map's scale, not the canvas's zoom.
+    local unzoomed=canvas.GetParent and canvas:GetParent() or nil
+    if pin then if pin:GetParent()~=overlay then pin:SetParent(overlay) end;pin.tooltipScaleFrame=unzoomed;return pin end
     pin=CreateFrame("Button",nil,overlay);pin:RegisterForClicks("LeftButtonUp","RightButtonUp")
+    pin.tooltipScaleFrame=unzoomed
     pinTextures(pin)
     pin.label=pin:CreateFontString(nil,"OVERLAY");pin.label:SetPoint("BOTTOM",pin,"TOP",0,2)
     pin:SetScript("OnClick",function(owner,button) local p=owner.provider;if p and p.onClick then p.onClick(owner.point,button) end end)
@@ -311,15 +314,15 @@ function P:PaintWorld()
                             lines=lines+1
                             local line=self:WorldLine(lines,canvas)
                             local c=point.leadColor or point.color or {1,1,1}
-                            line:SetVertexColor(c[1],c[2],c[3],.95*(point.lineAlpha or 1));line:SetThickness(M.ToNative(3)/scale)
-                            line.shadow:SetVertexColor(0,0,0,.7*(point.lineAlpha or 1));line.shadow:SetThickness(M.ToNative(6)/scale)
+                            line:SetVertexColor(c[1],c[2],c[3],.95*(point.leadAlpha or point.lineAlpha or 1));line:SetThickness(M.ToNative(3)/scale)
+                            line.shadow:SetVertexColor(0,0,0,.7*(point.leadAlpha or point.lineAlpha or 1));line.shadow:SetThickness(M.ToNative(6)/scale)
                             for _,l in ipairs({line,line.shadow}) do
                                 l:SetStartPoint("TOPLEFT",canvas,playerX*w,-playerY*h);l:SetEndPoint("TOPLEFT",canvas,x*w,-y*h)
                             end
                             line:Show()
                             if provider.arrows then
                                 arrows=self:Chevrons(self.worldArrows,self:Overlay(canvas),canvas,"TOPLEFT",playerX*w,-playerY*h,x*w,-y*h,
-                                    M.ToNative(5)/scale,M.ToNative(1.6)/scale,M.ToNative(46)/scale,arrows,point.lineAlpha)
+                                    M.ToNative(5)/scale,M.ToNative(1.6)/scale,M.ToNative(46)/scale,arrows,point.leadAlpha or point.lineAlpha)
                             end
                         end
                         if not point.noPin then
@@ -560,15 +563,15 @@ function P:PaintMinimap()
                                     lines=lines+1
                                     local line=self:MinimapLine(lines,minimap)
                                     local c=point.leadColor or point.color or {1,1,1}
-                                    line:SetVertexColor(c[1],c[2],c[3],.95*(point.lineAlpha or 1));line:SetThickness(M.ToNative(2.5))
-                                    line.shadow:SetVertexColor(0,0,0,.6*(point.lineAlpha or 1));line.shadow:SetThickness(M.ToNative(5))
+                                    line:SetVertexColor(c[1],c[2],c[3],.95*(point.leadAlpha or point.lineAlpha or 1));line:SetThickness(M.ToNative(2.5))
+                                    line.shadow:SetVertexColor(0,0,0,.6*(point.leadAlpha or point.lineAlpha or 1));line.shadow:SetThickness(M.ToNative(5))
                                     for _,l in ipairs({line,line.shadow}) do
                                         l:SetStartPoint("CENTER",minimap,x1*half,y1*half);l:SetEndPoint("CENTER",minimap,x2*half,y2*half)
                                     end
                                     line:Show()
                                     if provider.arrows then
                                         arrows=self:Chevrons(self.miniArrows,self.miniOverlay,minimap,"CENTER",x1*half,y1*half,x2*half,y2*half,
-                                            M.ToNative(4),M.ToNative(1.4),M.ToNative(26),arrows,point.lineAlpha)
+                                            M.ToNative(4),M.ToNative(1.4),M.ToNative(26),arrows,point.leadAlpha or point.lineAlpha)
                                     end
                                 end
                             end

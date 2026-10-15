@@ -5,7 +5,12 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.1.6","0.8.96",1) then return end
+if not ns:RequireCore(package,"0.2.0","0.8.96",1) then return end
+-- Way finding is BV Routing's (Florian 2026-10-10), loaded before us (TOC).
+if not (ns.Routing and ns.Routing.ready) then
+    ns:Print(package.." is off: it needs BV Addon Suite - Routing. Install or enable it; saved data is preserved.")
+    return
+end
 -- Gather package (docs/map-gather-plan.md phase 3/4, own package by
 -- Florian's choice): herbs, ore, fishing pools and treasure you gather are
 -- recorded where you stood and shown on the world map and the minimap
@@ -13,11 +18,14 @@ if not ns:RequireCore(package,"0.1.6","0.8.96",1) then return end
 -- GatherMate2 running, ours neither records nor draws by default, so the
 -- two never double up (plan decision 3, "use ours anyway" takes it back).
 -- Files fill G: Data (node database), Record, Pins, Import, Share, Route,
--- RouteGrid and RoutePlan (route editor), Trace (walked ways), Follow
+-- RoutePlan (route editor; its ways from BV Routing, G.Grid), Trace
+-- (walked ways), Follow
 -- (following a route), UI/Exchange,
 -- UI/Editor, Options.
 G.ns=ns
 ns.Gather=G
+G.Routing=ns.Routing
+G.Grid=ns.Routing.Grid
 G.ready=true
 G.ID="gather"
 
@@ -57,22 +65,15 @@ G.DEFAULTS={enabled=false,
     world=true,minimap=true,minimapEdge=false,herb=true,ore=true,fish=true,treasure=true,filter="",
     -- Recording: merge distance in yards; with GatherMate2 running ours waits.
     record=true,merge=15,spawn=8,forceRecord=false,forceShow=false,routeUnderground=false,
-    -- Route editor: loop, pass-by radius (yards), high-risk areas ("ignore",
-    -- "avoid" where possible, "block" like no-go).
-    loop=true,passRadius=45,risk="avoid",
+    -- Route editor: loop, pass-by radius (yards). How ways go round terrain,
+    -- water, cliffs, high-risk areas and enemy bases is BV Routing's
+    -- (G.Routing:Config(); taken over from here once, 2026-10-10).
+    loop=true,passRadius=45,
     -- Route editor: terrain tiles (local Map Art data) over Blizzard's map.
     editorTerrain=true,editorNames=true,
-    -- Route planning with the terrain data (slopes, water): use it, and how
-    -- much water is avoided.
-    routeTerrain=true,avoidWater=true,editorRelief=false,
-    -- Enemy bases ("avoid" hard, "block" never, "ignore"); flight masters of
-    -- your own faction only (and neutral ones).
-    enemy="avoid",ownFlights=true,
-    -- Cliffs down: "never", "safe" (short drops) or "always" (Slow Fall,
-    -- Levitate); optional curves on the ways round.
-    cliffs="safe",routeSmooth=false,
-    -- Roads from the terrain data count as preferred ground.
-    preferRoads=true,
+    -- Route editor: terrain relief; flight masters of your own faction only
+    -- (and neutral ones); optional curves on the ways round.
+    editorRelief=false,ownFlights=true,routeSmooth=false,
     -- Walked ways: record them (heatmap) and prefer them in routes.
     recordWays=true,preferWalked=true,editorHeat=false,
     -- Following a route: colours (empty = the style's accent) and opacity of
@@ -131,7 +132,7 @@ end
 function G:Config()
     local cfg=ns.Settings:Module(self.ID)
     for key,value in pairs(self.DEFAULTS) do if cfg[key]==nil then cfg[key]=value end end
-    for _,key in ipairs({"world","minimap","minimapEdge","herb","ore","fish","treasure","record","forceRecord","forceShow","shareReceive","routeUnderground","loop","editorTerrain","editorNames","routeTerrain","avoidWater","editorRelief","ownFlights","routeSmooth","preferRoads","recordWays","preferWalked","editorHeat","mode","modeWindow","routeLines","trackAllLoot","trackerWindow","hudRotate","knownSpawns","routeKnown","sightCircle","hudCompass","ownFinds","scanner","scanStage","modeTracker","modeFinds","findsWindow"}) do cfg[key]=cfg[key]==true end
+    for _,key in ipairs({"world","minimap","minimapEdge","herb","ore","fish","treasure","record","forceRecord","forceShow","shareReceive","routeUnderground","loop","editorTerrain","editorNames","editorRelief","ownFlights","routeSmooth","recordWays","preferWalked","editorHeat","mode","modeWindow","routeLines","trackAllLoot","trackerWindow","hudRotate","knownSpawns","routeKnown","sightCircle","hudCompass","ownFinds","scanner","scanStage","modeTracker","modeFinds","findsWindow"}) do cfg[key]=cfg[key]==true end
     cfg.passRadius=num(cfg.passRadius,45,10,80)
     cfg.hudSize=num(cfg.hudSize,80,40,100);cfg.hudAlpha=num(cfg.hudAlpha,55,10,100)
     cfg.sightRadius=num(cfg.sightRadius,150,40,230);cfg.sightAlpha=num(cfg.sightAlpha,55,5,100);cfg.sightWidth=num(cfg.sightWidth,3,1,16)
@@ -144,9 +145,6 @@ function G:Config()
         if type(cfg[key])~="string" or not (cfg[key]=="" or cfg[key]:match("^%x%x%x%x%x%x")) then cfg[key]=default end
     end
     if cfg.routeNextColor=="" then cfg.routeNextColor="5FD16B" end
-    if not ({ignore=true,avoid=true,block=true})[cfg.risk] then cfg.risk="avoid" end
-    if not ({ignore=true,avoid=true,block=true})[cfg.enemy] then cfg.enemy="avoid" end
-    if not ({never=true,safe=true,always=true})[cfg.cliffs] then cfg.cliffs="safe" end
     if not ({auto=true,tsm=true,auctionator=true,vendor=true})[cfg.priceSource] then cfg.priceSource="auto" end
     if not ({keep=true,square=true,round=true})[cfg.hudShape] then cfg.hudShape="keep" end
     if type(cfg.sourceOff)~="table" then cfg.sourceOff={} end
@@ -190,6 +188,11 @@ function G:Config()
     return cfg
 end
 function G:Active() return self.context~=nil end
+-- A window of the gather mode opened or closed: its switches follow.
+function G:WindowsChanged()
+    if self.Mode and self.Mode.Refresh then self.Mode:Refresh() end
+    if ns.Launcher and ns.Launcher.Refresh then ns.Launcher:Refresh() end
+end
 -- A kind's pin colour: the one set in the settings, else its own.
 function G:Color(kind)
     local hex=self:Config()[kind.."Color"]

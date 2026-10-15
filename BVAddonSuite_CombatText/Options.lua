@@ -92,7 +92,8 @@ local CATEGORY_TEXT={
     incoming={"Incoming damage","Damage you take."},
     heal={"Incoming heals","Heals you receive."},
     outheal={"Outgoing heals","Heals on others: at their nameplate (friendly nameplates must be shown) or your outgoing anchor. Whose heals: as set under \"Whose numbers\"."},
-    miss={"Misses and avoidance","Miss, dodge, parry and similar: yours at the enemy, the enemy's at you."},
+    miss={"Avoided by the enemy","Your attack missed, or the enemy dodged, parried, blocked or resisted it. Shown at the enemy."},
+    avoid={"Avoided by you","The enemy's attack missed you, or you dodged, parried, blocked or resisted it. Shown at you."},
     buff={"Buffs on you","Buffs you gain (+Name) and lose (-Name), as the game reports them for its own combat text."},
     debuff={"Debuffs on you","Debuffs you gain (+Name) and lose (-Name)."},
     buffgiven={"Buffs you give","Your buffs on your friendly target, at its nameplate (or your outgoing anchor). Shown when the buff landed: out of combat Combat Text checks the target's buffs. In combat buffs cannot be read; there only spells already seen landing as a buff are shown. Off by default."},
@@ -219,6 +220,9 @@ local function build(parent)
         schoolControls[bit]=g:Row(L.Format.SchoolName(bit),UI:ColorInput(g,150,function(value) cfg().schoolColors[bit]=value end),
             {help="Color of this damage type for \"School colors\" and the damage type text.",width=150})
     end
+    row("bleed","Bleed color",UI:Switch(g,false,set("bleed")),
+        "Your bleed ticks (Rake, Rip, Rend, Garrote, Rupture) in their own color. The game reports bleeds as physical damage, so Combat Text recognises them from your own casts and their tick rhythm, as the spell guess does (works without turning it on). Only ticks it can pin on one bleed are colored; Rake's ticks need the Combat Log set up, because its first hit is physical too. Bleeds of others, Pounce and Deep Wounds keep the normal color.")
+    row("bleedColor","Bleed",UI:ColorInput(g,150,set("bleedColor")),"Color of your bleed ticks.",{width=150})
     -- Custom animation editor: one animation and one point at a time.
     g:Section("custom","Custom animations")
     local edit={index=1,point=1}
@@ -313,8 +317,8 @@ local function build(parent)
             function box:SetValue(value) if not self:HasFocus() and self:GetText()~=value then self:SetText(value or "") end end
             srow(key,title,box,help..AFFIX_NOTE)
         end
-        affix("prefix","Prefix","Text in front of every "..(name=="miss" and "message" or "number")..".")
-        affix("suffix","Suffix","Text after every "..(name=="miss" and "message" or "number")..".")
+        affix("prefix","Prefix","Text in front of every "..((name=="miss" or name=="avoid") and "message" or "number")..".")
+        affix("suffix","Suffix","Text after every "..((name=="miss" or name=="avoid") and "message" or "number")..".")
         if L.CRIT_CATEGORIES[name] then
             affix("critPrefix","Crit prefix","Extra text in front of crits only, outside the prefix.")
             affix("critSuffix","Crit suffix","Extra text after crits only, outside the suffix.")
@@ -328,7 +332,7 @@ local function build(parent)
     -- Tabs in the settings window header: which sections each one shows.
     local TABS={
         {id="general",label="General",sections={"module","scope","combatlog","schools"}},
-        {id="categories",label="Combat",sections={"cat_outgoing","cat_incoming","cat_heal","cat_outheal","cat_miss"}},
+        {id="categories",label="Combat",sections={"cat_outgoing","cat_incoming","cat_heal","cat_outheal","cat_miss","cat_avoid"}},
         {id="messages",label="Auras & messages",sections={"cat_buff","cat_debuff","cat_buffgiven","cat_power","cat_notice","cat_kill"}},
         {id="animations",label="Animations",sections={"custom"}},
         {id="experimental",label="Experimental",sections={"icons"}},

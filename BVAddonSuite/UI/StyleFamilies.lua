@@ -200,7 +200,7 @@ local function build(frame,kind,corner,shadow)
         p.borders=DS.Slice(frame,"Interface\\AddOns\\BVAddonSuite\\Media\\DesignLab\\border.tga",corner,"BORDER",0)
         p.inner={}
         -- Windows keep their soft shadow in BV, as in the tool style.
-        if shadow then for _,t in ipairs(DS.Slice(frame,"Interface\\AddOns\\BVAddonSuite\\Media\\DesignLab\\shadow.tga",20,"BACKGROUND",-2,10)) do p.inner[#p.inner+1]=t end;p.shadow=true end
+        if shadow then for _,t in ipairs(DS.Slice(frame,DS.SHADOW,DS.SHADOWCORNER,"BACKGROUND",-2,DS.SHADOWEXPAND)) do p.inner[#p.inner+1]=t end;p.shadow=true end
     else
         local fill=frame:CreateTexture(nil,"BACKGROUND",nil,0);fill:SetTexture(FLAT);fill:SetAllPoints(frame)
         p.fills={fill}
@@ -247,7 +247,9 @@ function S:PaintSkin(style,frame)
     if not r then r,g,b,a=style:Color(skin.fill) end
     for _,t in ipairs(pieces.fills) do t:SetVertexColor(r,g,b,(a or 1)*opacity) end
     local edgeOpacity=math.max(opacity,.35)
-    local er,eg,eb,ea=style:Color("edge",kind=="rounded" and .45 or nil)
+    -- Rounded (BV): a neutral hairline; the framed families keep their edge.
+    local er,eg,eb,ea
+    if kind=="rounded" then er,eg,eb,ea=style:Color("text",.1) else er,eg,eb,ea=style:Color("edge") end
     for _,t in ipairs(pieces.borders) do t:SetVertexColor(er,eg,eb,kind=="rounded" and ea or ea*edgeOpacity) end
     if not pieces.shadow then for _,t in ipairs(pieces.inner) do t:SetVertexColor(0,0,0,edgeOpacity) end end
 end
@@ -258,13 +260,15 @@ function S:Skin(style,frame,fill,corner,alpha,shadow)
     -- The factory's controls paint their surface themselves (Factory:Button,
     -- Input, Switch...): same contract as the tool skin. Gold and pixel
     -- borders stay crisp, so their alpha does not drop below 0.8.
-    function frame:PaintSurface(background,edge,opacity)
-        self.bvSurfacePaint={background,edge,opacity}
+    function frame:PaintSurface(background,edge,opacity,top,bottom)
+        self.bvSurfacePaint={background,edge,opacity,top,bottom}
         local family=select(2,familyOf(style))
         local kind=family.border
         local pieces=self.bvFamilySkin.kinds[kind]
         if not pieces then return end
         for _,t in ipairs(pieces.fills) do t:SetVertexColor(background[1],background[2],background[3],(background[4] or 1)*(opacity or 1)) end
+        -- Shaded top to bottom (a button's depth), see DesignSystem.Shade.
+        if top and bottom then DS.Shade(pieces.fills,top,bottom,(background[4] or 1)*(opacity or 1)) end
         -- Colours taken from an interface package keep their own (often faint) border alpha.
         local own=kind=="rounded" or (family.matchUI and S:External()~=nil)
         for _,t in ipairs(pieces.borders) do

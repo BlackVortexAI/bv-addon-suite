@@ -38,17 +38,31 @@ function W:Build()
         -- Closed with its X it stays closed after a reload (Florian 2026-10-10:
         -- only Show(false) remembered it). Not OnHide: hiding the interface
         -- (Alt+Z) or switching the module off hides it too.
-        if w.close then w.close:HookScript("OnClick",function() G:Config().trackerWindow=false end) end
+        if w.close then w.close:HookScript("OnClick",function() local c=G:Config();c.trackerWindow=false;c.modeTracker=false;G:WindowsChanged() end) end
         if not UI:RestoreWindowPosition(w) then w:ClearAllPoints();w:SetPoint("RIGHT",UIParent,"RIGHT",-120,-260) end
         w:Hide()
     end)
     return self.window
 end
+-- Opened or closed by you; the gather mode then brings it or not (as the
+-- minimap finds, Florian 2026-10-15).
 function W:Show(on)
     local w=self:Build()
     if on==nil then on=not w:IsShown() end
-    G:Config().trackerWindow=on and true or false
+    local c=G:Config()
+    c.trackerWindow=on and true or false
+    c.modeTracker=c.trackerWindow
     w:SetShown(on)
+    G:WindowsChanged()
+end
+-- With the gather mode: shown when it is wanted, the wish kept.
+function W:Follow(on)
+    local c=G:Config()
+    local show=on and c.modeTracker==true
+    if not show and not self.window then return end
+    c.trackerWindow=show
+    self:Build():SetShown(show)
+    G:WindowsChanged()
 end
 -- The clock ticks once a second while the window is open and a session runs.
 function W:Watch(on)
@@ -108,6 +122,9 @@ function W:Sessions()
     end
 end
 function W:Enable(context)
-    if G:Config().trackerWindow then self:Show(true) end
+    -- Open after a reload when it was, or when the gather mode is on and
+    -- brings it (as the minimap finds, Florian 2026-10-14).
+    local c=G:Config()
+    if c.trackerWindow or (c.modeTracker and G.Mode:On()) then self:Build():Show();c.trackerWindow=true end
     context:Defer(function() if W.window then W.window:Hide() end;W:Watch(false) end)
 end

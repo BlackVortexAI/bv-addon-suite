@@ -27,8 +27,11 @@ function Launcher:Click(button)
 end
 -- Quick menu on hover (Florian 2026-10-09: the settings, AuraStudio, the
 -- route editor and the gather mode are opened often). Modules add entries:
--- {id, label, order, onClick, state = function() -> true/false/nil (a switch)}.
--- An entry that answers shown() == false is left out (its module is off).
+-- {id, label, order, group, icon, onClick, state = function() -> true/false/nil
+-- (a switch)}. An entry that answers shown() == false is left out (its
+-- module is off). Grouped under small headings (Florian 2026-10-15: the
+-- list had grown flat and long); a group with no entry shown is left out.
+Launcher.GROUPS={{id="suite"},{id="gather",label="Gather"},{id="navigation",label="Navigation"},{id="tools",label="Tools"}}
 function Launcher:AddEntry(entry)
     for i,e in ipairs(self.entries) do if e.id==entry.id then table.remove(self.entries,i) break end end
     self.entries[#self.entries+1]=entry
@@ -43,50 +46,103 @@ function Launcher:Entries()
     end
     return out
 end
-local ROW=24
+-- The entries in their groups' order: {{group, entries}, ...}.
+function Launcher:Grouped()
+    local by={}
+    for _,entry in ipairs(self:Entries()) do
+        local g=entry.group or "suite"
+        by[g]=by[g] or {};table.insert(by[g],entry)
+    end
+    local out,known={},{}
+    for _,g in ipairs(self.GROUPS) do known[g.id]=true;if by[g.id] then out[#out+1]={group=g,entries=by[g.id]} end end
+    for id,list in pairs(by) do if not known[id] then out[#out+1]={group={id=id,label=id},entries=list} end end
+    return out
+end
+local ROW,HEAD,WIDTH=24,20,214
+local function symbol(texture,name)
+    if not ns.Symbols then texture:Hide();return end
+    local path,l,r,t,b=ns.Symbols:Coords(name or "circle",32)
+    if path then texture:SetTexture(path);texture:SetTexCoord(l,r,t,b);texture:Show() else texture:Hide() end
+end
 function Launcher:Menu(button)
     local menu=self.menu
     if not menu then
-        menu=UI:Panel(UIParent,190,40,"surface");menu:SetFrameStrata("TOOLTIP");menu:EnableMouse(true);menu:Hide()
-        menu.rows={}
+        menu=UI:Panel(UIParent,WIDTH,40,"surface");menu:SetFrameStrata("TOOLTIP");menu:EnableMouse(true);menu:Hide()
+        -- The soft shadow of the windows (Florian 2026-10-11, finer).
+        local DS=ns.DesignSystem
+        if DS.Slice and DS.SHADOW then DS.Slice(menu,DS.SHADOW,DS.SHADOWCORNER*.6,"BACKGROUND",-2,DS.SHADOWEXPAND*.6) end
+        menu.rows,menu.heads={},{}
         menu:SetScript("OnLeave",function() Launcher:Leave() end)
         menu:SetScript("OnEnter",function() Launcher:Stay() end)
-        menu:HookScript("OnHide",function() Launcher:Stay() end)
+        menu:HookScript("OnHide",function() Launcher:Stay();Launcher.held=nil end)
         self.menu=menu
     end
-    local entries=self:Entries()
-    for i,entry in ipairs(entries) do
-        local row=menu.rows[i]
-        if not row then
-            row=UI:Button(menu,"",182,function(own) Launcher:Choose(own.entry) end,"ghost")
-            row:SetLabelInsets(10,44,"LEFT");M.Height(row,ROW)
-            row.state=UI:Label(row,"",10,"muted");M.Point(row.state,"RIGHT",row,"RIGHT",-8,0);M.Size(row.state,40,ROW);row.state:SetJustifyH("RIGHT")
-            row:HookScript("OnLeave",function() Launcher:Leave() end)
-            row:HookScript("OnEnter",function() Launcher:Stay() end)
-            menu.rows[i]=row
+    local style=UI:GetStyle()
+    local y,rows,heads,count=-6,0,0,0
+    for _,part in ipairs(self:Grouped()) do
+        if part.group.label then
+            heads=heads+1
+            local head=menu.heads[heads]
+            if not head then
+                head=CreateFrame("Frame",nil,menu);M.Size(head,WIDTH-16,HEAD)
+                head.text=UI:Label(head,"",9,"muted",true);M.Point(head.text,"LEFT",head,"LEFT",4,0)
+                head.rule=head:CreateTexture(nil,"ARTWORK");head.rule:SetColorTexture(style:Color("text",.08))
+                M.Point(head.rule,"LEFT",head.text,"RIGHT",6,0);M.Point(head.rule,"RIGHT",head,"RIGHT",0,0);M.Height(head.rule,1)
+                menu.heads[heads]=head
+            end
+            head.text:SetText(part.group.label:upper())
+            head:ClearAllPoints();M.Point(head,"TOPLEFT",menu,"TOPLEFT",8,y);head:Show()
+            y=y-HEAD
         end
-        row.entry=entry
-        row:SetLabelText(entry.label)
-        local state=entry.state and entry.state()
-        row.state:SetText(state==true and "On" or state==false and "Off" or "")
-        row:ClearAllPoints();M.Point(row,"TOPLEFT",menu,"TOPLEFT",4,-4-(i-1)*ROW);row:Show()
+        for _,entry in ipairs(part.entries) do
+            rows=rows+1;count=count+1
+            local row=menu.rows[rows]
+            if not row then
+                row=UI:Button(menu,"",WIDTH-8,function(own) Launcher:Choose(own.entry) end,"ghost")
+                row:SetLabelInsets(30,48,"LEFT");M.Height(row,ROW)
+                row.glyph=row:CreateTexture(nil,"OVERLAY");M.Size(row.glyph,14,14);M.Point(row.glyph,"LEFT",row,"LEFT",10,0)
+                row.switch=UI:Switch(row,false);row.switch:EnableMouse(false);M.Point(row.switch,"RIGHT",row,"RIGHT",-8,0)
+                row:HookScript("OnLeave",function() Launcher:Leave() end)
+                row:HookScript("OnEnter",function() Launcher:Stay() end)
+                menu.rows[rows]=row
+            end
+            row.entry=entry
+            row:SetLabelText(entry.label)
+            symbol(row.glyph,entry.icon)
+            row.glyph:SetVertexColor(style:Color("muted"))
+            local state=entry.state and entry.state()
+            row.switch:SetShown(state~=nil)
+            if state~=nil and row.switch.SetValue then row.switch:SetValue(state==true) end
+            row:ClearAllPoints();M.Point(row,"TOPLEFT",menu,"TOPLEFT",4,y);row:Show()
+            y=y-ROW
+        end
     end
-    for i=#entries+1,#menu.rows do menu.rows[i]:Hide() end
+    for i=rows+1,#menu.rows do menu.rows[i]:Hide() end
+    for i=heads+1,#menu.heads do menu.heads[i]:Hide() end
     if not menu.hint then
         menu.hint=UI:Label(menu,"Click: settings  ·  Right-click: AuraStudio  ·  Drag: move",9,"muted")
-        M.Point(menu.hint,"BOTTOMLEFT",menu,"BOTTOMLEFT",10,4);M.Size(menu.hint,174,24);menu.hint:SetWordWrap(true)
+        M.Point(menu.hint,"BOTTOMLEFT",menu,"BOTTOMLEFT",10,4);M.Size(menu.hint,WIDTH-16,24);menu.hint:SetWordWrap(true)
     end
-    M.Height(menu,8+#entries*ROW+26)
+    -- The hints are the minimap button's (another button opening it: none).
+    local own=self.library and self.library:GetMinimapButton(self.name)
+    local hints=not own or button==own
+    menu.hint:SetShown(hints)
+    M.Height(menu,-y+(hints and 30 or 6))
     -- Towards the middle of the screen, overlapping the button a little so
     -- the pointer never crosses a gap (Florian 2026-10-09: it opened off screen).
-    local x,y=button:GetCenter()
-    local px,py=UIParent:GetCenter()
-    local right=x and px and x>px
-    local top=y and py and y>py
-    local point=(top and "TOP" or "BOTTOM")..(right and "RIGHT" or "LEFT")
-    menu:ClearAllPoints();menu:SetPoint(point,button,"CENTER",right and 8 or -8,top and -8 or 8)
+    -- Held where it is after a switch in it (Florian 2026-10-15: the Gather
+    -- HUD moves the minimap and its button; the menu jumped away from the
+    -- pointer and closed).
+    if not self.held then
+        local x,yy=button:GetCenter()
+        local px,py=UIParent:GetCenter()
+        local right=x and px and x>px
+        local top=yy and py and yy>py
+        local point=(top and "TOP" or "BOTTOM")..(right and "RIGHT" or "LEFT")
+        menu:ClearAllPoints();menu:SetPoint(point,button,"CENTER",right and 8 or -8,top and -8 or 8)
+    end
     menu:SetClampedToScreen(true)
-    menu:SetShown(#entries>0)
+    menu:SetShown(count>0)
     return menu
 end
 -- Leaving the button or the menu closes it after a short moment, unless
@@ -105,6 +161,14 @@ function Launcher:Stay()
 end
 function Launcher:Choose(entry)
     if not entry then return end
+    local menu=self.menu
+    if entry.state and menu and menu:IsShown() and menu.GetLeft and menu:GetLeft() then
+        -- Pinned to the screen where it is now, before the switch moves things.
+        local left,top=menu:GetLeft(),menu:GetTop()
+        local scale=menu:GetEffectiveScale()/UIParent:GetEffectiveScale()
+        menu:ClearAllPoints();menu:SetPoint("TOPLEFT",UIParent,"BOTTOMLEFT",left*scale,top*scale)
+        self.held=true
+    end
     ns:Call("minimap menu",entry.onClick)
     if entry.state and self.menu and self.menu:IsShown() and self.button then self:Menu(self.button) else
         if self.menu then self.menu:Hide() end
@@ -155,8 +219,8 @@ function Launcher:Refresh()
 end
 function Launcher:SetMenu(value) self:Store().menu=value==true;if self.menu then self.menu:Hide() end;self:RefreshControls() end
 -- Core's own entries: the settings and AuraStudio.
-Launcher:AddEntry({id="settings",label="Settings",order=10,onClick=function() ns.Config:Toggle() end})
-Launcher:AddEntry({id="aurastudio",label="AuraStudio",order=20,shown=function() return ns.AuraStudio~=nil end,onClick=function() ns.AuraStudio:Open() end})
+Launcher:AddEntry({id="settings",label="Settings",order=10,group="suite",icon="settings",onClick=function() ns.Config:Toggle() end})
+Launcher:AddEntry({id="aurastudio",label="AuraStudio",order=80,group="tools",icon="sparkles",shown=function() return ns.AuraStudio~=nil end,onClick=function() ns.AuraStudio:Open() end})
 function Launcher:SetShown(value)
     self:StopDrag(); self:Store().hide=value~=true; self:Refresh()
 end

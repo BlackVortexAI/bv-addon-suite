@@ -1,0 +1,4 @@
+<Bindings>
+	<Binding name="BVCODEX_SEARCH" category="BV Addon Suite">SlashCmdList.BVADDONSUITE("codex")</Binding>
+	<Binding name="BVCODEX_TOUR" category="BV Addon Suite">SlashCmdList.BVADDONSUITE("tour")</Binding>
+</Bindings>

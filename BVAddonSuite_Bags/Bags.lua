@@ -1,11 +1,11 @@
 local package=...
 local ns=BVAddonSuiteCore
 if not ns or not ns.RequireCore then
-    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.91 or newer. Update Core; saved data is preserved.") end
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.101 or newer. Update Core; saved data is preserved.") end
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.8.91","0.8.91",1) then return end
+if not ns:RequireCore(package,"0.8.92","0.8.101",1) then return end
 local N=ns.NativeButtons
 
 -- Blizzard's bag buttons, backpack last (it sits at the right end natively).
@@ -92,6 +92,8 @@ Bags=N:Bar({
         end
         return list
     end,
+    -- Its empty frame takes no mouse while ours shows the buttons.
+    shells=function() return {BagsBar} end,
     main={symbol="backpack",label="Bags",hint="Left-click: open or close all bags\nRight-click: keep the bag slots open\nHover: bag slots",
         text=freeSlots,
         click=function()

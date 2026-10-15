@@ -180,19 +180,42 @@ function G:Queue(run,label,unit,school)
         local ok,pet=pcall(UnitExists,"pet")
         if ok and pet==true and not L.Secret(pet) then swing="pet" end
     end
-    self.hits[#self.hits+1]={time=now(),seq=self.seq,run=run,label=label,auto=swing~=nil,swing=swing}
+    self.hits[#self.hits+1]={time=now(),seq=self.seq,run=run,label=label,auto=swing~=nil,swing=swing,unit=unit}
     if not self.flush then self.flush=C_Timer.NewTimer(0,function() G:Flush() end) end
+end
+-- Where a hit landed, read once as its frame ends (Florian 2026-10-14:
+-- another player's hits on his own mob of the same kind showed as yours):
+--   relation  whom the enemy fights (Origin): a line of yours never goes
+--             to a hit on an enemy that fights neither you nor your group
+--   target    your target: an auto attack only ever hits it
+--   mine      your target, or you cast on it lately or your DoT runs on it:
+--             such hits claim the lines of their frame first
+function G:Place(hit)
+    local unit=hit.unit
+    if type(unit)~="string" or L.Secret(unit) then return end
+    local A=L.Attribution
+    -- Whom it fights: only for enemies (a heal on a friend has its own rules).
+    local ok,hostile=pcall(UnitCanAttack,"player",unit)
+    if ok and hostile==true and not L.Secret(hostile) then
+        local fine,relation=pcall(L.Origin.Relation,L.Origin,unit)
+        hit.relation=fine and relation or nil
+    end
+    hit.target=A:IsTarget(unit)
+    hit.mine=hit.target or A:Recent(unit) or A:Running(unit)
 end
 -- One line, one hit. First a line right behind the hit in its frame (a
 -- tick), then one before it in its frame (a direct hit); from an earlier
--- frame only while auto attacking (a swing's line runs ahead of its hit).
+-- frame only while auto attacking (a swing's line runs ahead of its hit),
+-- and for your own swing only on your target.
 function G:Claim(hit)
+    if hit.relation=="none" then return false end
+    local swingAhead=hit.auto and (hit.swing~="auto" or hit.target~=false)
     local after,same,earlier
     for _,line in ipairs(self.lines) do
         if not line.used then
             if line.time==hit.time then
                 if line.seq>hit.seq then after=after or line else same=same or line end
-            elseif hit.auto and line.seq<hit.seq and hit.time-line.time<=self.CREDIT then earlier=earlier or line end
+            elseif swingAhead and line.seq<hit.seq and hit.time-line.time<=self.CREDIT then earlier=earlier or line end
         end
     end
     local line=after or same or earlier
@@ -208,8 +231,17 @@ function G:Flush()
     self.flush=nil
     local hits=self.hits
     self.hits={}
+    -- Hits on enemies that are yours by other signs claim first; shown in
+    -- the order they came.
+    local claims={}
+    for _,hit in ipairs(hits) do self:Place(hit) end
+    for pass=1,2 do
+        for _,hit in ipairs(hits) do
+            if (pass==1)==(hit.mine==true) then claims[hit]={self:Claim(hit)} end
+        end
+    end
     for _,hit in ipairs(hits) do
-        local credit,line=self:Claim(hit)
+        local credit,line=claims[hit][1],claims[hit][2]
         self:Trace(string.format("hit #%d %s%s -> %s",hit.seq,tostring(hit.label or "?"),hit.swing and " "..hit.swing or "",
             credit and string.format("%s #%d (%.2f s)",credit,line.seq,hit.time-line.time) or "no line"))
         local ok,err=pcall(hit.run,credit)

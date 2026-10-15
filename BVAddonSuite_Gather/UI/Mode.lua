@@ -18,8 +18,8 @@ function H:Set(on)
     c.mode=on and true or false
     if not on and G.Hud then G.Hud:Hide() end
     -- Windows that come and go with the mode (Florian 2026-10-10).
-    if c.modeTracker then G.TrackerWindow:Show(on and true or false) end
-    if c.modeFinds then G.Finds:Show(on and true or false) end
+    G.TrackerWindow:Follow(on)
+    G.Finds:Follow(on)
     if on and G.Follow:Active() then G.Follow:Watch(true) else G.Follow:Watch(false) end
     if G.Sight then G.Sight:Update() end
     G:Changed()
@@ -73,17 +73,12 @@ function H:Build()
             "The route's lines and arrows; off: only its points.")
         self.hud=row("HUD",UI:Switch(c,false,function(value) if value then G.Hud:Show() else G.Hud:Hide() end;H:Refresh() end),
             "The minimap large and see-through in the middle of the screen, with the yellow dots of Find Herbs and Find Minerals; the mouse passes through.")
-        local function coupled(key,window)
-            return function(value)
-                G:Config()[key]=value
-                if H:On() then window:Show(value) end
-                H:Refresh()
-            end
-        end
-        self.trackerWindow=row("Tracker window",UI:Switch(c,false,coupled("modeTracker",G.TrackerWindow)),
-            "The tracker's window opens with the gather mode and closes with it.")
-        self.findsWindow=row("Minimap finds",UI:Switch(c,false,coupled("modeFinds",G.Finds)),
-            "The window of the herbs and ores the scanner saw opens with the gather mode and closes with it (the scanner works in the HUD).")
+        -- The switch is the window (Florian 2026-10-15: it disagreed with the
+        -- minimap menu); left on, the gather mode brings it back.
+        self.trackerWindow=row("Tracker window",UI:Switch(c,false,function(value) G.TrackerWindow:Show(value) end),
+            "The tracker's window. Left open, it closes and opens again with the gather mode.")
+        self.findsWindow=row("Minimap finds",UI:Switch(c,false,function(value) G.Finds:Show(value) end),
+            "The window of the herbs and ores the scanner saw (the scanner works in the HUD). Left open, it closes and opens again with the gather mode.")
         self.editor=UI:Button(c,"Route editor",(WIDTH-30)/2,function() G.Editor:Toggle() end,"ghost");M.Point(self.editor,"TOPLEFT",c,"TOPLEFT",12,y)
         self.scanner=UI:Button(c,"Scanner",(WIDTH-30)/2,function() G:OpenScanner() end,"ghost");M.Point(self.scanner,"TOPRIGHT",c,"TOPRIGHT",-12,y)
         UI:AttachTooltip(self.scanner,"Scanner","The minimap scanner's settings: which herbs and ores warn, and their sounds.")
@@ -122,8 +117,8 @@ function H:Refresh()
     self.mode:SetValue(c.mode)
     self.lines:SetValue(c.routeLines)
     self.hud:SetValue(G.Hud:On())
-    self.trackerWindow:SetValue(c.modeTracker)
-    self.findsWindow:SetValue(c.modeFinds)
+    self.trackerWindow:SetValue(G.TrackerWindow.window~=nil and G.TrackerWindow.window:IsShown())
+    self.findsWindow:SetValue(G.Finds.window~=nil and G.Finds.window:IsShown())
     for id,box in pairs(self.kinds) do box.switch:SetValue(c[id]) end
     local state=G.Follow:State()
     if state then
@@ -136,14 +131,17 @@ function H:Refresh()
 end
 -- Quick menu of the minimap launcher (Core): gather mode, its window, the editor.
 if ns.Launcher and ns.Launcher.AddEntry then
-    ns.Launcher:AddEntry({id="gathermode",label="Gather mode",order=30,shown=function() return G:Active() end,
+    ns.Launcher:AddEntry({id="gathermode",label="Gather mode",order=30,group="gather",icon="pickaxe",shown=function() return G:Active() end,
         state=function() return G:Config().mode==true end,onClick=function() H:Toggle() end})
-    ns.Launcher:AddEntry({id="gatherwindow",label="Gather window",order=31,shown=function() return G:Active() end,onClick=function() H:Show() end})
-    ns.Launcher:AddEntry({id="routeeditor",label="Route editor",order=32,shown=function() return G:Active() end,onClick=function() G.Editor:Toggle() end})
-    ns.Launcher:AddEntry({id="gathertracker",label="Gather tracker",order=33,shown=function() return G:Active() end,onClick=function() G.TrackerWindow:Show() end})
-    ns.Launcher:AddEntry({id="gatherfinds",label="Minimap finds",order=33.5,shown=function() return G:Active() end,onClick=function() G.Finds:Show() end})
-    ns.Launcher:AddEntry({id="gatherwiki",label="Gather wiki",order=35,shown=function() return G:Active() end,onClick=function() G.Wiki:Open() end})
-    ns.Launcher:AddEntry({id="gatherhud",label="Gather HUD",order=34,shown=function() return G:Active() end,state=function() return G.Hud:On() end,onClick=function() G.Hud:Toggle() end})
+    ns.Launcher:AddEntry({id="gatherwindow",label="Gather window",order=31,group="gather",icon="layout-dashboard",shown=function() return G:Active() end,onClick=function() H:Show() end})
+    ns.Launcher:AddEntry({id="routeeditor",label="Gather route editor",order=32,group="gather",icon="route",shown=function() return G:Active() end,onClick=function() G.Editor:Toggle() end})
+    -- Switches like the gather window's (Florian 2026-10-15).
+    ns.Launcher:AddEntry({id="gathertracker",label="Gather tracker",order=33,group="gather",icon="timer",shown=function() return G:Active() end,
+        state=function() return G.TrackerWindow.window~=nil and G.TrackerWindow.window:IsShown() end,onClick=function() G.TrackerWindow:Show() end})
+    ns.Launcher:AddEntry({id="gatherfinds",label="Minimap finds",order=33.5,group="gather",icon="scan-eye",shown=function() return G:Active() end,
+        state=function() return G.Finds.window~=nil and G.Finds.window:IsShown() end,onClick=function() G.Finds:Show() end})
+    ns.Launcher:AddEntry({id="gatherwiki",label="Gather wiki",order=35,group="gather",icon="book-open",shown=function() return G:Active() end,onClick=function() G.Wiki:Open() end})
+    ns.Launcher:AddEntry({id="gatherhud",label="Gather HUD",order=34,group="gather",icon="crosshair",shown=function() return G:Active() end,state=function() return G.Hud:On() end,onClick=function() G.Hud:Toggle() end})
 end
 function H:Enable(context)
     if G:Config().modeWindow then self:Show(true) end

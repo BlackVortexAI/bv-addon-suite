@@ -124,9 +124,37 @@ function S:Enable(context)
     self:Apply()
 end
 -- The magnifier follows the switch.
+-- Beside Blizzard's own buttons at the map's top left (Florian 2026-10-15:
+-- the magnifier lay under the map pin button): right of the last of the
+-- map's overlay buttons there.
+function S:Left(map,parent)
+    local x=6
+    local pl,pt=parent:GetLeft(),parent:GetTop()
+    if not (pl and pt) then return x end
+    -- The map's overlay frames, and small buttons on the map itself (not ours).
+    local frames={}
+    for _,frame in ipairs(map.overlayFrames or {}) do frames[#frames+1]=frame end
+    if map.GetChildren then for _,frame in ipairs({map:GetChildren()}) do frames[#frames+1]=frame end end
+    for _,frame in ipairs(frames) do
+        if frame~=self.button and not frame.bvMapButton and frame.IsShown and frame:IsShown() and frame.GetLeft then
+            local left,top=frame:GetLeft(),frame:GetTop()
+            local width,height=frame:GetWidth() or 0,frame:GetHeight() or 0
+            if left and top and width>0 and height>0 and width<=60 and height<=60 and top>pt-60 and left<pl+80 then x=math.max(x,left-pl+width+6) end
+        end
+    end
+    return x
+end
 function S:Apply()
     local on=P:Active() and P:Config().search
     if on then self:Build() end
-    if self.button then self.button:SetShown(on==true) end
+    if self.button then
+        self.button:SetShown(on==true)
+        local map=P:WorldMap()
+        local parent=self.button:GetParent()
+        if on and map and parent then
+            -- Measured offsets: set as they are, not scaled like design metrics.
+            self.button:ClearAllPoints();self.button:SetPoint("TOPLEFT",parent,"TOPLEFT",self:Left(map,parent),-6)
+        end
+    end
     if not on then self:Close() end
 end

@@ -209,6 +209,7 @@ function Display:Place(entry,override)
     text:SetFont(fontPath(cfg,style),size,cfg.outline)
     local r,g,b,a=L.Format.Color(style.color)
     if style.school and entry.r then r,g,b=entry.r,entry.g,entry.b end
+    if entry.bleed then r,g,b=L.Format.Color(cfg.bleedColor) end
     -- Values on enemies not fighting you: own color (optional) and transparency.
     if entry.foreign then
         if cfg.foreignTint then r,g,b=L.Format.Color(cfg.foreignColor) end

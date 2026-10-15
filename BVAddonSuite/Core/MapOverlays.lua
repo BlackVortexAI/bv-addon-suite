@@ -118,12 +118,19 @@ function O:Hostile(mapID)
             out[#out+1]={left=label.left,top=label.top,right=label.right,bottom=label.bottom,name=label.name}
         end
     end
+    -- Each flight master with the smallest label holding it. A place with a
+    -- flight master of your side too is neutral (Florian 2026-10-15: Booty
+    -- Bay, Ratchet, Gadgetzan and Everlook have both and were marked enemy).
+    local width,height=call("C_Map.GetMapWorldSize",mapID)
+    if type(width)~="number" or width<=0 then width,height=1000,1000 end
+    local rx,ry=120/width,120/height
+    local found,friendly={},{}
     local nodes=call("C_TaxiMap.GetTaxiNodesForMap",mapID)
     for _,node in ipairs(type(nodes)=="table" and nodes or {}) do
         local position=type(node)=="table" and node.position
         local ok,x,y=false
         if position and position.GetXY then ok,x,y=pcall(position.GetXY,position) end
-        if ok and type(x)=="number" and self.HostileNode(node.faction) then
+        if ok and type(x)=="number" and type(y)=="number" then
             local best
             for _,label in ipairs(labels) do
                 if x>=label.left and x<=label.right and y>=label.top and y<=label.bottom then
@@ -131,14 +138,22 @@ function O:Hostile(mapID)
                     if not best or size<best.size then best={size=size,label=label} end
                 end
             end
-            if best then
-                local l=best.label
-                out[#out+1]={left=l.left,top=l.top,right=l.right,bottom=l.bottom,name=l.name~="" and l.name or node.name}
+            local hostile=self.HostileNode(node.faction)
+            found[#found+1]={node=node,x=x,y=y,label=best and best.label,hostile=hostile}
+            if not hostile and best then friendly[best.label]=true end
+        end
+    end
+    for _,f in ipairs(found) do
+        if f.hostile then
+            local l=f.label
+            if l then
+                if not friendly[l] then out[#out+1]={left=l.left,top=l.top,right=l.right,bottom=l.bottom,name=l.name~="" and l.name or f.node.name} end
             else
-                local width,height=call("C_Map.GetMapWorldSize",mapID)
-                if type(width)~="number" or width<=0 then width,height=1000,1000 end
-                local rx,ry=120/width,120/height
-                out[#out+1]={left=x-rx,top=y-ry,right=x+rx,bottom=y+ry,name=node.name}
+                local near=false
+                for _,g in ipairs(found) do
+                    if not g.hostile and math.abs(g.x-f.x)<=rx and math.abs(g.y-f.y)<=ry then near=true end
+                end
+                if not near then out[#out+1]={left=f.x-rx,top=f.y-ry,right=f.x+rx,bottom=f.y+ry,name=f.node.name} end
             end
         end
     end

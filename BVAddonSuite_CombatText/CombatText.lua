@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.7.7","0.8.95",1) then return end
+if not ns:RequireCore(package,"0.7.8","0.8.95",1) then return end
 -- Combat text module. Everything specific to it lives in this package, never
 -- in Core, so Core stays free for fixes.
 L.ns=ns
@@ -31,14 +31,18 @@ end
 -- (movable in the Layout Editor), "nameplate" (falls back to outgoing without
 -- a plate) or "auto". Animations: see UI/Animation.lua.
 L.PLACES={outgoing=true,incoming=true,notice=true,highlights=true,auras=true,custom=true,nameplate=true,auto=true}
-L.CATEGORY_ORDER={"outgoing","incoming","heal","outheal","miss","buff","debuff","buffgiven","power","notice","kill"}
+L.CATEGORY_ORDER={"outgoing","incoming","heal","outheal","miss","avoid","buff","debuff","buffgiven","power","notice","kill"}
 L.CATEGORY_DEFAULTS={
     outgoing={anchor="nameplate",animation="fountain",size=20,color="FFFFFFFF",school=true,label=false,prefix="",suffix="",duration=1.4,distance=70,crit=1.5},
     incoming={anchor="incoming",animation="down",size=18,color="FF5050FF",school=false,label=false,prefix="-",suffix="",duration=1.6,distance=90,crit=1.4},
     heal={anchor="incoming",animation="up",size=18,color="50FF70FF",school=false,prefix="+",suffix="",duration=1.6,distance=90,crit=1.4},
     -- Heals on others (0.7.0): at their nameplate, else the outgoing anchor.
     outheal={anchor="nameplate",animation="up",size=18,color="50FF70FF",school=false,prefix="+",suffix="",duration=1.4,distance=60,crit=1.4},
+    -- Avoidance (0.7.8, a CurseForge wish 2026-10-14): "miss" at the enemy
+    -- (your attack missed, dodged, parried...), "avoid" at you (the enemy's).
+    -- Until 0.7.7 "miss" held both.
     miss={anchor="auto",animation="up",size=16,color="C8C8C8FF",school=false,prefix="",suffix="",duration=1.2,distance=50,crit=1},
+    avoid={anchor="incoming",animation="up",size=16,color="C8C8C8FF",school=false,prefix="",suffix="",duration=1.2,distance=50,crit=1},
     -- From COMBAT_TEXT_UPDATE (Notices.lua): auras on you, power gains, status.
     buff={anchor="incoming",animation="up",size=16,color="66E07AFF",school=false,prefix="",suffix="",duration=1.8,distance=80,crit=1,gains=true,fades=true},
     debuff={anchor="incoming",animation="up",size=16,color="E0606AFF",school=false,prefix="",suffix="",duration=1.8,distance=80,crit=1,gains=true,fades=true},
@@ -76,6 +80,11 @@ L.DEFAULTS={enabled=false,hideBlizzard=true,hideBlizzardSelf=true,plates=true,
     plateOffset=0,numbers="short",font="inherit",outline="OUTLINE",
     -- Numbers on enemies not fighting you: own color (optional) and transparency.
     foreignTint=true,foreignColor="A0A0A0FF",foreignAlpha=.6,
+    -- Your bleed ticks in their own color (0.7.8, a CurseForge wish
+    -- 2026-10-14): the game calls them physical like any melee hit, so only
+    -- a tick the spell guess pins on your physical damage-over-time spell
+    -- (Rake, Rip, Rend, Garrote, Rupture) counts. Off by default.
+    bleed=false,bleedColor="D02838FF",
     -- Spell icons (best guess from your own casts): "off", "left" or "right".
     icons="left",iconSize=1,iconHeals=true,
     -- Experimental: guess the spell of a hit (icons, {spell}). Off by default.
@@ -127,6 +136,8 @@ function L:Config()
     cfg.foreignTint=cfg.foreignTint==true;cfg.foreignAlpha=num(cfg.foreignAlpha,.6,.1,1)
     cfg.plateOffset=math.floor(num(cfg.plateOffset,0,-50,150)+.5)
     if type(cfg.foreignColor)~="string" or not cfg.foreignColor:match("^%x%x%x%x%x%x%x%x$") then cfg.foreignColor="A0A0A0FF" end
+    cfg.bleed=cfg.bleed==true
+    if type(cfg.bleedColor)~="string" or not cfg.bleedColor:match("^%x%x%x%x%x%x%x%x$") then cfg.bleedColor="D02838FF" end
     if cfg.icons~="off" and cfg.icons~="left" and cfg.icons~="right" then cfg.icons="left" end
     cfg.iconSize=num(cfg.iconSize,1,.5,2);cfg.iconHeals=cfg.iconHeals==true;cfg.spellGuess=cfg.spellGuess==true
     cfg.logSignal=cfg.logSignal==true;cfg.logButton=cfg.logButton==true;cfg.statusDisplay=cfg.statusDisplay==true
@@ -170,6 +181,14 @@ function L:Config()
     if type(notice)=="table" and notice.kills~=nil then
         if notice.kills==false and cfg.categories.kill==nil then cfg.categories.kill={enabled=false} end
         notice.kills=nil
+    end
+    -- Until 0.7.7 one category held avoidance at the enemy and at you: the
+    -- new one at you starts as a copy of it, so nothing looks different.
+    local miss=cfg.categories.miss
+    if type(miss)=="table" and cfg.categories.avoid==nil then
+        local avoid={}
+        for key,value in pairs(miss) do avoid[key]=value end
+        cfg.categories.avoid=avoid
     end
     for name,defaults in pairs(self.CATEGORY_DEFAULTS) do
         local c=cfg.categories[name]

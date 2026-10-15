@@ -84,7 +84,7 @@ function S:Entry(unit,action,flagText,amount,school,enemy,credit)
     if not readable(amount) then count("amount secret") end
     local whole=action=="WOUND" and readable(amount) and amount==0 and readable(flagText) and WHOLE[flagText]
     if whole then
-        entry.category="miss"
+        entry.category=kind=="player" and "avoid" or "miss"
         entry.word=whole
     elseif action=="WOUND" then
         if readable(amount) and (type(amount)~="number" or amount<=0) then
@@ -95,7 +95,14 @@ function S:Entry(unit,action,flagText,amount,school,enemy,credit)
         local r,g,b=F.SchoolColor(school)
         entry.r,entry.g,entry.b=r,g,b
         entry.school=F.School(school)
-        if cfg.spellGuess and kind=="plate" and origin=="mine" then entry.spell=L.Attribution:Spell(unit,false,entry.school,credit=="tick" and "tick" or nil) end
+        -- Bleed color (0.7.8): asks the spell guess even while it is off,
+        -- but then shows no icon.
+        local bleed=cfg.bleed and entry.school==1
+        if (cfg.spellGuess or bleed) and kind=="plate" and origin=="mine" then
+            local spell=L.Attribution:Spell(unit,false,entry.school,credit=="tick" and "tick" or nil)
+            if cfg.spellGuess then entry.spell=spell end
+            entry.bleed=bleed and S.IsBleed(spell,credit) or nil
+        end
         -- Your pet's spell is evidence, not a guess: its icon and {spell} always.
         if origin=="pet" then entry.spell=petSpell end
     elseif action=="HEAL" then
@@ -105,7 +112,7 @@ function S:Entry(unit,action,flagText,amount,school,enemy,credit)
         entry.number=F.Number(amount,cfg.numbers)
         if cfg.spellGuess and cfg.iconHeals and origin=="mine" then entry.spell=L.Attribution:Spell(kind=="player" and "player" or unit,true) end
     elseif AVOID[action] then
-        entry.category="miss"
+        entry.category=kind=="player" and "avoid" or "miss"
         entry.word=AVOID[action]
     else count("skip: action "..action);return nil end
     entry.text=F.Text(cfg.categories[entry.category],entry.number or entry.word,self:Values(entry),entry.crit)
@@ -115,6 +122,15 @@ function S:Entry(unit,action,flagText,amount,school,enemy,credit)
         if ok then entry.text=text end
     end
     return entry
+end
+-- A tick of a physical damage-over-time spell: a bleed (Rake, Rip, Rend,
+-- Garrote, Rupture). A spell that also hits directly (Rake) counts only when
+-- its Combat Log line says tick; without the Combat Log its first hit and
+-- its ticks cannot be told apart, so it keeps the normal color.
+function S.IsBleed(spell,credit)
+    if L.SpellData:School(spell)~=1 then return false end
+    local kind=L.SpellData:Kind(spell)
+    return kind=="dot" or (kind=="both" and credit=="tick")
 end
 -- One faulty event is counted and dropped; it must not stop the module.
 function S:Handle(unit,...)

@@ -83,8 +83,10 @@ function UI:SettingsGrid(parent)
     -- id: filter key for page tabs; title: small heading.
     function grid:Section(id,title)
         section={id=id,kind="section",text=title,
-            title=UI:Label(self,string.upper(title),11,"accent",true),
-            rule=UI:Rule(self,1,"edge")}
+            -- Quiet headings, a neutral hairline (Florian 2026-10-11: finer;
+            -- the accent kept for what is active).
+            title=UI:Label(self,string.upper(title),11,"muted",true),
+            rule=UI:Rule(self,1)}
         section.title:SetWordWrap(false)
         self.items[#self.items+1]=section
         return section

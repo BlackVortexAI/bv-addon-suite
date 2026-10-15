@@ -70,6 +70,10 @@ end
 function C:Refresh()
     local map=P:WorldMap()
     if not (self.strip and map and map:IsShown()) then return self:Update() end
+    -- Once a second: another addon's map coordinates switched on while the
+    -- map is open (Florian 2026-10-15: both showed, one over the other).
+    self.checks=(self.checks or 0)+1
+    if self.checks>=10 then self.checks=0;if P.Guard:Owner("coords") then return self:Update() end end
     self.strip.text:SetText(self:Text())
 end
 

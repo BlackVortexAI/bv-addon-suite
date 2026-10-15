@@ -39,18 +39,34 @@ function W:Build()
         w.drag:HookScript("OnDragStop",function() UI:SaveWindowPosition(w) end)
         w:HookScript("OnShow",function() W:Refresh();W:Watch(true) end)
         w:HookScript("OnHide",function() W:Watch(false) end)
-        -- Closed with its X it stays closed after a reload (like the tracker).
-        if w.close then w.close:HookScript("OnClick",function() G:Config().findsWindow=false end) end
+        -- Closed with its X it stays closed after a reload (like the tracker),
+        -- and the gather mode no longer brings it.
+        if w.close then w.close:HookScript("OnClick",function() local c=G:Config();c.findsWindow=false;c.modeFinds=false;G:WindowsChanged() end) end
         if not UI:RestoreWindowPosition(w) then w:ClearAllPoints();w:SetPoint("RIGHT",UIParent,"RIGHT",-420,-200) end
         w:Hide()
     end)
     return self.window
 end
+-- Opened or closed by you (the gather window's switch, the minimap menu,
+-- the settings): the gather mode then brings it or not (Florian 2026-10-15:
+-- the switch and the menu disagreed).
 function W:Show(on)
     local w=self:Build()
     if on==nil then on=not w:IsShown() end
-    G:Config().findsWindow=on and true or false
+    local c=G:Config()
+    c.findsWindow=on and true or false
+    c.modeFinds=c.findsWindow
     w:SetShown(on)
+    G:WindowsChanged()
+end
+-- With the gather mode: shown when it is wanted, the wish kept.
+function W:Follow(on)
+    local c=G:Config()
+    local show=on and c.modeFinds==true
+    if not show and not self.window then return end
+    c.findsWindow=show
+    self:Build():SetShown(show)
+    G:WindowsChanged()
 end
 -- Distance, direction and "how long ago" tick once a second while open.
 function W:Watch(on)
@@ -88,6 +104,10 @@ function W:Refresh()
     self.empty:SetText("Herbs and ore the scanner sees on the HUD's minimap show here, newest first (Find Herbs or Find Minerals must be on).")
 end
 function W:Enable(context)
-    if G:Config().findsWindow then self:Show(true) end
+    -- Open after a reload when it was, or when the gather mode is on and
+    -- brings it (Florian 2026-10-14: the mode was on, its switch set, the
+    -- window missing until the switch was flipped).
+    local c=G:Config()
+    if c.findsWindow or (c.modeFinds and G.Mode:On()) then self:Build():Show();c.findsWindow=true end
     context:Defer(function() if W.window then W.window:Hide() end;W:Watch(false) end)
 end

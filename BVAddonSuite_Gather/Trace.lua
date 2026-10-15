@@ -13,6 +13,7 @@ local H={frames={}}
 G.Trace=H
 H.EVERY=2
 H.WALKED=3
+H.GAP=60    -- yards between two samples still filled in (farther: a port, a flight)
 
 function H:Store()
     local db=G.Data.db or G.Data:Init()
@@ -60,9 +61,27 @@ function H:Sample()
     if not mapID then return false end
     local instance,X,Y=self:World(mapID,x,y)
     if not instance then return false end
-    return self:Add(instance,X,Y)
+    -- The cells between this sample and the last one too (2026-10-10:
+    -- mounted, samples lie 20 yards apart and the walked way had gaps; the
+    -- navigation prototype uses walked ways as the streets of cities).
+    local last=self.lastPos
+    self.lastPos={instance,X,Y}
+    local added=false
+    if last and last[1]==instance then
+        local dx,dy=X-last[2],Y-last[3]
+        local yards=math.sqrt(dx*dx+dy*dy)
+        if yards>4 and yards<=H.GAP then
+            local n=math.floor(yards/4)
+            for i=1,n-1 do if self:Add(instance,last[2]+dx*i/n,last[3]+dy*i/n) then added=true end end
+        end
+    end
+    return self:Add(instance,X,Y) or added
 end
 function H:Forget() self:Store();G.Data.db.heat={} end
+-- BV Routing's grid asks us: how often a terrain cell was walked (cities'
+-- streets, "Prefer walked ways").
+G.Grid.WalkCount=function(instance,X,Y) return H:Count(instance,X,Y) end
+G.Grid.PreferWalked=function() return G:Config().preferWalked end
 function H:Enable(context)
     self.ticker=C_Timer.NewTicker(H.EVERY,function() H:Sample() end)
     context:Defer(function() if H.ticker then H.ticker:Cancel();H.ticker=nil end end)

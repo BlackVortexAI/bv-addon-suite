@@ -48,12 +48,15 @@ function UI:FitWindow(frame,width,height,desired,heightFraction)
     local nativeWidth=frame:GetWidth()>0 and frame:GetWidth() or D.ToNative(width)
     local nativeHeight=frame:GetHeight()>0 and frame:GetHeight() or D.ToNative(height)
     frame:SetScale(math.max(.1,math.min(desired or 1,UIParent:GetWidth()*.94/nativeWidth,UIParent:GetHeight()*.90/nativeHeight)))
+    -- Its surfaces back on whole screen pixels.
+    if ns.DesignSystem.Repixel then ns.DesignSystem.Repixel() end
 end
 function UI:NavButton(parent,text,width,callback,tab,icon)
     local b=self:GetStyle():Button(parent,text,width,function() ns:Call("navigation",callback) end,tab and "tab" or "nav")
     D.Height(b,tab and 38 or 34); b.mark=b.selection
     b:SetLabelInsets(tab and 2 or icon and 34 or 12,8,tab and "CENTER" or "LEFT")
-    if icon then b.navIcon=self:Icon(b,icon,16,"accent"); D.Point(b.navIcon,"LEFT",10,0) end
+    -- Its symbol follows the item: muted, lit when chosen or pointed at.
+    if icon then b.navIcon=self:Icon(b,icon,16,"muted"); D.Point(b.navIcon,"LEFT",10,0); b.icon=b.navIcon end
     self:AttachTooltip(b,text,"Open this page.")
     return b
 end
@@ -138,8 +141,8 @@ function UI:ResizeSection(card,width,height)
 end
 function UI:Section(parent,title,width,height,icon)
     local card=self:Panel(parent,width,height,"panel",6,.66)
-    card.icon=self:Icon(card,icon or "grid",16,"accent"); self:Place(card.icon,card,16,15)
-    card.title=self:Place(self:Label(card,title,17,"text",true),card,44,10)
+    card.icon=self:Icon(card,icon or "grid",16,"muted"); self:Place(card.icon,card,16,15)
+    card.title=self:Place(self:Label(card,title,15,"text",true),card,44,12)
     card.title:SetWordWrap(false)
     card.rule=self:Place(self:Rule(card,width-2),card,1,44)
     self:ResizeSection(card,width,height)

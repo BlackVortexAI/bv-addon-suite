@@ -24,6 +24,19 @@ function H:Frame()
         f.close:SetFrameStrata("HIGH");f.close:SetAlpha(.45);f.close:Hide()
         f.close:HookScript("OnEnter",function(self) self:SetAlpha(1) end)
         f.close:HookScript("OnLeave",function(self) self:SetAlpha(.45) end)
+        -- The suite's menu beside it (Florian 2026-10-15: the HUD hides the
+        -- minimap's buttons, the launcher's too): as quiet as Close HUD.
+        local L=ns.Launcher
+        if L and L.Menu then
+            f.menu=ns.UI:IconButton(UIParent,"layout-grid",function(own)
+                if L.menu and L.menu:IsShown() and L.button==own then L.menu:Hide();return end
+                L.button=own;L:Stay();L:Menu(own)
+            end,"ghost")
+            f.menu:SetSize(26,26);f.menu:SetFrameStrata("HIGH");f.menu:SetAlpha(.45);f.menu:Hide()
+            f.menu:HookScript("OnEnter",function(self) self:SetAlpha(1);L:Stay() end)
+            f.menu:HookScript("OnLeave",function(self) self:SetAlpha(.45);if L.menu and L.menu:IsShown() and L.button==self then L:Leave() end end)
+            -- No tooltip: it would lie over the menu (as at the minimap button).
+        end
         -- The minimap scanner's state beside it (Florian 2026-10-10): off,
         -- active (green), or why it waits (red); a click switches it.
         f.scan=CreateFrame("Button",nil,UIParent);f.scan:SetFrameStrata("HIGH");f.scan:SetSize(320,22);f.scan:Hide()
@@ -56,6 +69,8 @@ function H:Place()
     local close=self.frame.close
     -- Fixed at the top of the screen (under the HUD it hid behind the bars).
     close:ClearAllPoints();close:SetPoint("TOP",UIParent,"TOP",0,-90);close:Show()
+    local menu=self.frame.menu
+    if menu then menu:ClearAllPoints();menu:SetPoint("RIGHT",close,"LEFT",-8,0);menu:Show() end
     local scan=self.frame.scan
     scan:ClearAllPoints();scan:SetPoint("LEFT",close,"RIGHT",12,0);scan:Show()
     self:ScanStatus()
@@ -152,7 +167,12 @@ function H:Hide()
     self:Compass()
     -- The pin layer back on the minimap, after its strata and level are back.
     if ns.MapPins and ns.MapPins.SetMinimapHost then ns.MapPins:SetMinimapHost(nil) end
-    if self.frame then self.frame:Hide();self.frame.close:Hide();self.frame.scan:Hide() end
+    if self.frame then
+        self.frame:Hide();self.frame.close:Hide();self.frame.scan:Hide()
+        if self.frame.menu then self.frame.menu:Hide() end
+        local L=ns.Launcher
+        if L and L.menu and L.button==self.frame.menu then L.menu:Hide() end
+    end
     if G.Scanner then G.Scanner:Update() end
     if ns.MapPins then ns.MapPins:Refresh() end
     if G.Mode then G.Mode:Refresh() end

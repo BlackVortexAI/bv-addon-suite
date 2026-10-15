@@ -14,13 +14,13 @@ if not G.ready then return end
 local ns=G.ns
 local UI,M=ns.UI,ns.DesignSystem.Metrics
 local Grid=G.Grid
-local E={tool="move",brush=25,zoom=1,ox=0,oy=0,zones={},chosen={},history={},pools={}}
+local E={MAXCORNERS=4000,tool="move",brush=25,zoom=1,ox=0,oy=0,zones={},chosen={},history={},pools={}}
 G.Editor=E
 local DISC="Interface\\CHARACTERFRAME\\TempPortraitAlphaMask"
 local WHITE="Interface\\Buttons\\WHITE8X8"
 local SIDE,ROWS,ROW,MAXROWS=300,8,22,20
 local MAXZONES=4
-E.AREA={nogo={.95,.2,.2,.38},prefer={.3,.9,.45,.32},risk={1,.55,.1,.38}}
+E.AREA={nogo={.95,.2,.2,.38},prefer={.3,.9,.45,.32},risk={1,.55,.1,.38},swim={.2,.55,1,.32}}
 E.TOOLS={
     {id="move",icon="hand",title="Move the map",text="Drag to move, wheel to zoom. The right button moves with every tool."},
     {id="nogo",icon="ban",title="No-go",text="Paint where the route must never go."},
@@ -85,7 +85,7 @@ local BAR=44
 function E:Build()
     if self.window then return self.window end
     UI:WithStyle(G:Style(),function()
-        local w=UI:Window("BVGatherRouteEditor",1180,780,{title="Route editor",minWidth=1060,minHeight=700})
+        local w=UI:Window("BVGatherRouteEditor",1180,780,{title="Gather route editor",minWidth=1060,minHeight=700})
         self.window=w
         local c=w.content
         local view=CreateFrame("Frame",nil,c)
@@ -124,7 +124,8 @@ function E:Build()
         self.dim=self.board:CreateTexture(nil,"ARTWORK",nil,-8);self.dim:SetAllPoints(view);self.dim:SetColorTexture(0,0,0,.35);self.dim:Hide()
         catcher:Hide()
         self.catcher=catcher
-        w:HookScript("OnHide",function() E:AreaMode(false) end)
+        w:HookScript("OnHide",function() E:AreaMode(false);E:RingWatch(false) end)
+        self:BuildRing(view)
         -- A leg without a way (Florian 2026-10-09): a warning over the map
         -- until the route is calculated again.
         local warning=CreateFrame("Frame",nil,view);warning:SetPoint("TOP",view,"TOP",0,-8);warning:SetSize(600,26)
@@ -136,6 +137,8 @@ function E:Build()
         warning:Hide()
         self.warning=warning
         self.hint=UI:Label(view,"",11,"muted");M.Point(self.hint,"BOTTOMLEFT",view,"BOTTOMLEFT",8,6);M.Size(self.hint,520,16)
+        -- Areas drawn as outlines only (too many corners): said over the hint.
+        self.crowd=UI:Label(view,"",11,"muted");M.Point(self.crowd,"BOTTOMLEFT",view,"BOTTOMLEFT",8,24);self.crowd:Hide()
         self:BuildBar(c)
         self:BuildSide(c)
         w:HookScript("OnSizeChanged",function() if w:IsShown() then E:ArrangeSide();E:Fit(true) end end)
@@ -229,7 +232,7 @@ function E:BuildSide(c)
     y=y+36
     local paint=UI:Label(side,"Paint and edit",12,"accent",true);M.Point(paint,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y);y=y+24
     self.risk=option("High risk",UI:Dropdown(side,180,{{value="ignore",label="Ignore"},{value="avoid",label="Avoid where possible"},{value="block",label="Treat as no-go"}},
-        function(value) G:Config().risk=value;E:Stale() end),38)
+        function(value) G.Routing:Config().risk=value;E:Stale() end),38)
     self.worth=option("Way per node",UI:InlineSlider(side,180,0,600,10,"%d yd",function(value) G:Config().worthLimit=value;E:Stale() end))
     UI:AttachTooltip(self.worth,"Worth the way","Nodes that cost more way than this each are left out: a far group with few nodes is not worth the walk. Counted for groups of neighbouring stops together. 0: every node.")
     self.goal=option("Goal",UI:Dropdown(side,180,{{value="visit",label="Every node"},{value="sight",label="Within sight"}},
@@ -328,7 +331,7 @@ function E:Open(zones)
     end
     w:Show()
     local c=G:Config()
-    self.loop:SetValue(c.loop);self.radius:SetValue(c.passRadius);self.risk:SetValue(c.risk);self.brushSize:SetValue(self.brush)
+    self.loop:SetValue(c.loop);self.radius:SetValue(c.passRadius);self.risk:SetValue(G.Routing:Config().risk);self.brushSize:SetValue(self.brush)
     self.goal:SetValue(c.routeGoal);self.sight:SetValue(c.sightRadius);self.worth:SetValue(c.worthLimit)
     self:SetZones(self.zones)
     self:Tool(self.tool)
@@ -628,6 +631,50 @@ function E:Zoom(delta)
     self.zoomTimer=C_Timer.NewTimer(E.ZOOMREST,function() E.zoomTimer=nil;E:Place() end)
 end
 
+-- The brush's size round the mouse pointer while a brush tool is on and the
+-- pointer is over the map (Florian 2026-10-11: hard to judge how much a
+-- stroke covers): a faint disc with a ring, as large as the stroke will be.
+-- A light ticker runs only while the pointer is over the map.
+local RINGDISC="Interface\CHARACTERFRAME\TempPortraitAlphaMask"
+function E:BuildRing(view)
+    local ring=CreateFrame("Frame",nil,view)
+    ring:SetFrameLevel(view:GetFrameLevel()+30);ring:EnableMouse(false)
+    ring.disc=ring:CreateTexture(nil,"ARTWORK");ring.disc:SetAllPoints(ring);ring.disc:SetTexture(RINGDISC);ring.disc:SetVertexColor(1,1,1,.12)
+    ring.edge=UI:Icon(ring,"circle",16);ring.edge:ClearAllPoints();ring.edge:SetAllPoints(ring)
+    if ring.edge.SetColor then ring.edge:SetColor(1,1,1,.9) end
+    ring:Hide()
+    self.ring=ring
+    view:HookScript("OnEnter",function() E:RingWatch(true) end)
+    -- Leaving onto a pin or a button of the map is still over it: the
+    -- ticker itself stops once the pointer is off the map (Ring).
+end
+function E:RingWatch(on)
+    if on and not self.ringTicker then
+        self.ringTicker=C_Timer.NewTicker(.02,function() E:Ring() end)
+        self:Ring()
+    elseif not on then
+        if self.ringTicker then self.ringTicker:Cancel();self.ringTicker=nil end
+        if self.ring then self.ring:Hide() end
+    end
+end
+function E:Ring()
+    local ring=self.ring
+    if not ring then return end
+    if self.view.IsMouseOver and not self.view:IsMouseOver() then self:RingWatch(false);return end
+    local cx,cy=self:Cursor()
+    local size=self:RingSize()
+    if not (cx and size) or cx<0 or cy<0 or cx>self.view:GetWidth() or cy>self.view:GetHeight() then ring:Hide();return end
+    ring:SetSize(size,size)
+    ring:ClearAllPoints();ring:SetPoint("CENTER",self.view,"TOPLEFT",cx,-cy)
+    ring:Show()
+end
+-- The ring's diameter in view pixels (a stroke's radius is the brush; the
+-- board may be scaled while zooming).
+function E:RingSize()
+    if not ((self.AREA[self.tool] or self.tool=="erase") and self.base and self.space) or self.areaDraw then return nil end
+    return math.max(4,self.brush*2*self:PixelsPerYard()*(self.board:GetScale() or 1))
+end
+
 -- Mouse: pan, paint, erase, add points.
 function E:Down(button)
     self:StopDrag()
@@ -708,6 +755,9 @@ function E:Stroke(x,y)
                 end
                 if hit then
                     table.remove(strokes,i);session.removed[#session.removed+1]={zone=zone,stroke=stroke,index=i}
+                    -- Routing's caches see the change (Codex 2026-10-14: a removal
+                    -- and an addition of the same count looked unchanged).
+                    G.Routing:SetsChanged()
                 end
             end
         end
@@ -720,6 +770,7 @@ function E:Stroke(x,y)
         local stroke={x=zx,y=zy,r=self.brush,kind=self.tool}
         local strokes=G.Plan:Strokes(zone);strokes[#strokes+1]=stroke
         session.added[#session.added+1]={zone=zone,stroke=stroke}
+        G.Routing:SetsChanged()
         self.lastStroke={x=x,y=y,session=session}
     end
     self:Layout()
@@ -736,6 +787,7 @@ function E:Undo()
         local strokes=G.Plan:Strokes(entry.zone)
         table.insert(strokes,math.min(entry.index,#strokes+1),entry.stroke)
     end
+    G.Routing:SetsChanged()
     self:Stale();self:Layout()
 end
 
@@ -1094,10 +1146,29 @@ function E:Layout()
     local fills=pool("fills",texture("BORDER",1))
     local outlines=pool("outlines",function() local l=E.board:CreateLine(nil,"BORDER",nil,2);l:SetTexture(WHITE);return l end)
     reset(fills);reset(outlines)
+    -- What the way finding uses here (Florian 2026-10-14: a generated
+    -- Undercity of 1000 areas on 34 levels): the ground's areas of data sets
+    -- that are on; levels of a city belong to Route Studio. Many corners:
+    -- outlines only, not filled.
+    local shown,corners={},0
     for _,zone in ipairs(self.zones) do
         for _,stroke in ipairs(G.Plan:Strokes(zone)) do
+            if stroke.level==nil and not G.Routing:SetOff(stroke,zone) then
+                shown[#shown+1]={zone,stroke}
+                if type(stroke.poly)=="table" then corners=corners+#stroke.poly/2 end
+            end
+        end
+    end
+    self.outlinesOnly=corners>E.MAXCORNERS
+    if self.crowd then
+        self.crowd:SetText(self.outlinesOnly and "Areas as outlines only: too many corners to fill." or "")
+        self.crowd:SetShown(self.outlinesOnly)
+    end
+    for _,item in ipairs(shown) do
+        local zone,stroke=item[1],item[2]
+        do
             local x,y
-            if stroke.poly then self:DrawPolygon(zone,stroke,fills,outlines)
+            if stroke.poly then self:DrawPolygon(zone,stroke,fills,outlines,self.outlinesOnly)
             else x,y=Grid.ToSpace(self.space,zone,stroke.x,stroke.y) end
             local color=self.AREA[stroke.kind]
             if x and color then
@@ -1150,7 +1221,7 @@ function E:DrawNodes()
     end
 end
 -- A polygon: its outline, and its inside as rows of 8-yard cells.
-function E:DrawPolygon(zone,area,fills,outlines)
+function E:DrawPolygon(zone,area,fills,outlines,bare)
     local color=self.AREA[area.kind]
     if not color then return end
     local s=self.space
@@ -1167,6 +1238,7 @@ function E:DrawPolygon(zone,area,fills,outlines)
         l:SetVertexColor(color[1],color[2],color[3],.9);l:SetThickness(2)
         l:SetStartPoint("TOPLEFT",self.board,x1,-y1);l:SetEndPoint("TOPLEFT",self.board,x2,-y2)
     end
+    if bare then return end
     local minX,minY,maxX,maxY=math.huge,math.huge,-math.huge,-math.huge
     for _,p in ipairs(points) do minX,minY,maxX,maxY=math.min(minX,p[1]),math.min(minY,p[2]),math.max(maxX,p[1]),math.max(maxY,p[2]) end
     local stepX,stepY=Grid.CELL/s.width,Grid.CELL/s.height
@@ -1329,6 +1401,7 @@ function E:Corner(x,y,more)
         end
         local area={kind=self.tool,poly=poly}
         local strokes=G.Plan:Strokes(zone);strokes[#strokes+1]=area
+        G.Routing:SetsChanged()
         self.history[#self.history+1]={added={{zone=zone,stroke=area}},removed={}}
         self.corners=nil
         self:Stale();self:Tool(self.tool)
@@ -1818,6 +1891,7 @@ function E:Calculate()
     G.Plan.Report(0,"Starting")
     if self.progressTicker then self.progressTicker:Cancel() end
     self.progressTicker=C_Timer.NewTicker(.1,function() E:Status() end)
+    Grid.nextLabel="Calculating the route"
     self.job=Grid.Run(function() return G.Plan:Build(zones,chosen,{loop=c.loop,radius=c.passRadius,start=start,smooth=c.routeSmooth,area=area,goal=goal,sight=sight,worth=worth}) end,function(result)
         E.job=nil
         if E.progressTicker then E.progressTicker:Cancel();E.progressTicker=nil end

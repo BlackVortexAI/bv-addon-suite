@@ -3,6 +3,9 @@ if not G.ready then return end
 -- Settings page and /bv gather.
 local ns=G.ns
 local UI,M=ns.UI,ns.DesignSystem.Metrics
+-- How ways go round terrain, water, cliffs, high-risk areas and enemy bases
+-- is BV Routing's (2026-10-10; shared with /bv route): shown here, kept there.
+local ROUTING={routeTerrain=true,avoidWater=true,preferRoads=true,enemy=true,cliffs=true,risk=true,flightsUnknown=true}
 
 function G:Changed()
     -- Settings changed what shows: the next profession or tracking check compares anew.
@@ -24,7 +27,7 @@ local function build(parent)
     local controls={}
     page.controls=controls
     local function cfg() return G:Config() end
-    local function set(key) return function(value) cfg()[key]=value;G:Changed();if page then page:Refresh() end end end
+    local function set(key) return function(value) (ROUTING[key] and G.Routing:Config() or cfg())[key]=value;G:Changed();if page then page:Refresh() end end end
     local function row(key,title,control,help) controls[key]=g:Row(title,control,{help=help});return controls[key] end
     local function switch(key,title,help) return row(key,title,UI:Switch(g,false,set(key)),help) end
     local function slider(key,title,low,high,step,format,help) return row(key,title,UI:InlineSlider(g,190,low,high,step,format,set(key)),help) end
@@ -103,15 +106,17 @@ local function build(parent)
     switch("trackAllLoot","Count all loot","Every item you loot while a session runs, not only from gathering.")
     slider("trackerIdle","Pause when idle",0,30,1,"%d min","A running session pauses after this long without gathering (counted up to your last node); the next node resumes it. 0: never.")
     g:Section("route","Route")
-    g:Row("Route editor",UI:Button(g,"Open route editor",190,function() G.Editor:Toggle() end),
+    g:Row("Gather route editor",UI:Button(g,"Open route editor",190,function() G.Editor:Toggle() end),
         {help="Its own map: choose zones and herbs or ores, paint no-go, preferred and high-risk areas, calculate a loop, save it and follow it as waypoints. Also /bv gather editor."})
     g:Row("Quick route",UI:Button(g,"Route through this zone",190,function() G.Route:Start() end),
         {help="Through the nodes of your zone that the filters show, shortest way first; it becomes your waypoint path (needs the Map module). Also /bv gather route."})
     row("enemy","Enemy bases",UI:Dropdown(g,190,{{value="avoid",label="Avoid"},{value="block",label="Never through"},{value="ignore",label="Ignore"}},set("enemy")),
-        "Towns of the other faction (around their flight masters) and their capitals: routes go round them.")
+        "Towns of the other faction (around their flight masters) and their capitals: routes go round them. A BV Routing setting, shared with /bv route.")
+    row("flightsUnknown","Unknown flight points",UI:Dropdown(g,190,{{value="leave",label="Leave out (asked)"},{value="all",label="Count all of yours"}},set("flightsUnknown")),
+        "A flight map shows only its continent. Where you have not opened one yet, ways leave flights out (you are asked once and the guide says so), or count every flight master of your side. A BV Routing setting, shared with /bv route.")
     switch("ownFlights","Own flight masters only","The route editor shows flight masters of your faction and neutral ones.")
     slider("sightRadius","Sight radius",40,230,5,"%d yd","How far the minimap's Find Herbs and Find Minerals dots reach for routes \"within sight\" (the minimap shows about 230 yards zoomed out, 150 indoors).")
-    switch("routeTerrain","Use the terrain","Routes go round steep slopes and through passes (needs the terrain data).")
+    switch("routeTerrain","Use the terrain","Routes go round steep slopes and through passes (the terrain data comes with BV Routing). A BV Routing setting, shared with /bv route.")
     row("cliffs","Down cliffs",UI:Dropdown(g,190,{{value="never",label="Never"},{value="safe",label="Short drops"},{value="always",label="Always (Slow Fall)"}},set("cliffs")),
         "Routes may drop down steep faces (never up them): short drops only, or any height with Slow Fall or Levitate.")
     switch("preferRoads","Prefer roads","Roads of the game's own terrain (from the terrain data) count as preferred ground: routes follow them where it is not much longer.")
@@ -206,7 +211,7 @@ local function build(parent)
             elseif key:match("Color$") then control:SetValue(G.Hex(G:Color(key:gsub("Color$",""))).."FF")
             elseif key=="forgetGathermate" then
             elseif key=="scanSoundButton" then control:SetText(G.WatchList.SoundLabel(c.scanSound))
-            elseif control.SetValue then control:SetValue(c[key])
+            elseif control.SetValue then control:SetValue((ROUTING[key] and G.Routing:Config() or c)[key])
             elseif control.SetText and key=="filter" then control:SetText(c.filter) end
         end
         local parts={}
@@ -253,6 +258,8 @@ _G.BINDING_NAME_BVGATHER_TRACKER="Gather: tracker"
 _G.BINDING_NAME_BVGATHER_EDITOR="Gather: route editor"
 ns.Commands:RegisterAction("gather",function(action)
     if action=="stop" then G.Follow:Stop();return end
+    -- The navigation prototype's command moved to BV Routing (2026-10-10).
+    if type(action)=="string" and action:match("^routeto") then G:Print("Leading you somewhere is BV Routing's now: /bv route <what> | way | <x> <y> | stop.");return end
     if action=="mode" then if G:Active() then G.Mode:Toggle();G:Print("Gather mode "..(G:Config().mode and "on" or "off")..".") end;return end
     if action=="tracker" then if G:Active() then G.TrackerWindow:Show() end;return end
     if action=="hud" then if G:Active() then G.Hud:Toggle() end;return end

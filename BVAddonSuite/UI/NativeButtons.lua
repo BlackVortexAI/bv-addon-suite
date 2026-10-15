@@ -221,7 +221,7 @@ end
 -- Blizzard relayouts once, restore() lets Blizzard lay out again, main (optional):
 -- {symbol,label,click(button),text()} for the collapsed mode.
 function N:Bar(def)
-    local bar={def=def,plates={},entries={},masks=setmetatable({},{__mode="k"}),parked=setmetatable({},{__mode="k"}),decorMasked={}}
+    local bar={def=def,plates={},entries={},masks=setmetatable({},{__mode="k"}),parked=setmetatable({},{__mode="k"}),decorMasked={},shellMouse={}}
     self.bars[def.id]=bar
     function bar:Config()
         local cfg=ns.Settings:Module(def.id)
@@ -595,10 +595,25 @@ function N:Bar(def)
         end
         for r in pairs(self.decorMasked) do if not wanted[r] then N:Unmask(r) end end
         self.decorMasked=wanted
+        -- Blizzard's empty bar frames (def.shells) take no mouse while the
+        -- module runs (Florian 2026-10-15: the hidden bag bar still caught
+        -- clicks meant for the action bars under it).
+        if def.shells then
+            local ok,list=pcall(def.shells)
+            for _,f in ipairs(ok and type(list)=="table" and list or {}) do
+                if type(f)=="table" and f.EnableMouse and f.IsMouseEnabled and not (InCombatLockdown() and f.IsProtected and f:IsProtected()) then
+                    if self.shellMouse[f]==nil then self.shellMouse[f]=f:IsMouseEnabled() and true or false end
+                    f:EnableMouse(false)
+                end
+            end
+        end
     end
     function bar:Disable()
         self.active=false;self.pinned=nil
         for r in pairs(self.decorMasked) do N:Unmask(r) end;self.decorMasked={}
+        for f,was in pairs(self.shellMouse) do
+            if not (InCombatLockdown() and f.IsProtected and f:IsProtected()) then f:EnableMouse(was);self.shellMouse[f]=nil end
+        end
         if self.backdrop then self.backdrop:Hide() end
         for _,t in ipairs({"queued","leaveTimer","fader","syncTimer"}) do if self[t] then self[t]:Cancel();self[t]=nil end end
         for button,plate in pairs(self.plates) do plate:Release() end
