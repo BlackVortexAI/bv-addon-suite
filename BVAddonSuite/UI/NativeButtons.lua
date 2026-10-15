@@ -63,6 +63,12 @@ function N:Mask(region)
         end)
     end
 end
+-- No mouse at all: clicks and motion (Forever has both switches).
+function N.ShellOff(frame)
+    frame:EnableMouse(false)
+    if frame.SetMouseClickEnabled then pcall(frame.SetMouseClickEnabled,frame,false) end
+    if frame.SetMouseMotionEnabled then pcall(frame.SetMouseMotionEnabled,frame,false) end
+end
 function N:Unmask(region)
     local m=self.masked[region];if not m then return end
     self.masked[region]=nil;region:SetAlpha(m.alpha)
@@ -603,7 +609,36 @@ function N:Bar(def)
             for _,f in ipairs(ok and type(list)=="table" and list or {}) do
                 if type(f)=="table" and f.EnableMouse and f.IsMouseEnabled and not (InCombatLockdown() and f.IsProtected and f:IsProtected()) then
                     if self.shellMouse[f]==nil then self.shellMouse[f]=f:IsMouseEnabled() and true or false end
-                    f:EnableMouse(false)
+                    N.ShellOff(f)
+                    -- Blizzard's layout turns the mouse back on after a login
+                    -- (Florian 2026-10-15: after logging in the bars caught
+                    -- clicks again; Forever has separate click and motion
+                    -- switches): while the module runs it stays off, and it is
+                    -- turned off again shortly after a login.
+                    if not f.bvShellHooked and hooksecurefunc then
+                        f.bvShellHooked=true
+                        local owner=self
+                        local function again(frame,on)
+                            if on and owner.active and owner.shellMouse[frame]~=nil and not owner.shellBusy
+                                and not (InCombatLockdown() and frame.IsProtected and frame:IsProtected()) then
+                                owner.shellBusy=true;N.ShellOff(frame);owner.shellBusy=false
+                            end
+                        end
+                        for _,method in ipairs({"EnableMouse","SetMouseClickEnabled","SetMouseMotionEnabled"}) do
+                            if type(f[method])=="function" then hooksecurefunc(f,method,again) end
+                        end
+                    end
+                    if not self.shellLater and C_Timer then
+                        self.shellLater=true
+                        local owner=self
+                        for _,delay in ipairs({1,4}) do
+                            C_Timer.NewTimer(delay,function()
+                                for frame in pairs(owner.shellMouse) do
+                                    if owner.active and not (InCombatLockdown() and frame.IsProtected and frame:IsProtected()) then N.ShellOff(frame) end
+                                end
+                            end)
+                        end
+                    end
                 end
             end
         end

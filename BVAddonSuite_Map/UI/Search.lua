@@ -127,8 +127,12 @@ end
 -- Beside Blizzard's own buttons at the map's top left (Florian 2026-10-15:
 -- the magnifier lay under the map pin button): right of the last of the
 -- map's overlay buttons there.
+-- A fixed place right of the game's pin button first (Florian 2026-10-15:
+-- finding the button failed in the game; a fixed offset is reliable), then
+-- further right when another small button lies there.
+S.LEFT=50
 function S:Left(map,parent)
-    local x=6
+    local x=S.LEFT
     local pl,pt=parent:GetLeft(),parent:GetTop()
     if not (pl and pt) then return x end
     -- The map's overlay frames, and small buttons on the map itself (not ours).
