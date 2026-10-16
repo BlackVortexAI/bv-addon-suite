@@ -107,6 +107,7 @@ if Q and Q.AddTrackerExtra then
     Q:AddTrackerExtra("experience_trainer",{items=function()
         if not T:Shown() then return {} end
         return {{title="Class trainer",text=T:Text(),go=T:CanLead() and function() T:Lead() end or nil,
-            tip="BV Routing leads you to the nearest class trainer.\n"..T:Tip()}}
+            dismiss=function() T:Hide() end,
+            tip="BV Routing leads you to the nearest class trainer.\n"..T:Tip().."\nx or right-click: hidden until your next level."}}
     end})
 end

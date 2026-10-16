@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.8.92","0.8.95",1) then return end
+if not ns:RequireCore(package,"0.8.93","0.8.95",1) then return end
 -- The level-up card's files (LevelUp.lua, UI/LevelCard.lua) load only then.
 E.ready=true
 local Data,number=ns.ProgressData,ns.ProgressModel.Number

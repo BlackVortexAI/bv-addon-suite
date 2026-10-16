@@ -206,7 +206,11 @@ function Display:Place(entry,override)
     item.live=true;item.serial=item.serial+1
     local frame,text=item.frame,item.text
     local size=style.size*(entry.crit and style.crit or 1)
-    text:SetFont(fontPath(cfg,style),size,cfg.outline)
+    -- Extra thick (0.7.11, a CurseForge wish): the game's thick outline and a
+    -- strong black shadow; the game has no thicker outline itself.
+    local extra=cfg.outline=="EXTRATHICK"
+    text:SetFont(fontPath(cfg,style),size,extra and "THICKOUTLINE" or cfg.outline)
+    if extra then text:SetShadowColor(0,0,0,1);text:SetShadowOffset(2,-2) else text:SetShadowOffset(0,0) end
     local r,g,b,a=L.Format.Color(style.color)
     if style.school and entry.r then r,g,b=entry.r,entry.g,entry.b end
     if entry.bleed then r,g,b=L.Format.Color(cfg.bleedColor) end

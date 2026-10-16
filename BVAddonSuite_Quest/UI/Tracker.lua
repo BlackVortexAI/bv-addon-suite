@@ -162,6 +162,10 @@ function T:Block(index)
     b.go=UI:IconButton(b,"navigation",function() T:Go(b.quest) end,"ghost");M.Size(b.go,18,18);b.go:Hide()
     b.go:SetScript("OnEnter",function(btn) T:GoTip(btn,b.quest) end)
     b.go:SetScript("OnLeave",function() if GameTooltip then GameTooltip:Hide() end end)
+    -- An x beside it for the lines other modules add (Florian 2026-10-16:
+    -- the class quest and trainer lines never went away; right-click was hidden).
+    b.close=UI:IconButton(b,"x",function() T:Dismiss(b.quest) end,"ghost");M.Size(b.close,16,16);b.close:Hide()
+    UI:AttachTooltip(b.close,"Remove","Takes this line out of the tracker.")
     self.blocks[index]=b
     return b
 end
@@ -227,9 +231,12 @@ function T:Rows(width)
             if c.showDistance and q.distance and not q.ready then distance=Q.List.Yards(q.distance) end
             b.distance:SetText(distance);b.distance:SetTextColor(mr,mg,mb)
             local go=(q.extra and q.extra.go~=nil) or (not self.preview and q.id>0 and Q.navigation~=nil and Q.navigation:Available() and Q.navigation:Knows(q.id))
-            local goW=go and 20 or 0
+            local close=q.extra~=nil and q.extra.dismiss~=nil
+            local goW=(go and 20 or 0)+(close and 18 or 0)
             b.go:SetShown(go and true or false)
             if go then b.go:ClearAllPoints();M.Point(b.go,"TOPRIGHT",b,"TOPRIGHT",0,-math.floor((titleH-18)/2)) end
+            b.close:SetShown(close)
+            if close then b.close:ClearAllPoints();M.Point(b.close,"TOPRIGHT",b,"TOPRIGHT",go and -20 or 0,-math.floor((titleH-16)/2)) end
             b.title:ClearAllPoints();M.Point(b.title,"TOPLEFT",b,"TOPLEFT",8,0);M.Size(b.title,width-8-goW-(distance~="" and 58 or 0),titleH)
             b.distance:ClearAllPoints();M.Point(b.distance,"TOPRIGHT",b,"TOPRIGHT",-goW,0);M.Size(b.distance,56,titleH)
             local h=titleH
@@ -447,6 +454,9 @@ function T:Target(q)
         end
     end
     if targets.turnin then return "turnin",targets.turnin end
+end
+function T:Dismiss(q)
+    if q and q.extra and q.extra.dismiss then pcall(q.extra.dismiss);Q:Dirty() end
 end
 function T:Go(q)
     if not q then return end

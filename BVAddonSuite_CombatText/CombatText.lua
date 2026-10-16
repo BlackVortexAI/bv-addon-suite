@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.7.9","0.8.95",1) then return end
+if not ns:RequireCore(package,"0.7.11","0.8.95",1) then return end
 -- Combat text module. Everything specific to it lives in this package, never
 -- in Core, so Core stays free for fixes.
 L.ns=ns
@@ -55,7 +55,9 @@ L.CATEGORY_DEFAULTS={
     -- category, split from the notifications, with their own place and look.
     kill={anchor="notice",animation="slam",size=26,color="FF5A3CFF",school=false,prefix="",suffix="",duration=1.8,distance=40,crit=1,
         -- 0.7.9 (a CurseForge wish 2026-10-16): NPCs and players apart, and a sound.
-        npcs=true,players=true,soundNpcs=false,soundPlayers=false},
+        npcs=true,players=true,soundNpcs=false,soundPlayers=false,
+        -- 0.7.10: your pet's killing blows count too (as other addons do).
+        pets=true},
 }
 -- Staggered output (0.7.1, UI/Display.lua): texts of a category that come
 -- together one after another (staggerDelay ms apart) and a line apart
@@ -73,7 +75,7 @@ end
 -- options only there.
 L.CRIT_CATEGORIES={outgoing=true,incoming=true,heal=true,outheal=true}
 -- Switches of the message categories (only where the defaults have them).
-L.CATEGORY_SWITCHES={"gains","fades","combat","reputation","honor","procs","npcs","players","soundNpcs","soundPlayers"}
+L.CATEGORY_SWITCHES={"gains","fades","combat","reputation","honor","procs","npcs","players","pets","soundNpcs","soundPlayers"}
 -- The killing blow sound, chosen with Core's sound picker as the minimap
 -- scanner's (Florian 2026-10-16): {source="soundkit", soundKit} or
 -- {source="sharedmedia", sound="lsm:..."}; raid warning by default.
@@ -158,7 +160,7 @@ function L:Config()
     cfg.hideBlizzard=cfg.hideBlizzard==true;cfg.hideBlizzardSelf=cfg.hideBlizzardSelf==true;cfg.plates=cfg.plates==true
     if cfg.numbers~="short" and cfg.numbers~="full" and cfg.numbers~="plain" then cfg.numbers="short" end
     if not fontChoice(cfg.font) then cfg.font="inherit" end
-    if cfg.outline~="OUTLINE" and cfg.outline~="THICKOUTLINE" and cfg.outline~="" then cfg.outline="OUTLINE" end
+    if cfg.outline~="OUTLINE" and cfg.outline~="THICKOUTLINE" and cfg.outline~="EXTRATHICK" and cfg.outline~="" then cfg.outline="OUTLINE" end
     cfg.foreignTint=cfg.foreignTint==true;cfg.foreignAlpha=num(cfg.foreignAlpha,.6,.1,1)
     cfg.plateOffset=math.floor(num(cfg.plateOffset,0,-50,150)+.5)
     if type(cfg.foreignColor)~="string" or not cfg.foreignColor:match("^%x%x%x%x%x%x%x%x$") then cfg.foreignColor="A0A0A0FF" end
@@ -262,7 +264,19 @@ ns.Modules:Register({id=L.ID,OnEnable=function(context)
 end})
 
 L.commands={}
-local HELP="/bv sct [on|off] | /bv sct test [stop] | /bv sct blizzard [hide|show] | /bv sct debug [spells|reset] | /bv sct log [force]"
+local HELP="/bv sct [on|off] | /bv sct test [stop] | /bv sct blizzard [hide|show] | /bv sct debug [spells|reset] | /bv sct log [force] | /bv sct kills"
+-- /bv sct kills (0.7.10): what came for killing blows, counted since login,
+-- and whether the statistic can be read. Only counts, no names.
+L.commands.kills=function()
+    local stats=L.Sources.stats
+    local keys={}
+    for key in pairs(stats) do if key:sub(1,6)=="kill: " then keys[#keys+1]=key end end
+    table.sort(keys)
+    local value,why=L.Notices:KillStat()
+    L:Print(string.format("Killing blows (since login, here: %s). Statistic Total Killing Blows: %s.",L.Notices.Where(),value and tostring(value) or why))
+    if #keys==0 then L:Print("Nothing counted yet. Kill something, then /bv sct kills again.");return end
+    for _,key in ipairs(keys) do L:Print(string.format("  %s: %d",key:sub(7),stats[key])) end
+end
 ns.Commands:RegisterAction("sct",function(action)
     local command,rest=(action or ""):match("^(%S*)%s*(.-)$")
     if command=="" then ns.Config:OpenPage("combattext");return end

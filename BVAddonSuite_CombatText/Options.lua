@@ -59,7 +59,7 @@ function Sim:Stop() self.serial=(self.serial or 0)+1 end
 
 -- Settings page -----------------------------------------------------------------------
 local NUMBERS={{value="short",label="Short (12.3k)"},{value="full",label="Full (12,345)"},{value="plain",label="Plain (12345)"}}
-local OUTLINES={{value="OUTLINE",label="Outline"},{value="THICKOUTLINE",label="Thick outline"},{value="",label="None"}}
+local OUTLINES={{value="OUTLINE",label="Outline"},{value="THICKOUTLINE",label="Thick outline"},{value="EXTRATHICK",label="Extra thick (outline + shadow)"},{value="",label="None"}}
 local PRESETS={{value="up",label="Scroll up"},{value="down",label="Scroll down"},{value="fountain",label="Fountain (arc)"},
     {value="rain",label="Rain (falls)"},{value="pop",label="Pop (crit style)"},
     {value="curveright",label="Curve right"},{value="curveleft",label="Curve left"},{value="curveup",label="Curve up"},
@@ -99,7 +99,7 @@ local CATEGORY_TEXT={
     buffgiven={"Buffs you give","Your buffs on your friendly target, at its nameplate (or your outgoing anchor). Shown when the buff landed: out of combat Combat Text checks the target's buffs. In combat buffs cannot be read; there only spells already seen landing as a buff are shown. Off by default."},
     power={"Power gains","Mana, rage, energy and other power you gain from spells and effects, e.g. +250 Mana."},
     notice={"Notifications","Combat start and end, reputation, honor and procs such as Overpower!"},
-    kill={"Killing blows","Killing Blow! when your own hit kills an enemy. Your pet's kills do not count."},
+    kill={"Killing blows","Killing Blow! when your own hit (or your pet's) kills an enemy. Not working in PvP? Type /bv sct kills after a kill and send us what it says."},
 }
 local SWITCH_TEXT={
     gains={"Show gained","Shows the aura when you get it."},
@@ -109,7 +109,8 @@ local SWITCH_TEXT={
     honor={"Honor","Honor you gain."},
     procs={"Procs","Abilities that become usable, e.g. Overpower! or Revenge!"},
     npcs={"On NPCs","Killing Blow! when you kill a creature."},
-    players={"On players","Killing Blow! when you kill a player (PvP)."},
+    players={"On players","Killing Blow! when you kill a player (PvP). In battlegrounds and arenas also found by the game's statistic Total Killing Blows."},
+    pets={"Your pet's kills","Your pet's killing blows count as yours."},
     soundNpcs={"Sound on NPCs","Plays the sound below when you kill a creature. Off by default."},
     soundPlayers={"Sound on players","Plays the sound below when you kill a player. Off by default."},
 }

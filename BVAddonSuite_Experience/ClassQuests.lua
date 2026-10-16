@@ -117,6 +117,6 @@ if Q and Q.AddTrackerExtra then
         local from={}
         for i,e in ipairs(entries) do if i<=3 and e.from then from[#from+1]=e.from end end
         return {{title="Class quest",text=p.text,go=function() W:Lead() end,dismiss=function() W:Set(nil) end,
-            tip="BV Routing leads you to who gives it"..(#from>0 and (": "..table.concat(from,", ")) or "")..".\nRight-click: forget it."}}
+            tip="BV Routing leads you to who gives it"..(#from>0 and (": "..table.concat(from,", ")) or "")..".\nx or right-click: forget it."}}
     end})
 end
