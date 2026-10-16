@@ -212,7 +212,8 @@ function Display:Place(entry,override)
     text:SetFont(fontPath(cfg,style),size,extra and "THICKOUTLINE" or cfg.outline)
     if extra then text:SetShadowColor(0,0,0,1);text:SetShadowOffset(2,-2) else text:SetShadowOffset(0,0) end
     local r,g,b,a=L.Format.Color(style.color)
-    if style.school and entry.r then r,g,b=entry.r,entry.g,entry.b end
+    -- Physical damage you take keeps its own color (red by default).
+    if style.school and entry.r and not (entry.incoming and entry.school==1) then r,g,b=entry.r,entry.g,entry.b end
     if entry.bleed then r,g,b=L.Format.Color(cfg.bleedColor) end
     -- Values on enemies not fighting you: own color (optional) and transparency.
     if entry.foreign then

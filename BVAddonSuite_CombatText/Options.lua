@@ -309,6 +309,8 @@ local function build(parent)
         if L.CRIT_CATEGORIES[name] then srow("crit","Crit size",UI:InlineSlider(g,190,1,3,.1,"x%.1f",sset("crit")),"Crits are this much larger.") end
         srow("color","Color",UI:ColorInput(g,150,sset("color")),"Text color.",{width=150})
         if name=="outgoing" then srow("school","School colors",UI:Switch(g,true,sset("school")),"Fire orange, frost blue and so on instead of the color above.") end
+        -- 0.7.12 (a CurseForge wish): damage you take by its school too.
+        if name=="incoming" then srow("school","School colors",UI:Switch(g,true,sset("school")),"Fire orange, frost blue, nature green (poisons), shadow purple (most curses) and so on; physical damage keeps the color above.") end
         local defaults=L.CATEGORY_DEFAULTS[name]
         for _,key in ipairs(L.CATEGORY_SWITCHES) do
             if defaults[key]~=nil then srow(key,SWITCH_TEXT[key][1],UI:Switch(g,true,sset(key)),SWITCH_TEXT[key][2]) end
