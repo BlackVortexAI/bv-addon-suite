@@ -41,11 +41,23 @@ function T:Sections()
         return a.title<b.title
     end
     table.sort(current,nearest);table.sort(tracked,nearest);table.sort(all,nearest)
-    if c.trackerMode=="nearest" then
-        for i=#all,c.trackerCount+1,-1 do all[i]=nil end
-        return {{title="Nearby",quests=all}}
+    -- Other modules' lines first (Q:AddTrackerExtra), as small quests.
+    local extras,ids={},{}
+    for id in pairs(Q.extras or {}) do ids[#ids+1]=id end
+    table.sort(ids)
+    for _,id in ipairs(ids) do
+        local ok,items=pcall(Q.extras[id].items)
+        for _,item in ipairs(ok and type(items)=="table" and items or {}) do
+            extras[#extras+1]={id=-1000-#extras,title=item.title,objectives={{text=item.text,finished=false}},extra=item}
+        end
     end
     local sections={}
+    if #extras>0 then sections[1]={title="Next steps",quests=extras} end
+    if c.trackerMode=="nearest" then
+        for i=#all,c.trackerCount+1,-1 do all[i]=nil end
+        sections[#sections+1]={title="Nearby",quests=all}
+        return sections
+    end
     if #current>0 then sections[#sections+1]={title=Q.Data.zoneName or "Current zone",quests=current} end
     table.sort(dungeonNames)
     for _,name in ipairs(dungeonNames) do
@@ -145,6 +157,11 @@ function T:Block(index)
     b.pulseOut=b.pulse:CreateAnimation("Alpha");b.pulseOut:SetFromAlpha(.25);b.pulseOut:SetToAlpha(0);b.pulseOut:SetDuration(.8);b.pulseOut:SetOrder(2)
     b:SetScript("OnClick",function(_,button) T:Click(b,button) end)
     hoverScripts(b)
+    -- Lead there (BV Quest Navigation, when installed): the next open
+    -- objective or the turn-in; asked again, the next spot.
+    b.go=UI:IconButton(b,"navigation",function() T:Go(b.quest) end,"ghost");M.Size(b.go,18,18);b.go:Hide()
+    b.go:SetScript("OnEnter",function(btn) T:GoTip(btn,b.quest) end)
+    b.go:SetScript("OnLeave",function() if GameTooltip then GameTooltip:Hide() end end)
     self.blocks[index]=b
     return b
 end
@@ -200,7 +217,8 @@ function T:Rows(width)
             local r,g,bl=Q.Data.Color(q.difficulty)
             -- Tags as in the list (Florian 2026-10-08: no sign of a dungeon quest).
             local tags=c.showTags and Q.Data.Tags(q) or ""
-            b.title:SetText(string.format("|cff%02x%02x%02x%s|r  %s%s",r*255,g*255,bl*255,q.level or "?",q.title,tags))
+            if q.extra then b.title:SetText(q.title)
+            else b.title:SetText(string.format("|cff%02x%02x%02x%s|r  %s%s",r*255,g*255,bl*255,q.level or "?",q.title,tags)) end
             if q.failed then b.title:SetTextColor(s:Color("danger"))
             elseif target then b.title:SetTextColor(ar,ag,ab)
             elseif q.dungeon and c.dungeonColor then b.title:SetTextColor(Q.Data.DungeonColor(s))
@@ -208,8 +226,12 @@ function T:Rows(width)
             local distance=""
             if c.showDistance and q.distance and not q.ready then distance=Q.List.Yards(q.distance) end
             b.distance:SetText(distance);b.distance:SetTextColor(mr,mg,mb)
-            b.title:ClearAllPoints();M.Point(b.title,"TOPLEFT",b,"TOPLEFT",8,0);M.Size(b.title,width-8-(distance~="" and 58 or 0),titleH)
-            b.distance:ClearAllPoints();M.Point(b.distance,"TOPRIGHT",b,"TOPRIGHT",0,0);M.Size(b.distance,56,titleH)
+            local go=(q.extra and q.extra.go~=nil) or (not self.preview and q.id>0 and Q.navigation~=nil and Q.navigation:Available() and Q.navigation:Knows(q.id))
+            local goW=go and 20 or 0
+            b.go:SetShown(go and true or false)
+            if go then b.go:ClearAllPoints();M.Point(b.go,"TOPRIGHT",b,"TOPRIGHT",0,-math.floor((titleH-18)/2)) end
+            b.title:ClearAllPoints();M.Point(b.title,"TOPLEFT",b,"TOPLEFT",8,0);M.Size(b.title,width-8-goW-(distance~="" and 58 or 0),titleH)
+            b.distance:ClearAllPoints();M.Point(b.distance,"TOPRIGHT",b,"TOPRIGHT",-goW,0);M.Size(b.distance,56,titleH)
             local h=titleH
             local shown=0
             local function line(text,color,progress)
@@ -404,10 +426,52 @@ end
 -- Clicks and actions.
 function T:Click(b,button)
     local q=b.quest
+    if q and q.extra then
+        if button=="RightButton" then if q.extra.dismiss then pcall(q.extra.dismiss) end
+        elseif q.extra.go then pcall(q.extra.go) end
+        return
+    end
     if not q or q.id<0 then return end
     if button=="RightButton" then self:Menu(b,q);return end
     if IsShiftKeyDown and IsShiftKeyDown() then Q.List:Track({q},false);return end
     if cfg().trackerLeft=="map" then self:OpenOnMap(q) else self:Navigate(q) end
+end
+-- The first open objective Quest Navigation knows, else the turn-in.
+function T:Target(q)
+    local nav=Q.navigation
+    local targets=nav and nav:Targets(q)
+    if not targets then return nil end
+    if not q.ready then
+        for index,o in ipairs(q.objectives or {}) do
+            if not o.finished and targets.objectives[index] then return "objective"..index,targets.objectives[index] end
+        end
+    end
+    if targets.turnin then return "turnin",targets.turnin end
+end
+function T:Go(q)
+    if not q then return end
+    if q.extra then if q.extra.go then pcall(q.extra.go) end;return end
+    local key,target=self:Target(q)
+    if not target then Q:Print("No place known for this quest's next step.");return end
+    local ok,index,count=Q.navigation:Lead(q,key,target)
+    if ok and count and count>1 then Q:Print(string.format("%s: spot %d of %d. Click again for the next one.",target.label,index,count)) end
+end
+function T:GoTip(btn,q)
+    if not (GameTooltip and q) then return end
+    if q.extra then
+        GameTooltip:SetOwner(btn,"ANCHOR_RIGHT");GameTooltip:SetText("Lead me there",1,1,1)
+        if q.extra.tip then GameTooltip:AddLine(q.extra.tip,.8,.8,.8,true) end
+        GameTooltip:Show();return
+    end
+    local key,target=self:Target(q)
+    GameTooltip:SetOwner(btn,"ANCHOR_RIGHT")
+    GameTooltip:SetText("Lead me there",1,1,1)
+    if target then
+        GameTooltip:AddLine(target.label,.8,.8,.8,true)
+        local index,count=Q.navigation:Walk(q,key)
+        if count and count>1 then GameTooltip:AddLine(string.format("Spot %d of %d. Click again for the next spot.",index,count),.6,.6,.6,true) end
+    end
+    GameTooltip:Show()
 end
 function T:Navigate(q)
     self.setting=true
@@ -425,8 +489,10 @@ function T:Menu(b,q)
     local options={{value="navigate",label="Set as navigation target"},{value="map",label="Show in quest log"},
         {value="untrack",label=q.watched and "Stop tracking" or "Track"},{value="share",label="Share with group"},{value="abandon",label="Abandon…",danger=true}}
     if Q.MapWaypoints() then table.insert(options,2,{value="waypoint",label="Waypoint to the objective"}) end
+    if Q.navigation and Q.navigation:Available() and Q.navigation:Knows(q.id) then table.insert(options,1,{value="lead",label="Lead me there"}) end
     UI:ContextMenu(b,options,function(value)
-        if value=="navigate" then T:Navigate(q)
+        if value=="lead" then T:Go(q)
+        elseif value=="navigate" then T:Navigate(q)
         elseif value=="waypoint" then Q.MapWaypoints():Quest(q.id,q.title)
         elseif value=="map" then T:OpenOnMap(q)
         elseif value=="untrack" then Q.List:Track({q},not q.watched)

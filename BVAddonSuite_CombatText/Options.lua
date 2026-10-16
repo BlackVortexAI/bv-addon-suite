@@ -108,6 +108,10 @@ local SWITCH_TEXT={
     reputation={"Reputation","Faction name and the reputation you gained or lost."},
     honor={"Honor","Honor you gain."},
     procs={"Procs","Abilities that become usable, e.g. Overpower! or Revenge!"},
+    npcs={"On NPCs","Killing Blow! when you kill a creature."},
+    players={"On players","Killing Blow! when you kill a player (PvP)."},
+    soundNpcs={"Sound on NPCs","Plays the sound below when you kill a creature. Off by default."},
+    soundPlayers={"Sound on players","Plays the sound below when you kill a player. Off by default."},
 }
 -- Fonts (0.7.7): the suite's and SharedMedia's; the first row inherits.
 local function fonts(inheritLabel)
@@ -307,6 +311,21 @@ local function build(parent)
         local defaults=L.CATEGORY_DEFAULTS[name]
         for _,key in ipairs(L.CATEGORY_SWITCHES) do
             if defaults[key]~=nil then srow(key,SWITCH_TEXT[key][1],UI:Switch(g,true,sset(key)),SWITCH_TEXT[key][2]) end
+        end
+        if name=="kill" then
+            -- Core's sound picker, as the minimap scanner's: the game's sounds or SharedMedia's, with a preview.
+            local button
+            button=UI:Button(g,"",190,function()
+                local s=L.CleanSound(style().sound) or L.KILL_SOUND
+                if L.soundPicker then L.soundPicker:Hide() end
+                L.soundPicker=UI:SoundPicker(page,{source=s.source,soundKit=s.soundKit or L.KILL_SOUND.soundKit,sound=s.sound,channel="Master",volume=100},function(value,source)
+                    style().sound=source=="sharedmedia" and {source="sharedmedia",sound=value} or {source="soundkit",soundKit=value}
+                    L:Changed();button:SetValue(style().sound);L.PlayKillSound(style().sound)
+                end,{sources=true})
+            end)
+            function button:SetValue(value) self:SetText(L.SoundLabel(value)) end
+            srow("sound","Sound",button,"The killing blow sound: the game's own or one from SharedMedia (other addons bring them). Choose one with a preview.")
+            g:Row("",UI:Button(g,"Play the sound",190,function() L.PlayKillSound(style().sound) end),{help="Plays the killing blow sound once."})
         end
         if name=="outgoing" or name=="incoming" then
             srow("label","Damage type text",UI:Switch(g,false,sset("label")),"Adds the damage type after the number, e.g. \"1234 Fire\", in its color. Missing when the game hides the type.")

@@ -3,7 +3,7 @@
 ## Notes: Ways you can really walk: round slopes, water, cliffs and painted areas, by flight, ship, zeppelin and tram. Used by BV Gather; /bv route leads you anywhere. Requires BV Core.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.1.3
+## Version: 0.1.4
 ## Dependencies: BVAddonSuite
 ## SavedVariables: BVRoutingDB
 

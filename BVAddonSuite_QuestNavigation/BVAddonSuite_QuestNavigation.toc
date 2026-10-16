@@ -1,0 +1,12 @@
+## Interface: 16001
+## Title: BV Addon Suite - Quest Navigation
+## Notes: Leads you to your quest objectives and turn-ins, spot by spot, with BV Routing. Requires BV Core, BV Quest, BV Routing and Questie (its database).
+## Author: BV
+## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
+## Version: 0.1.0
+## Dependencies: BVAddonSuite, BVAddonSuite_Quest, BVAddonSuite_Routing, Questie, QuestieDB
+
+QuestNavigation.lua
+Questie.lua
+Guide.lua
+Probe.lua

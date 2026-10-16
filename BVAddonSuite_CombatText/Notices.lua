@@ -92,12 +92,19 @@ function N:Update(messageType)
 end
 -- Your killing blow (0.7.2): PARTY_KILL names the attacker, readable for you
 -- (signal probe 2026-10-07: 3 of 3). Your pet's kills do not count. Own
--- category "kill" since 0.7.7.
-function N:Kill(attacker)
-    if not L:Config().categories.kill.enabled then return nil end
+-- category "kill" since 0.7.7. 0.7.9 (CurseForge wish 2026-10-16): players
+-- (PvP) and NPCs apart by the target's GUID, each with or without a sound;
+-- a target the game hides counts as an NPC.
+function N:Kill(attacker,target)
+    local c=L:Config().categories.kill
+    if not c.enabled then return nil end
     if not readable(attacker) then L.Sources.Count("kill: attacker secret");return nil end
     local ok,me=pcall(UnitGUID,"player")
     if not ok or not readable(me) or attacker~=me then return nil end
+    local player=readable(target) and type(target)=="string" and target:match("^Player%-")~=nil
+    L.Sources.Count(player and "kill: player" or "kill: npc")
+    if (player and c.soundPlayers) or (not player and c.soundNpcs) then L.PlayKillSound(c.sound) end
+    if (player and not c.players) or (not player and not c.npcs) then return nil end
     local text=type(KILLING_BLOW)=="string" and KILLING_BLOW or "Killing Blow"
     return self:Show("kill",join(text,"!"),"killing blow")
 end
@@ -131,7 +138,7 @@ function N:Enable(context)
     for _,event in ipairs({"UNIT_ENTERED_VEHICLE","UNIT_EXITED_VEHICLE"}) do
         pcall(context.Subscribe,context,event,function(_,unit) if unit=="player" then N:SetActiveUnit() end end)
     end
-    pcall(context.Subscribe,context,"PARTY_KILL",function(_,attacker) pcall(N.Kill,N,attacker) end)
+    pcall(context.Subscribe,context,"PARTY_KILL",function(_,attacker,target) pcall(N.Kill,N,attacker,target) end)
     context:Subscribe("PLAYER_REGEN_DISABLED",function() pcall(N.Combat,N,true) end)
     context:Subscribe("PLAYER_REGEN_ENABLED",function() pcall(N.Combat,N,false) end)
 end

@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.1.3","0.8.101",1) then return end
+if not ns:RequireCore(package,"0.1.4","0.8.101",1) then return end
 -- BV Routing (Florian 2026-10-10, docs/module-structure-routing.md): ways
 -- you can really walk, round slopes, water, cliffs, enemy bases, painted
 -- areas and walls, through cities and between their levels, by flight,
@@ -47,7 +47,13 @@ R.DEFAULTS={
     flightsUnknown="leave",
     -- Colours of the way (Florian 2026-10-15: players set their own), as
     -- RRGGBB; empty: the built-in one.
-    colorWalk="",colorFlight="",colorTransport="",colorTransition="",colorGoal=""}
+    colorWalk="",colorFlight="",colorTransport="",colorTransition="",colorGoal="",
+    -- The legs after the one you are on (Florian 2026-10-16: players set the
+    -- dimming): the line's opacity at full dimming in percent (100: none)
+    -- and over how many legs it gets there.
+    aheadOpacity=30,aheadSteps=3}
+-- Numbers kept in their range: {low, high}.
+local RANGES={aheadOpacity={10,100},aheadSteps={1,6}}
 local CHOICES={flightsUnknown={leave=true,all=true},risk={ignore=true,avoid=true,block=true},enemy={ignore=true,avoid=true,block=true},cliffs={never=true,safe=true,always=true},guide={left=true,right=true,free=true,off=true}}
 function R:Config()
     local cfg=ns.Settings:Module(self.ID)
@@ -64,6 +70,10 @@ function R:Config()
     cfg.guideBare=nil
     for _,key in ipairs({"routeTerrain","avoidWater","preferRoads","guideGround"}) do cfg[key]=cfg[key]==true end
     for key,valid in pairs(CHOICES) do if not valid[cfg[key]] then cfg[key]=self.DEFAULTS[key] end end
+    for key,range in pairs(RANGES) do
+        local v=tonumber(cfg[key]) or self.DEFAULTS[key]
+        cfg[key]=math.max(range[1],math.min(range[2],math.floor(v+.5)))
+    end
     return cfg
 end
 

@@ -1568,9 +1568,18 @@ N.DRAWSTEP=2
 N.AHEADLINE=.3
 N.AHEADPIN=.55
 N.FADESTEPS=3
-function N.Fade(n,full)
+function N.Fade(n,full,steps)
     if n<=0 then return 1 end
-    return 1-(1-full)*math.min(1,n/N.FADESTEPS)
+    return 1-(1-full)*math.min(1,n/(steps or N.FADESTEPS))
+end
+-- The dimming as the settings say (Florian 2026-10-16): line and pin at full
+-- dimming, legs to get there; pins keep their share of the line's dimming
+-- (built in: line .3, pin .55).
+N.PINSHARE=(1-N.AHEADPIN)/(1-N.AHEADLINE)
+function N:Ahead()
+    local c=Routing:Config()
+    local line=c.aheadOpacity/100
+    return line,1-(1-line)*N.PINSHARE,c.aheadSteps
 end
 function N:Points()
     local out={}
@@ -1578,13 +1587,14 @@ function N:Points()
     -- Your level by the plan (the step you are on).
     local now=self.steps[self.current]
     local here=now and now.from.level
+    local aheadLine,aheadPin,aheadSteps=self:Ahead()
     for i,step in ipairs(self.steps) do
         if i>=self.current then
             local color=N:Color(step.kind)
             local from,to=step.from,step.to
             local dim=(from.level or 0)~=(here or 0) or nil
             local later=i>self.current
-            local la,pa=N.Fade(i-self.current,N.AHEADLINE),N.Fade(i-self.current,N.AHEADPIN)
+            local la,pa=N.Fade(i-self.current,aheadLine,aheadSteps),N.Fade(i-self.current,aheadPin,aheadSteps)
             -- The walk you are on: from the next point ahead of you, the line
             -- from you leading to it (Florian 2026-10-11: it led back to the
             -- leg's start behind you). self.ahead: Tick, the path point after

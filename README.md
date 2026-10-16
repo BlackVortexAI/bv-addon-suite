@@ -8,18 +8,19 @@ This development version is undergoing in-game acceptance testing.
 
 | Folder | Version |
 | --- | --- |
-| `BVAddonSuite` | 0.8.103 |
+| `BVAddonSuite` | 0.8.104 |
 | `BVAddonSuite_AuraStudio` | 0.8.91 |
-| `BVAddonSuite_Experience` | 0.8.91 |
+| `BVAddonSuite_Experience` | 0.8.92 |
 | `BVAddonSuite_Reputation` | 0.8.89 |
 | `BVAddonSuite_Bags` | 0.8.92 |
 | `BVAddonSuite_MicroMenu` | 0.8.90 |
 | `BVAddonSuite_Loot` | 0.8.92 |
-| `BVAddonSuite_CombatText` | 0.7.8 |
-| `BVAddonSuite_Quest` | 0.1.2 |
+| `BVAddonSuite_CombatText` | 0.7.9 |
+| `BVAddonSuite_Quest` | 0.1.3 |
 | `BVAddonSuite_Map` | 0.2.5 |
-| `BVAddonSuite_Routing` | 0.1.3 |
+| `BVAddonSuite_Routing` | 0.1.4 |
 | `BVAddonSuite_Codex` | 0.1.1 |
+| `BVAddonSuite_QuestNavigation` | 0.1.0 |
 | `BVAddonSuite_Gather` | 0.2.0 |
 | `BVAddonSuite_GatherData` | 0.1.0 |
 | `BVAddonSuite_MapData` | 0.1.0 |
@@ -31,7 +32,8 @@ Copy the desired addon folders directly into your compatible WoW client's
 
 - `BVAddonSuite`: required shared core.
 - `BVAddonSuite_AuraStudio`: AuraStudio graph editor and runtime.
-- `BVAddonSuite_Experience`: optional experience module.
+- `BVAddonSuite_Experience`: optional experience module with a level-up card and a
+  class trainer reminder.
 - `BVAddonSuite_Reputation`: optional reputation module.
 - `BVAddonSuite_Bags`: optional bag bar module (disabled by default).
 - `BVAddonSuite_MicroMenu`: optional micro menu module (disabled by default).
@@ -47,6 +49,8 @@ Copy the desired addon folders directly into your compatible WoW client's
   tram, with a guide (`/bv route`); needs `BVAddonSuite_MapData`.
 - `BVAddonSuite_Codex`: search for places (Ctrl + Space) and tours; needs Routing
   and Map Data.
+- `BVAddonSuite_QuestNavigation`: leads you to quest objectives and turn-ins, spot by
+  spot (`/bv questnav`); needs Quest, Routing and the Questie addon.
 - `BVAddonSuite_Gather`: herbs, ore and routes with gather mode, HUD, tracker and
   minimap scanner (disabled by default, `/bv gather`); needs Routing.
 - `BVAddonSuite_GatherData`: known herb and ore spawn points for Gather (GPL-2.0 data).

@@ -24,7 +24,11 @@ function Det:Build(pane)
     local c=self.child
     self.objectivesHead=UI:Label(c,"OBJECTIVES",11,"accent",true)
     self.textHead=UI:Button(c,"Quest text",120,function() Det.textOpen=not Det.textOpen;Det:Refresh() end,"ghost")
-    self.textHead:SetLabelInsets(0,8,"LEFT")
+    -- Open/closed as Lucide chevrons (Florian 2026-10-16: the triangles
+    -- were not in the suite's font and showed as a box).
+    self.textHead:SetLabelInsets(18,8,"LEFT")
+    self.textHead.closed=UI:Icon(self.textHead,"chevron-right",12,"muted");M.Point(self.textHead.closed,"LEFT",self.textHead,"LEFT",2,0)
+    self.textHead.open=UI:Icon(self.textHead,"chevron-down",12,"muted");M.Point(self.textHead.open,"LEFT",self.textHead,"LEFT",2,0)
     self.text=UI:Label(c,"",12,"text");self.text:SetWordWrap(true);self.text:SetJustifyV("TOP")
     self.rewardsHead=UI:Label(c,"REWARDS",11,"accent",true)
     self.money=UI:Label(c,"",12,"text")
@@ -76,6 +80,10 @@ function Det:Objective(index)
     return UI:WithStyle(style(),function()
         o={label=UI:Label(self.child,"",12,"text"),back=self.child:CreateTexture(nil,"BORDER"),bar=self.child:CreateTexture(nil,"ARTWORK")}
         o.back:SetTexture("Interface\\Buttons\\WHITE8X8");o.bar:SetTexture("Interface\\Buttons\\WHITE8X8")
+        -- Lead there (BV Quest Navigation, when installed): asked again, the next spot.
+        o.go=UI:IconButton(self.child,"navigation",function() Det:Go(o.key,o.target) end,"ghost");M.Size(o.go,22,22);o.go:Hide()
+        o.go:SetScript("OnEnter",function(btn) Det:GoTip(btn,o.key,o.target) end)
+        o.go:SetScript("OnLeave",function() if GameTooltip then GameTooltip:Hide() end end)
         self.objectives[index]=o
         return o
     end)
@@ -88,7 +96,8 @@ function Det:Reward(index)
         r.icon=r:CreateTexture(nil,"ARTWORK");r.icon:SetTexCoord(.08,.92,.08,.92)
         r.edge=r:CreateTexture(nil,"BORDER");r.edge:SetTexture("Interface\\Buttons\\WHITE8X8")
         r.name=UI:Label(r,"",12,false);r.name:SetWordWrap(false)
-        r.upgrade=UI:Label(r,"",12,false,true);r.upgrade:SetText("▲");r.upgrade:SetTextColor(.3,.95,.3)
+        -- An arrow symbol, not a font glyph (the suite's font has no ▲).
+        r.upgrade=UI:Icon(r,"arrow-up",14,"success")
         r:SetScript("OnEnter",function(btn)
             if not (GameTooltip and btn.data) then return end
             GameTooltip:SetOwner(btn,"ANCHOR_RIGHT")
@@ -123,11 +132,20 @@ function Det:Refresh()
     UI:Place(self.objectivesHead,self.child,0,y);M.Size(self.objectivesHead,width,14);y=y+20
     local ar,ag,ab=s:Color("accent")
     local shown=0
+    local nav=Q.navigation
+    local targets=nav and nav:Available() and nav:Targets(q) or nil
+    local function go(row,key,target,top)
+        row.key,row.target=key,target
+        row.go:SetShown(target~=nil)
+        if target then row.go:ClearAllPoints();M.Point(row.go,"TOPRIGHT",self.child,"TOPLEFT",width,-top+3) end
+    end
+    local textWidth=targets and width-26 or width
     for index,o in ipairs(q.objectives) do
         local row=self:Objective(index);shown=index
         row.label:SetText(o.text);row.label:SetTextColor(s:Color(o.finished and "muted" or "text"))
         if o.finished then row.label:SetTextColor(.45,.8,.45) end
-        UI:Place(row.label,self.child,0,y);local h=textHeight(row.label,width);y=y+h+2
+        UI:Place(row.label,self.child,0,y);go(row,"objective"..index,targets and targets.objectives[index],y)
+        local h=textHeight(row.label,textWidth);y=y+h+2
         if o.need and o.need>1 then
             UI:Place(row.back,self.child,0,y);M.Size(row.back,width,4);row.back:SetVertexColor(1,1,1,.08);row.back:Show()
             UI:Place(row.bar,self.child,0,y);M.Size(row.bar,math.max(.01,width*(o.have or 0)/o.need),4);row.bar:SetVertexColor(ar,ag,ab,.9);row.bar:Show()
@@ -138,14 +156,23 @@ function Det:Refresh()
     if #q.objectives==0 then
         local row=self:Objective(1);shown=1
         row.label:SetText(q.ready and "Ready to turn in." or "No objectives listed.");row.label:SetTextColor(s:Color("muted"))
-        UI:Place(row.label,self.child,0,y);y=y+textHeight(row.label,width)+4;row.back:Hide();row.bar:Hide();row.label:Show()
+        UI:Place(row.label,self.child,0,y);go(row,nil,nil,y);y=y+textHeight(row.label,width)+4;row.back:Hide();row.bar:Hide();row.label:Show()
     end
-    for index=shown+1,#self.objectives do local o=self.objectives[index];o.label:Hide();o.back:Hide();o.bar:Hide() end
+    -- Where to turn it in (Quest Navigation knows; Blizzard tells nothing).
+    if targets and targets.turnin then
+        shown=shown+1
+        local row=self:Objective(shown)
+        row.label:SetText(targets.turnin.label);row.label:SetTextColor(s:Color(q.ready and "accent" or "muted"))
+        UI:Place(row.label,self.child,0,y);go(row,"turnin",targets.turnin,y)
+        y=y+textHeight(row.label,textWidth)+4;row.back:Hide();row.bar:Hide();row.label:Show()
+    end
+    for index=shown+1,#self.objectives do local o=self.objectives[index];o.label:Hide();o.back:Hide();o.bar:Hide();o.go:Hide() end
     -- Quest text, collapsible.
     self.textHead:SetShown(cfg.detailsText);self.text:SetShown(cfg.detailsText and self.textOpen)
     if cfg.detailsText then
         y=y+6
-        self.textHead:SetLabelText((self.textOpen and "▾ " or "▸ ").."Quest text")
+        self.textHead:SetLabelText("Quest text")
+        self.textHead.open:SetShown(self.textOpen==true);self.textHead.closed:SetShown(not self.textOpen)
         UI:Place(self.textHead,self.child,0,y);M.Size(self.textHead,width,20);y=y+24
         if self.textOpen then
             local body=d.description
@@ -177,7 +204,7 @@ function Det:Refresh()
             r.edge:ClearAllPoints();M.Point(r.edge,"LEFT",r,"LEFT",0,0);M.Size(r.edge,26,26)
             r.icon:ClearAllPoints();M.Point(r.icon,"CENTER",r.edge,"CENTER",0,0);M.Size(r.icon,24,24)
             r.name:ClearAllPoints();M.Point(r.name,"LEFT",r,"LEFT",32,0);M.Size(r.name,width-56,26)
-            r.upgrade:ClearAllPoints();M.Point(r.upgrade,"RIGHT",r,"RIGHT",-2,0);M.Size(r.upgrade,16,26)
+            r.upgrade:ClearAllPoints();M.Point(r.upgrade,"RIGHT",r,"RIGHT",-2,0);M.Size(r.upgrade,14,14)
             r:Show();y=y+30
         end
         for _,data in ipairs(d.rewards) do item(data) end
@@ -192,6 +219,24 @@ function Det:Refresh()
     -- Actions.
     self.track:SetLabelText(q.watched and "Untrack" or "Track")
     if d.pushable then self.share:Enable() else self.share:Disable() end
+end
+-- Lead to an objective or the turn-in; again: the next spot of its round.
+function Det:Go(key,target)
+    local nav=Q.navigation
+    local q=self.questID and Q.Data.byID[self.questID]
+    if not (nav and q and target) then return end
+    local ok,index,count=nav:Lead(q,key,target)
+    if ok and count and count>1 then Q:Print(string.format("%s: spot %d of %d. Click again for the next one.",target.label,index,count)) end
+end
+function Det:GoTip(btn,key,target)
+    if not (GameTooltip and target) then return end
+    local q=self.questID and Q.Data.byID[self.questID]
+    GameTooltip:SetOwner(btn,"ANCHOR_RIGHT")
+    GameTooltip:SetText("Lead me there",1,1,1)
+    local index,count=Q.navigation:Walk(q,key)
+    if count and count>1 then GameTooltip:AddLine(string.format("Spot %d of %d. Click again for the next spot.",index,count),.8,.8,.8,true)
+    else GameTooltip:AddLine("BV Routing leads you to the nearest place; click again for the next one.",.8,.8,.8,true) end
+    GameTooltip:Show()
 end
 function Det:Scroll(delta)
     local h=M.GetHeight(self.child)-M.GetHeight(self.scrollFrame)

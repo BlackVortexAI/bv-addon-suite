@@ -119,6 +119,21 @@ function Editor:Build(parent,kind)
     field(b,"Hide when inactive / at maximum","hideInactive",false,"toggle")
     field(b,"Hide native Blizzard artwork","hideBlizzard",false,"toggle",nil,nil,nil,
         "Hides Blizzard's own bar while this bar is shown (on by default). If Blizzard's bar still shows on your client, please report it.")
+    -- The bar's own switches (definition.options = {{key, title, help, default, changed}}).
+    local definition=ns.ProgressBars.definitions[kind]
+    if definition.options and #definition.options>0 then
+        b:Section("own",definition.optionsTitle or "More")
+        for _,option in ipairs(definition.options) do
+            local o=option
+            local control=UI:Switch(b,false,function(value)
+                ns.ProgressOptions:Get(kind)[o.key]=value==true;changed()
+                if o.changed then ns:Call("bar option",o.changed,value==true) end
+            end)
+            p.controls[#p.controls+1]={widget=control,key=o.key}
+            p.inputs.bar[o.key]=control
+            b:Row(o.title,control,{help=o.help})
+        end
+    end
     local text=pages.text
     local list=UI:Panel(text,190,397,"panel",6,.5); p.fieldList=list
     local listTitle=at(UI:Label(list,"FIELDS",11,"accent",true),list,10,8)

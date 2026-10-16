@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.7.8","0.8.95",1) then return end
+if not ns:RequireCore(package,"0.7.9","0.8.95",1) then return end
 -- Combat text module. Everything specific to it lives in this package, never
 -- in Core, so Core stays free for fixes.
 L.ns=ns
@@ -53,7 +53,9 @@ L.CATEGORY_DEFAULTS={
         combat=true,reputation=true,honor=true,procs=true},
     -- Your killing blows (0.7.7, a CurseForge wish 2026-10-12): their own
     -- category, split from the notifications, with their own place and look.
-    kill={anchor="notice",animation="slam",size=26,color="FF5A3CFF",school=false,prefix="",suffix="",duration=1.8,distance=40,crit=1},
+    kill={anchor="notice",animation="slam",size=26,color="FF5A3CFF",school=false,prefix="",suffix="",duration=1.8,distance=40,crit=1,
+        -- 0.7.9 (a CurseForge wish 2026-10-16): NPCs and players apart, and a sound.
+        npcs=true,players=true,soundNpcs=false,soundPlayers=false},
 }
 -- Staggered output (0.7.1, UI/Display.lua): texts of a category that come
 -- together one after another (staggerDelay ms apart) and a line apart
@@ -71,7 +73,31 @@ end
 -- options only there.
 L.CRIT_CATEGORIES={outgoing=true,incoming=true,heal=true,outheal=true}
 -- Switches of the message categories (only where the defaults have them).
-L.CATEGORY_SWITCHES={"gains","fades","combat","reputation","honor","procs"}
+L.CATEGORY_SWITCHES={"gains","fades","combat","reputation","honor","procs","npcs","players","soundNpcs","soundPlayers"}
+-- The killing blow sound, chosen with Core's sound picker as the minimap
+-- scanner's (Florian 2026-10-16): {source="soundkit", soundKit} or
+-- {source="sharedmedia", sound="lsm:..."}; raid warning by default.
+L.KILL_SOUND={source="soundkit",soundKit=8959}
+function L.CleanSound(value)
+    if type(value)~="table" then return nil end
+    if value.source=="soundkit" and type(value.soundKit)=="number" and value.soundKit>0 then return {source="soundkit",soundKit=math.floor(value.soundKit)} end
+    if value.source=="sharedmedia" and type(value.sound)=="string" and value.sound~="" then return {source="sharedmedia",sound=value.sound} end
+end
+-- A sound's name: the game's SoundKit name or the SharedMedia file's.
+local kitNames
+function L.SoundLabel(value)
+    local s=L.CleanSound(value) or L.KILL_SOUND
+    if s.source=="sharedmedia" then return (tostring(s.sound):gsub("^lsm:","")) end
+    if not kitNames then
+        kitNames={}
+        for name,id in pairs(rawget(_G,"SOUNDKIT") or {}) do if type(id)=="number" then kitNames[id]=name:gsub("_"," "):lower() end end
+    end
+    return kitNames[s.soundKit] or ("Sound "..tostring(s.soundKit))
+end
+function L.PlayKillSound(value)
+    local s=L.CleanSound(value) or L.KILL_SOUND
+    return ns.Sound:Play(L,"kill",{source=s.source,soundKit=s.soundKit,sound=s.sound,channel="Master",volume=100})
+end
 L.DEFAULTS={enabled=false,hideBlizzard=true,hideBlizzardSelf=true,plates=true,
     -- Texts at a nameplate start this much higher (a CurseForge wish
     -- 2026-10-09: above the enemy's debuffs).
@@ -198,7 +224,8 @@ function L:Config()
         if not ANIMATIONS[c.animation] then c.animation=defaults.animation end
         if not MIRRORS[c.mirror] then c.mirror="none" end
         if not L.PLACES[c.anchor] then c.anchor=defaults.anchor end
-        for _,key in ipairs(L.CATEGORY_SWITCHES) do if defaults[key]~=nil then c[key]=c[key]~=false end end
+        for _,key in ipairs(L.CATEGORY_SWITCHES) do if defaults[key]~=nil then c[key]=c[key]==true or (c[key]==nil and defaults[key]) end end
+        if name=="kill" then c.sound=L.CleanSound(c.sound) or {source=L.KILL_SOUND.source,soundKit=L.KILL_SOUND.soundKit} end
         c.size=num(c.size,defaults.size,8,64);c.duration=num(c.duration,defaults.duration,.3,5)
         c.distance=num(c.distance,defaults.distance,0,300);c.crit=num(c.crit,defaults.crit,1,3)
         c.stagger=c.stagger==true

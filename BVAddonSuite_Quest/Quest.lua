@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.1.2","0.8.96",1) then return end
+if not ns:RequireCore(package,"0.1.3","0.8.96",1) then return end
 -- Quest package (docs/map-quest-concept.md): the quest log beside the world
 -- map. Files fill Q (package-private): Data (quest log model, sorting),
 -- Panes (docking beside the map, splitters), List, Details, Options.
@@ -96,6 +96,15 @@ Q.DENSITY={compact=18,normal=22,comfortable=26}
 -- notification stage.
 local callbacks={}
 function Q:On(event,owner,fn) callbacks[event]=callbacks[event] or {};callbacks[event][owner]=fn end
+-- Lines of other modules at the top of the tracker (Florian 2026-10-16:
+-- Experience's "Class trainer - 4 new abilities"). provider.items() returns
+-- {{title, text, go = function (the arrow; nil: none), tip}}; Dirty when they change.
+Q.extras={}
+function Q:AddTrackerExtra(id,provider)
+    assert(type(id)=="string" and type(provider)=="table" and type(provider.items)=="function","Invalid tracker extra")
+    self.extras[id]=provider
+    if self.Dirty then self:Dirty() end
+end
 function Q:Emit(event,...) for _,fn in pairs(callbacks[event] or {}) do fn(...) end end
 function Q:Dirty()
     self.dirty=true

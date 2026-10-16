@@ -38,6 +38,11 @@ local function build(parent)
     g:Row("Colours",UI:Button(g,"Reset colours",170,function()
         for _,key in pairs(N.COLORKEY) do cfg()[key]="" end;redraw()
     end),{help="Back to the built-in colours."})
+    g:Section("ahead","Later legs")
+    row("aheadOpacity","Opacity",UI:InlineSlider(g,190,10,100,5,"%d %%",function(value) cfg().aheadOpacity=value;redraw() end),
+        "How visible the legs after the one you walk stay on the maps (100 %: not dimmed). Their stops fade a little less.")
+    row("aheadSteps","Dims over",UI:InlineSlider(g,190,1,6,1,"%d legs",function(value) cfg().aheadSteps=value;redraw() end),
+        "The next leg is dimmed a little, each further one more, until this many legs ahead.")
     g:Section("flights","Flights")
     local unknown=row("flightsUnknown","Unknown flight points",UI:Dropdown(g,190,{},function(value) cfg().flightsUnknown=value end),
         "On a continent whose flight map you have not opened: leave its flight points out (you are asked once), or count all of your side.")
@@ -48,12 +53,23 @@ local function build(parent)
     guide:SetOptions({{value="right",label="Right of the tour"},{value="left",label="Left of the tour"},{value="free",label="Where you drag it"},{value="off",label="Off"}})
     row("guideGround","Guide background",UI:Switch(g,false,function(value) if Routing.Guide then Routing.Guide:SetBare(value~=true) else cfg().guideGround=value==true end end),
         "The guide's background panel; off it floats see-through.")
+    -- Config places the page and asks it to lay its rows out (Florian
+    -- 2026-10-16: without this the page stayed empty in 0.1.3).
+    function page:Arrange(width)
+        UI:Place(g,self,0,0)
+        local height=g:Arrange(width)+8
+        ns.DesignSystem.Metrics.Height(self,height);return height
+    end
+    page.controls=controls
     function page:Refresh()
         local c=cfg()
         for kind,key in pairs(N.COLORKEY) do
-            local hex=c[key]~="" and c[key] or N.Hex(N.COLOR[kind])
+            -- Only a valid colour reaches the input (as N:Color reads it).
+            local hex=c[key]
+            hex=type(hex)=="string" and hex:match("^%x%x%x%x%x%x") and hex:sub(1,6) or N.Hex(N.COLOR[kind])
             if controls[key] and controls[key].SetValue then controls[key]:SetValue(hex.."FF") end
         end
+        controls.aheadOpacity:SetValue(c.aheadOpacity);controls.aheadSteps:SetValue(c.aheadSteps)
         controls.flightsUnknown:SetValue(c.flightsUnknown);controls.guide:SetValue(c.guide);controls.guideGround:SetValue(c.guideGround)
     end
     page:Refresh()

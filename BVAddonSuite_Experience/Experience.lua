@@ -1,11 +1,13 @@
-local package=...
+local package,E=...
 local ns=BVAddonSuiteCore
 if not ns or not ns.RequireCore then
     if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.89 or newer. Update Core; saved data is preserved.") end
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.8.91","0.8.95",1) then return end
+if not ns:RequireCore(package,"0.8.92","0.8.95",1) then return end
+-- The level-up card's files (LevelUp.lua, UI/LevelCard.lua) load only then.
+E.ready=true
 local Data,number=ns.ProgressData,ns.ProgressModel.Number
 local field=ns.ProgressOptions.Field
 function Data:Experience()
@@ -55,6 +57,15 @@ ns.ExperienceLevelUp=blizzard
 ns.ProgressBars:Register({
     kind="experience", label="Experience Bar", description="Progress, pace and time to your next level.",
     aliases={"exp","xp","experience"}, y=180, color="20F0A0FF", supportsRested=true,
+    -- The level-up card and the trainer reminder (Florian 2026-10-16).
+    optionsTitle="Level up",
+    options={
+        {key="levelupStats",title="Show the values that grew",help="Health, mana and attributes on the level-up card: the old value, then the new one and the gain."},
+        {key="levelupAbilities",title="Show new abilities",help="What your class trainer now teaches, on the level-up card."},
+        {key="levelupQuests",title="Show class quests",help="A class quest that opens with the new level (a mount, a demon, a totem...), on the card and in BV Quest's tracker."},
+        {key="trainerReminder",title="Class trainer reminder",help="A line in BV Quest's tracker, or a badge at Blizzard's tracker or the minimap, while your trainer has abilities for you.",
+            changed=function() if E.Trainer then E.Trainer:Changed() end end},
+    },
     defaultFields=function() return {
         field("Level {level}", "LEFT", "LEFT", 8, 0, 110),
         field("{current} / {max}  ({percent}%)", "CENTER", "CENTER", 0, 0, 280),
@@ -75,7 +86,9 @@ ns.ProgressBars:Register({
     onEnable=function(context,state)
         -- The old level's time comes from the session before the next XP update.
         hookBlizzard()
-        context:Subscribe("PLAYER_LEVEL_UP",function(_,level)
+        -- What the class trainer has for you (badge, tracker line).
+        if E.Trainer then E.Trainer:Enable(context) end
+        context:Subscribe("PLAYER_LEVEL_UP",function(_,level,health,power,talents,_,str,agi,sta,int,spi)
             if not number(level) then return end
             blizzard.quietUntil=GetTime()+6
             -- Already on screen (it can come first): gone.
@@ -86,8 +99,17 @@ ns.ProgressBars:Register({
             if ok and type(values)=="table" and values.levelTime and values.levelTime~="—" then
                 subtitle="Level "..(level-1).." took "..values.levelTime
             end
-            -- Never let the notification disturb the bar.
-            pcall(ns.Stage.Show,ns.Stage,"levelup",{title="Level "..level,subtitle=subtitle or "A new level"})
+            -- The level-up card (Florian 2026-10-16), a moment later: the
+            -- client raises the values right after the event. Never let it
+            -- disturb the bar.
+            local took=values and values.levelTime~="—" and values.levelTime or nil
+            local function show()
+                local okData,data=pcall(E.LevelUp.FromEvent,E.LevelUp,level,health,power,talents,str,agi,sta,int,spi)
+                if okData and data then data.took=took;pcall(E.LevelUp.Show,E.LevelUp,data,subtitle)
+                else pcall(ns.Stage.Show,ns.Stage,"levelup",{title="Level "..level,subtitle=subtitle or "A new level"}) end
+            end
+            if E.LevelUp and C_Timer and C_Timer.NewTimer then C_Timer.NewTimer(.5,show)
+            else pcall(ns.Stage.Show,ns.Stage,"levelup",{title="Level "..level,subtitle=subtitle or "A new level"}) end
         end)
         context:Subscribe("TIME_PLAYED_MSG",function(_,_,levelSeconds)
             if number(levelSeconds) then
