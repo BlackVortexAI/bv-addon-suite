@@ -11,6 +11,8 @@ local _,ns=...
 local UI,M=ns.UI,ns.DesignSystem.Metrics
 local P={providers={},order={},worldPins={},worldLines={},miniPins={}}
 ns.MapPins=P
+-- Line points this many pixels apart at least on the world map (see PaintWorld).
+P.LINESTEP=3
 local WHITE="Interface\\Buttons\\WHITE8X8"
 -- A filled white disc (Blizzard's round portrait mask) behind every pin.
 local DISC="Interface\\CHARACTERFRAME\\TempPortraitAlphaMask"
@@ -306,9 +308,16 @@ function P:PaintWorld()
             if provider.world~=false then points=self:Points(provider,shown) end
             if points then
                 local previous
-                for _,point in ipairs(points) do
+                local minStep=M.ToNative(P.LINESTEP)/scale
+                for index,point in ipairs(points) do
                     local x,y=self:OnMap(point,shown,true)
-                    if x and x>=-.05 and x<=1.05 and y>=-.05 and y<=1.05 then
+                    -- A line point closer than LINESTEP to the last one drawn waits for the next
+                    -- (Florian 2026-10-20: the way over the Shimmering Flats, a point every two
+                    -- yards, only showed zoomed in; the client draws no line under a pixel).
+                    local skip=x and previous and point.noPin and not point.lead and points[index+1]
+                        and math.sqrt(((x-previous[1])*w)^2+((y-previous[2])*h)^2)<minStep
+                    if skip then
+                    elseif x and x>=-.05 and x<=1.05 and y>=-.05 and y<=1.05 then
                         -- The leg you walk now: from you to this point.
                         if point.lead and playerX then
                             lines=lines+1

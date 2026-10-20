@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.2.0","0.8.96",1) then return end
+if not ns:RequireCore(package,"0.2.1","0.8.96",1) then return end
 -- Way finding is BV Routing's (Florian 2026-10-10), loaded before us (TOC).
 if not (ns.Routing and ns.Routing.ready) then
     ns:Print(package.." is off: it needs BV Addon Suite - Routing. Install or enable it; saved data is preserved.")

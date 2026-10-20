@@ -14,7 +14,7 @@ function C:Build()
     local parent=map.ScrollContainer or map
     UI:WithStyle(P:Style(),function()
         self.strip=UI:GamePanel(P.ID,parent,260,20,"bg",3,function() return .75 end)
-        self.strip:SetFrameLevel(parent:GetFrameLevel()+20);self.strip:EnableMouse(false)
+        P:AbovePins(self.strip,parent);self.strip:EnableMouse(false)
         self.strip.text=self.strip:CreateFontString(nil,"OVERLAY");self.strip.text:SetJustifyH("LEFT");self.strip.text:SetWordWrap(false)
     end)
 end
@@ -60,6 +60,7 @@ function C:Update()
         strip.text:ClearAllPoints();M.Point(strip.text,"LEFT",strip,"LEFT",8,0);M.Size(strip.text,width-12,18)
         strip:Show()
     elseif self.strip then self.strip:Hide() end
+    self:Legend(P:Active() and c.legend and map and map:IsShown() or false)
     self:Tick(show and "map" or nil)
 end
 -- Map open: ten times a second (cursor).
@@ -77,6 +78,40 @@ function C:Refresh()
     self.strip.text:SetText(self:Text())
 end
 
+-- The legend (Florian 2026-10-16): the clicks this map knows, small and
+-- quiet above the coordinates; only those that work now.
+function C:LegendText()
+    local c=P:Config()
+    local parts={"Ctrl+click: waypoint"}
+    if c.routeClick and P.Path and P.Path.Routing and P.Path:Routing() then parts[#parts+1]="Ctrl+Shift+click: route there" end
+    if c.altClick then parts[#parts+1]="Alt+click: add to path" end
+    return table.concat(parts,"  \194\183  ")
+end
+function C:Legend(show)
+    if not show then if self.legendFrame then self.legendFrame:Hide() end;return end
+    local map=P:WorldMap()
+    local parent=map.ScrollContainer or map
+    -- Its own frame above the map's canvas (a font string on the container
+    -- lay under the canvas, Florian 2026-10-16: not shown).
+    if not self.legendFrame then
+        local f=CreateFrame("Frame",nil,parent)
+        f:SetAllPoints(parent);P:AbovePins(f,parent);f:EnableMouse(false)
+        self.legendFrame=f
+        self.legend=f:CreateFontString(nil,"OVERLAY")
+        self.legend:SetJustifyH("LEFT");self.legend:SetWordWrap(false)
+    end
+    P:AbovePins(self.legendFrame)
+    self.legendFrame:Show()
+    local legend=self.legend
+    font(legend,10)
+    local r,g,b=P:Style():Color("muted")
+    legend:SetTextColor(r,g,b,.9)
+    legend:SetText(self:LegendText())
+    legend:ClearAllPoints()
+    if self.strip and self.strip:IsShown() then M.Point(legend,"BOTTOMLEFT",self.strip,"TOPLEFT",8,4)
+    else M.Point(legend,"BOTTOMLEFT",parent,"BOTTOMLEFT",14,10) end
+    legend:Show()
+end
 function C:Enable(context)
     local map=P:WorldMap()
     if map and not self.hooked then
@@ -85,6 +120,6 @@ function C:Enable(context)
         map:HookScript("OnHide",function() C:Update() end)
     end
     ns.Styles:OnChanged(C,function() if P:Active() then C:Update() end end)
-    context:Defer(function() C:Tick(false);if C.strip then C.strip:Hide() end end)
+    context:Defer(function() C:Tick(false);if C.strip then C.strip:Hide() end;C:Legend(false) end)
     self:Update()
 end

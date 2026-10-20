@@ -20,6 +20,7 @@ function S:Build()
         M.Point(self.button,"TOPLEFT",parent,"TOPLEFT",6,-6)
         UI:AttachTooltip(self.button,"Search the map","Zones, points of interest, flight points and your quests.")
         self.box=UI:GamePanel(P.ID,parent,280,36,"bg",4,function() return .92 end)
+        local strata=P:MapStrata();if strata then self.box:SetFrameStrata(strata) end
         self.box:SetFrameLevel(P.BUTTONLEVEL+5);self.box:EnableMouse(true);self.box:Hide()
         M.Point(self.box,"TOPLEFT",self.button,"TOPRIGHT",4,0)
         self.input=UI:Input(self.box,264,function() S:Pick(1,false) end)

@@ -169,7 +169,7 @@ function R.Enemies(s)
         local a,b=R.Cell(s,math.max(s.minX,math.min(x0,x1)),math.max(s.minY,math.min(y0,y1)))
         local c,d=R.Cell(s,math.min(s.maxX-1e-9,math.max(x0,x1)),math.min(s.maxY-1e-9,math.max(y0,y1)))
         if a and c then
-            for cy=b,d do for cx=a,c do s.cells[cy*s.cols+cx]=ENEMY end end
+            for cy=b,d do R.Pace(c-a+1);for cx=a,c do s.cells[cy*s.cols+cx]=ENEMY end end
         end
     end
     -- The other side's capitals, all of their maps (Florian 2026-10-15:
@@ -190,7 +190,9 @@ function R.Enemies(s)
                 local a,b=R.Cell(s,math.max(s.minX,math.min(x0,x1)),math.max(s.minY,math.min(y0,y1)))
                 local c,d=R.Cell(s,math.min(s.maxX-1e-9,math.max(x0,x1)),math.min(s.maxY-1e-9,math.max(y0,y1)))
                 if a and c then
-                    for cy=b,d do for cx=a,c do s.cells[cy*s.cols+cx]=ENEMY end end
+                    -- Row by row with the pace (Claude 2026-10-20: the enemy places of a continent at
+                    -- once were one piece of 60-80 ms and 10 MB in game).
+                    for cy=b,d do R.Pace(c-a+1);for cx=a,c do s.cells[cy*s.cols+cx]=ENEMY end end
                 end
             end
         end
@@ -204,6 +206,10 @@ end
 -- Transitions within this space's level (both ends on it); those between
 -- levels belong to the travel plan (Navigate), not to one grid.
 function R.SameLevel(s,link)
+    -- A lift is never walked as a link of the grid, also from ground to
+    -- ground (Codex 2026-10-16, the Great Lift: walked as a line, no wait);
+    -- it is a transition of its own (N:Doors).
+    if link.kind=="lift" then return false end
     local level=s.level or 0
     return (link.a.level or 0)==level and (link.b.level or 0)==level
 end
@@ -280,7 +286,14 @@ function R.JoinEnds(s,links)
                             if s.cells[py*s.cols+px]==WALL then blocked=true;break end
                             piece[#piece+1]=py*s.cols+px
                         end
-                        if not blocked then for _,index in ipairs(piece) do s.onway[index]=true end end
+                        if not blocked then
+                            for i,index in ipairs(piece) do
+                                s.onway[index]=true
+                                -- The piece is a way of its own for the steps along ways.
+                                local prev=piece[i-1]
+                                if s.wayAdj and prev and prev~=index then s.wayAdj[prev..">"..index]=true;s.wayAdj[index..">"..prev]=true end
+                            end
+                        end
                     end
                 end
             end
@@ -302,20 +315,27 @@ function R.Links(s,links)
         if acx and bcx then
             local a,b=acy*s.cols+acx,bcy*s.cols+bcx
             local yards=R.Yards(s,ax,ay,bx,by)
-            -- A walked transition (a ramp): as long as its shape.
+            -- A walked transition (a ramp): as long as its shape, and on the
+            -- same map walked along it (Codex 2026-10-16: a bent bridge on the
+            -- ground was walked as the straight line between its ends).
+            local shape
             if type(link.path)=="table" and #link.path>=6 then
                 local along,lx,ly=0,nil,nil
+                shape={}
                 for i=1,#link.path-1,2 do
                     local px,py=R.ToSpace(s,link.a.mapID,link.path[i],link.path[i+1])
                     if px and lx then along=along+R.Yards(s,lx,ly,px,py) end
+                    if px then shape[#shape+1]={px,py} end
                     lx,ly=px,py
                 end
                 if along>yards then yards=along end
             end
-            s.links[a]=s.links[a] or {};table.insert(s.links[a],{b,yards});s.linked[a..">"..b]={ax,ay,bx,by}
+            local back
+            if shape then back={};for i=#shape,1,-1 do back[#back+1]=shape[i] end end
+            s.links[a]=s.links[a] or {};table.insert(s.links[a],{b,yards});s.linked[a..">"..b]={ax,ay,bx,by,shape=shape}
             s.back[b]=s.back[b] or {};table.insert(s.back[b],{a,yards})
             if not link.oneway then
-                s.links[b]=s.links[b] or {};table.insert(s.links[b],{a,yards});s.linked[b..">"..a]={bx,by,ax,ay}
+                s.links[b]=s.links[b] or {};table.insert(s.links[b],{a,yards});s.linked[b..">"..a]={bx,by,ax,ay,shape=back}
                 s.back[a]=s.back[a] or {};table.insert(s.back[a],{b,yards})
             end
         end
@@ -342,12 +362,26 @@ end
 -- cells, while it runs as a coroutine (R.Run), as the search does.
 R.PAINTSTEP=4000
 R.painted=0
+-- With the game's clock by time (R.Breathe, every PAINTLOOK cells; Claude
+-- 2026-10-20: rows of a large polygon cost far more than their cells).
+R.PAINTLOOK=300
 function R.Pace(cells)
     R.painted=R.painted+cells
-    if R.painted>=R.PAINTSTEP then
+    if R.sliceBegan and rawget(_G,"debugprofilestop") then
+        if R.painted>=R.PAINTLOOK then R.painted=0;R.Breathe() end
+    elseif R.painted>=R.PAINTSTEP then
         R.painted=0
         if coroutine.running() then coroutine.yield() end
     end
+end
+-- By time, where the work of a step varies (the plan's network search): yields
+-- once the slice has run SLICE ms (Claude 2026-10-20: a step count let one
+-- slice run 150-180 ms in game). Never inside a metamethod (Lua 5.1 cannot
+-- yield there).
+R.SLICE=6
+function R.Breathe()
+    local clock=R.sliceBegan and rawget(_G,"debugprofilestop")
+    if clock and clock()-R.sliceBegan>=(R.sliceLimit or R.SLICE) and coroutine.running() then coroutine.yield() end
 end
 -- Where a row of the polygon is crossed (R.Inside's own sums, so the
 -- answer is the same): its x, sorted. A point of that row lies inside when
@@ -487,7 +521,7 @@ function R.PaintedOnly(s)
                 local a,b=R.Cell(s,math.max(s.minX,math.min(x0,x1)),math.max(s.minY,math.min(y0,y1)))
                 local c,d=R.Cell(s,math.min(s.maxX-1e-9,math.max(x0,x1)),math.min(s.maxY-1e-9,math.max(y0,y1)))
                 if a and c then
-                    for cy=b,d do for cx=a,c do s.cells[cy*s.cols+cx]=NOGO end end
+                    for cy=b,d do R.Pace(c-a+1);for cx=a,c do s.cells[cy*s.cols+cx]=NOGO end end
                 end
             end
         end
@@ -642,11 +676,29 @@ R.SLOPE={1,1.2,2.5,8}
 -- Values the expert settings can change (UI/Expert.lua): steep slope,
 -- swimming, roads and walked ways, the straight-line limit.
 R.STEEP=8;R.SWIM=6;R.ROAD=.6;R.CLEAR=1.25
+-- Roads and walked ways apart (Florian 2026-10-16: a slider each; roads a
+-- loose preference, never more): Routing's settings in percent of open ground.
+-- The safe mode (Routing's setting routeMode): roads at most SAFEROAD,
+-- swimming SAFESWIM.
+R.SAFEROAD=.4;R.SAFESWIM=12
+function R.RoadCost(s)
+    local c=s and s.cfg or Routing:Config()
+    local cost=(c.roadPercent or R.ROAD*100)/100
+    if Routing:RouteMode()=="safe" then cost=math.min(cost,R.SAFEROAD) end
+    return cost
+end
+function R.WalkedCost(s) return ((s and s.cfg or Routing:Config()).walkedPercent or R.ROAD*100)/100 end
+-- Zones above your level, avoided (Florian 2026-10-16): their ground this
+-- many times dearer (a way through one stays possible when there is no other).
+R.HIGHZONE=4
+R.ZONEBLOCK=16   -- cells of a block whose zone is asked once
 -- Painted water (kind swim): as deep water of the terrain, SWIM with
 -- "Avoid water", else 1.5 (swimming is slower and leaves the mount); on a
 -- level half of it, as its streets cost half of plain ground.
 function R.SwimCost(s)
-    return (s.cfg or Routing:Config()).avoidWater and R.SWIM or 1.5
+    local c=s.cfg or Routing:Config()
+    if Routing:RouteMode()=="safe" then return R.SAFESWIM end
+    return c.avoidWater and R.SWIM or 1.5
 end
 -- Cities (navigation prototype, Florian 2026-10-10): the terrain data is
 -- the ground only; buildings, walls and caves of the capitals (their own
@@ -689,14 +741,26 @@ local function cityCost(s,index,x,y)
             -- Painted streets (Route Studio) count like walked ones.
             if s.cells[index]==PREFER then walked=true end
             s.cityWalked[index]=walked
-            return walked and R.ROAD or R.CITY
+            return walked and R.WalkedCost(s) or R.CITY
         end
     end
 end
+-- The space's terrain caches (ground cost, steep, height) in blocks of CHUNK cells
+-- (Claude 2026-10-20: one table of millions of cells, written while the game's
+-- collector ran, was gone through again at once at the end of its round, 44 ms
+-- for 2 million offline and stops of 465-793 ms in game; blocks keep that small).
+R.CHUNK=4096
+function R.CacheGet(t,i) local b=t[i-i%R.CHUNK];return b and b[i] end
+function R.CacheSet(t,i,v)
+    local k=i-i%R.CHUNK
+    local b=t[k];if not b then b={};t[k]=b end
+    b[i]=v
+end
+local cacheGet,cacheSet=R.CacheGet,R.CacheSet
 function R.Ground(s,cx,cy)
     if not s.terrain then return 1 end
     local index=cy*s.cols+cx
-    local cost=s.ground[index]
+    local cost=cacheGet(s.ground,index)
     if cost then return cost end
     local f=s.terrain
     local x,y=R.Center(s,cx,cy)
@@ -711,35 +775,42 @@ function R.Ground(s,cx,cy)
             if s.cityWalked[index]==false then
                 local code=ns.MapTerrain:Code(f.instance,f.a[f.iy]+y*f.dy,f.a[f.ix]+x*f.dx)
                 if code then
-                    if code%4==3 then s.steep[index]=true end
-                    if code%64>=32 and math.floor(code/4)%4==0 and (s.cfg or Routing:Config()).preferRoads then cost=R.ROAD end
+                    if code%4==3 then cacheSet(s.steep,index,true) end
+                    local dry=math.floor(code/4)%4==0
+                    if dry and code%4~=3 and (s.cfg or Routing:Config()).preferRoads and (code%64>=32 or (s.roads and s.roads[index])) then cost=R.RoadCost(s) end
                 end
             end
-            s.ground[index]=cost;return cost
+            cacheSet(s.ground,index,cost);return cost
         end
     end
     local code=ns.MapTerrain:Code(f.instance,f.a[f.iy]+y*f.dy,f.a[f.ix]+x*f.dx)
+    local dry=true
     if not code then cost=1
     else
         local water=math.floor(code/4)%4
+        dry=water==0
+        -- A steep slope stays steep also under a road (Codex 2026-10-16: the
+        -- road bit skipped the steep mark, and the climb was allowed).
+        if dry and code%4==3 then cacheSet(s.steep,index,true) end
         -- Roads (the client's road textures, Florian 2026-10-08: safe ways
-        -- marked in advance) are preferred like painted preferred ground.
-        if code%64>=32 and (s.cfg or Routing:Config()).preferRoads and water==0 then cost=R.ROAD
+        -- marked in advance; and Road Studio's roads, 2026-10-16) are a
+        -- preference: cheaper where walkable and dry, never more.
+        -- No road discount on a steep cell at all (Codex 2026-10-16).
+        if dry and code%4~=3 and (s.cfg or Routing:Config()).preferRoads and (code%64>=32 or (s.roads and s.roads[index])) then cost=R.RoadCost(s)
         elseif water==3 then cost=20
-        elseif water==2 then cost=(s.cfg or Routing:Config()).avoidWater and R.SWIM or 1.5
+        elseif water==2 then cost=R.SwimCost(s)
         elseif water==1 then cost=1.2
-        else
-            cost=R.SLOPE[code%4+1]
-            if code%4==3 then s.steep[index]=true end
-        end
+        else cost=R.SLOPE[code%4+1] end
     end
-    -- Ways walked often (Trace) are cheaper, like a road.
+    -- Ways walked often (Trace) are cheaper, like a road (their own factor).
     if R.WalkCount and R.PreferWalked and R.PreferWalked() then
         local f=s.terrain
         local wx,wy=R.Center(s,cx,cy)
-        if R.WalkCount(f.instance,f.a[f.iy]+wy*f.dy,f.a[f.ix]+wx*f.dx)>=R.WALKED then cost=math.min(cost,R.ROAD) end
+        if R.WalkCount(f.instance,f.a[f.iy]+wy*f.dy,f.a[f.ix]+wx*f.dx)>=R.WALKED then cost=math.min(cost,R.WalkedCost(s)) end
     end
-    s.ground[index]=cost
+    -- A zone above your level, avoided: dearer.
+    if s.highZones and R.HighZone(s,cx,cy) then cost=cost*R.HIGHZONE end
+    cacheSet(s.ground,index,cost)
     return cost
 end
 -- What makes a cell hard going, for the difficult spots of a route
@@ -767,12 +838,12 @@ end
 -- Ground height of a cell (yards), cached; nil without height data.
 function R.Height(s,cx,cy)
     local index=cy*s.cols+cx
-    local h=s.elevation[index]
+    local h=cacheGet(s.elevation,index)
     if h==nil then
         local f=s.terrain
         local x,y=R.Center(s,cx,cy)
         h=ns.MapTerrain:Height(f.instance,f.a[f.iy]+y*f.dy,f.a[f.ix]+x*f.dx) or false
-        s.elevation[index]=h
+        cacheSet(s.elevation,index,h)
     end
     return h or nil
 end
@@ -819,15 +890,23 @@ function R.FallOf(instance,gx1,gy1,gx2,gy2)
 end
 -- The wall between two space points and, for a wall, its fall height
 -- (nil without fall data).
+local function fineWall(s,wall,fall,ax,ay,bx,by)
+    if not R.FineWall then return wall,fall end
+    local extra,height=R.FineWall(s,ax,ay,bx,by)
+    if extra==0 then return wall,fall end
+    local up=wall%2==1 or extra%2==1
+    local down=wall>=2 or extra>=2
+    return (up and 1 or 0)+(down and 2 or 0),(fall or height) and math.max(fall or 0,height or 0)
+end
 function R.Wall(s,ax,ay,bx,by)
     local T=ns.MapTerrain
     if not (type(s.terrain)=="table" and s.terrain.a and T.Wall) then return 0 end
     local gx1,gy1=R.TerrainCell(s,ax,ay)
     local gx2,gy2=R.TerrainCell(s,bx,by)
-    if gx1==gx2 and gy1==gy2 then return 0 end
+    if gx1==gx2 and gy1==gy2 then return fineWall(s,0,nil,ax,ay,bx,by) end
     local wall=T:Wall(s.terrain.instance,gx1,gy1,gx2,gy2)
-    if wall==0 then return 0 end
-    return wall,R.FallOf(s.terrain.instance,gx1,gy1,gx2,gy2)
+    local fall=wall~=0 and R.FallOf(s.terrain.instance,gx1,gy1,gx2,gy2) or nil
+    return fineWall(s,wall,fall,ax,ay,bx,by)
 end
 -- The walls on a line, sampled every 2 yards (the route cells and the
 -- terrain cells do not line up; a slanted step may cross two terrain edges).
@@ -855,7 +934,7 @@ function R.LineWall(s,ax,ay,bx,by)
             gx1,gy1=gx2,gy2
         end
     end
-    return (up and 1 or 0)+(down and 2 or 0),fall
+    return fineWall(s,(up and 1 or 0)+(down and 2 or 0),fall,ax,ay,bx,by)
 end
 -- The wall between two route cells (cached per pair).
 function R.CellWall(s,cx,cy,nx,ny)
@@ -873,6 +952,7 @@ function R.CellWall(s,cx,cy,nx,ny)
     return wall,s.falls and s.falls[key]
 end
 function R.Step(s,cx,cy,nx,ny,cost,goal)
+    if s.wayAdj and not R.WayStep(s,cy*s.cols+cx,ny*s.cols+nx) then return nil end
     if not s.terrain then return cost end
     local walked=s.cityWalked
     if walked and walked[cy*s.cols+cx] and walked[ny*s.cols+nx] then return cost end
@@ -892,7 +972,7 @@ function R.Step(s,cx,cy,nx,ny,cost,goal)
         if mode=="safe" and fall then return nil end
         return cost*R.SLOPE[4]
     end
-    local cliff=s.steep[ny*s.cols+nx] or math.abs(to-from)>R.MAXRISE
+    local cliff=cacheGet(s.steep,ny*s.cols+nx) or math.abs(to-from)>R.MAXRISE
     if not cliff then return cost end
     if to>from+1 then
         if goal and to-from<=R.GOALSTEP then return cost end
@@ -1010,10 +1090,14 @@ function R.BaseCost(s,cx,cy)
     return cost*R.Ground(s,cx,cy)
 end
 -- The straight line between two space points touches only plain,
--- preferred or gently sloped cells (sampled every half cell).
+-- preferred or gently sloped cells (sampled every half cell). Also its cost
+-- (the cells' cost per yard along it), for pulling a way tight without
+-- leaving a road (R.Trace).
 function R.Clear(s,x1,y1,x2,y2)
     local yards=R.Yards(s,x1,y1,x2,y2)
     local steps=math.max(1,math.ceil(yards/((s.cell or R.CELL)/2)))
+    local piece=yards/steps
+    local sum=0
     local last,lx,ly
     local cells,cols=s.cells,s.cols
     for i=0,steps do
@@ -1024,9 +1108,11 @@ function R.Clear(s,x1,y1,x2,y2)
             local cost=R.Cost(s,cx,cy)
             -- Gentle slopes and shallow water still count as a clear line.
             if not cost or cost>R.CLEAR then return false end
+            if i>0 then sum=sum+cost*piece end
             -- On a level: not across a street cell taken only by its edge
             -- (unless a given way's point lies there).
             if s.level and s.loose and s.loose[cy*cols+cx] and not (s.onway and s.onway[cy*cols+cx]) then return false end
+            if s.wayAdj and lx and (cx~=lx or cy~=ly) and not R.WayStep(s,ly*cols+lx,cy*cols+cx) then return false end
             if s.terrain and last and R.Wall(s,last[1],last[2],px,py)~=0 then return false end
             -- At a slant past the corner of a painted wall, or of any cell
             -- not walkable (Claude's walk simulation 2026-10-12: the line
@@ -1036,13 +1122,19 @@ function R.Clear(s,x1,y1,x2,y2)
             last,lx,ly={px,py},cx,cy
         end
     end
-    return true
+    return true,sum
 end
 
 -- Can you walk the straight line from one space point to the other, in
 -- this direction? Every step from cell to cell as the search would allow
 -- it (blocked cells, walls up, climbs; corners not cut).
 function R.Walkable(s,x1,y1,x2,y2)
+    -- Cell-centre steps alone do not certify the actual smoothed line.
+    -- Bounded fine source patches retain the direction and full face height.
+    if R.FineWall then
+        local wall,fall=R.FineWall(s,x1,y1,x2,y2)
+        if wall%2==1 or (wall>=2 and (s.cfg or Routing:Config()).cliffs=="safe" and (fall or 0)>R.SAFEDROP) then return false end
+    end
     local steps=math.max(1,math.ceil(R.Yards(s,x1,y1,x2,y2)/((s.cell or R.CELL)/2)))
     local lx,ly
     for i=0,steps do
@@ -1104,7 +1196,10 @@ function R.Explore(s,start,goal,goals,limit,maxCost,reverse,weight,corridor)
     -- The cheapest a yard can cost: preferred ground, or given ways where
     -- the space has some (only there, a weaker estimate looks at more cells).
     -- The estimate never counts more, so the ways found stay the shortest.
-    local FLOOR=s.hasWays and math.min(.5,R.WAYCOST) or .5
+    -- Roads and walked ways may be set cheaper still (Routing's sliders,
+    -- Codex 2026-10-16: at 45 % the estimate was too high).
+    local FLOOR=math.min(.5,R.RoadCost(s),R.WalkedCost(s))
+    if s.hasWays then FLOOR=math.min(FLOOR,R.WAYCOST) end
     -- The estimate: the octile distance to the goal, or to the nearest of
     -- the goals (still never too high, so the ways found stay the shortest).
     local targets={}
@@ -1294,7 +1389,7 @@ function R.Coarse(s,start,goal,weight,width,blocked)
     local gx,gy=gid%ccols,math.floor(gid/ccols)
     local function h(x,y)
         local dx,dy=math.abs(x-gx),math.abs(y-gy)
-        return (math.max(dx,dy)+(SQRT2-1)*math.min(dx,dy))*yards*.5*(weight or 1)
+        return (math.max(dx,dy)+(SQRT2-1)*math.min(dx,dy))*yards*math.min(.5,R.RoadCost(s),R.WalkedCost(s))*(weight or 1)
     end
     local keys,vals,n={},{},0
     local g,from,closed={[sid]=0},{},{}
@@ -1350,6 +1445,74 @@ function R.Coarse(s,start,goal,weight,width,blocked)
     end
     return {cells=cells,F=F,ccols=ccols,path=path}
 end
+-- After an optimistic coarse corridor failed, keep a concrete entry cell
+-- for each search node. Flood only its small block before choosing an exit.
+-- Entry points and local floods live for this search only: no component cache.
+-- This is still only a corridor hint. The normal weighted fine search must
+-- validate it; a failed hint never proves that a route is impossible.
+function R.CoarseFromEntry(s,start,goal,weight,width,blocked,work)
+ -- Read existing terrain memo entries, but keep probe-only values in
+ -- block-local scratch tables. Discard them before the next block; failed
+ -- hints must not grow the navigation space's retained terrain caches.
+ local base=s;s=setmetatable({},{__index=base})
+ local scratch={"costs","ground","steep","elevation","walls","falls","cityWalked","highZones"}
+ local cols,rows=s.cols,s.rows;local F=8;local CC=math.ceil(cols/F);local CR=math.ceil(rows/F);local cell=s.cell or R.CELL
+ local function tile(i)return math.floor((i%cols)/F)+math.floor(math.floor(i/cols)/F)*CC end
+ local sid,gid=tile(start),tile(goal);local floor=math.min(.5,R.RoadCost(s),R.WalkedCost(s))
+ local function heuristic(i)
+  local dx,dy=math.abs(i%cols-goal%cols),math.abs(math.floor(i/cols)-math.floor(goal/cols))
+  return(math.max(dx,dy)+(SQRT2-1)*math.min(dx,dy))*cell*floor*4
+ end
+ local keys,vals,n={},{},0;local g,from,entry,closed={[sid]=0},{},{[sid]=start},{}
+ n=heapPush(keys,vals,n,heuristic(start),sid);local count=0;local sinceYield=0;local found
+ while n>0 do
+  local current,unused;unused,current,n=heapPop(keys,vals,n)
+  if not closed[current]then
+   count=count+1;if count>R.COARSELIMIT then return nil end
+   closed[current]=true
+   for _,key in ipairs(scratch)do
+    local original=base[key]
+    if original then s[key]=setmetatable({},{__index=original})
+    elseif key=="falls" then s[key]={} end
+   end
+   local origin=entry[current]
+   if work.left<F*F then return nil end
+   local reachable=R.Explore(s,origin,nil,nil,F*F,nil,nil,0,{F=F,ccols=CC,cells={[current]=true}})
+   for _ in pairs(reachable)do work.left=work.left-1;sinceYield=sinceYield+1 end
+   if sinceYield>=400 then sinceYield=0;if coroutine.running()then coroutine.yield()end end
+   if reachable[goal]then found=current;break end
+   local function offer(a,b,cost)
+    local next=tile(b)
+    if next~=current and not closed[next]and(next==sid or next==gid or not(blocked and blocked[next]))then
+     local dx,dy=a%cols-origin%cols,math.floor(a/cols)-math.floor(origin/cols)
+     local ng=g[current]+math.sqrt(dx*dx+dy*dy)*cell*floor+cost
+     if not g[next]or ng<g[next]then g[next]=ng;from[next]=current;entry[next]=b;n=heapPush(keys,vals,n,ng+heuristic(b),next)end
+    end
+   end
+   for a in pairs(reachable)do
+    local ax,ay=a%cols,math.floor(a/cols)
+    for dy=-1,1 do for dx=-1,1 do
+     local bx,by=ax+dx,ay+dy;local b=by*cols+bx
+     if(dx~=0 or dy~=0)and bx>=0 and by>=0 and bx<cols and by<rows and tile(b)~=current and not closed[tile(b)]then
+      local cost=R.Cost(s,bx,by)
+      if cost then cost=R.Step(s,ax,ay,bx,by,cost,b==goal)end
+      if cost and dx~=0 and dy~=0 and(not R.Cost(s,ax,by)or not R.Cost(s,bx,ay))then cost=nil end
+      if cost then offer(a,b,cell*floor*((dx~=0 and dy~=0)and SQRT2 or 1))end
+     end
+    end end
+    for _,link in ipairs(s.links and s.links[a]or{})do offer(a,link[1],link[2])end
+   end
+  end
+ end
+ if not found then return nil end
+ local path,cells={},{};local at=found
+ while at do table.insert(path,1,at);at=from[at]end
+ for _,id in ipairs(path)do local x,y=id%CC,math.floor(id/CC)
+  for dy=-2,2 do for dx=-2,2 do local nx,ny=x+dx,y+dy;if nx>=0 and ny>=0 and nx<CC and ny<CR then cells[ny*CC+nx]=true end end end
+ end
+ return{F=F,ccols=CC,cells=cells,path=path}
+end
+
 -- coarse: long ways on the ground through R.Coarse's corridor (Navigate's).
 function R.Search(s,x1,y1,x2,y2,limit,weight,project,coarse)
     -- Keeping off walls needs a search that weighs the costs (Florian
@@ -1361,11 +1524,14 @@ function R.Search(s,x1,y1,x2,y2,limit,weight,project,coarse)
     local sx,sy=R.Snap(s,R.Cell(s,x1,y1))
     local gx,gy=R.Cell(s,x2,y2)
     local tx,ty=R.Snap(s,gx,gy)
-    if not (sx and tx) then return nil end
+    -- Why there is no way (Codex/Florian 2026-10-16, kept apart all the way
+    -- to the log): "nopath" proven, "limit" not decided within the search's
+    -- limit, "unknown" the data cannot tell (start or goal on no walkable cell).
+    if not (sx and tx) then return nil,"unknown","off" end
     if project and (tx~=gx or ty~=gy) then x2,y2=R.Center(s,tx,ty) end
     local cols=s.cols
     local start,goal=sy*cols+sx,ty*cols+tx
-    if R.Apart(s,start,goal) then return nil end
+    if R.Apart(s,start,goal) then return nil,"nopath","apart" end
     -- A short way first (Claude 2026-10-14: the check below cost three
     -- to four times the search itself in Undercity and Darnassus, whose legs
     -- are mostly short): searched to its end within PRECHECK cells, it is
@@ -1380,9 +1546,18 @@ function R.Search(s,x1,y1,x2,y2,limit,weight,project,coarse)
         -- way round them is tried, COARSEROUNDS times.
         local blocked={}
         local gx,gy=goal%cols,math.floor(goal/cols)
-        for _=1,R.COARSEROUNDS do
-            local corridor=R.Coarse(s,start,goal,weight,R.CORRIDOR,blocked)
-            if not corridor then break end
+        -- Spend the remaining coarse-round allowance on fine-cell visits,
+        -- shared across all entry attempts, rather than multiplying it per block.
+        local entryWork={left=R.COARSELIMIT*math.max(0,R.COARSEROUNDS-1)}
+        for attempt=1,R.COARSEROUNDS do
+            -- The first attempt keeps the existing route selection unchanged.
+            -- Entry blocks have their own indexing; do not carry 32-yard
+            -- exclusions into their 64-yard search.
+            if attempt==2 then blocked={} end
+            local corridor
+            if attempt==1 then corridor=R.Coarse(s,start,goal,weight,R.CORRIDOR,blocked)
+            else corridor=R.CoarseFromEntry(s,start,goal,weight,R.CORRIDOR,blocked,entryWork) end
+            if corridor then
             local ccost,cfrom,cok=R.Explore(s,start,goal,nil,limit,nil,nil,weight,corridor)
             if cok and cfrom[goal] then return R.Trace(s,cfrom,start,goal,x1,y1,x2,y2) end
             if not cok then break end
@@ -1413,6 +1588,7 @@ function R.Search(s,x1,y1,x2,y2,limit,weight,project,coarse)
                 end end
             end
             if not any then break end
+            elseif attempt>1 then break end
         end
     end
     if not ok and limit>R.PRECHECK then
@@ -1421,7 +1597,7 @@ function R.Search(s,x1,y1,x2,y2,limit,weight,project,coarse)
         -- without searching the whole map (Florian 2026-10-09: calculating
         -- took long).
         local reached,_,done,exhausted=R.Explore(s,goal,start,nil,R.PRECHECK,nil,true)
-        if done and exhausted and not reached[start] then return nil end
+        if done and exhausted and not reached[start] then return nil,"nopath","enclosed" end
         cost,from,ok,all=R.Explore(s,start,goal,nil,limit,nil,nil,weight)
     end
     -- Given up at the limit: said so (why not, not searched again). Once
@@ -1436,12 +1612,12 @@ function R.Search(s,x1,y1,x2,y2,limit,weight,project,coarse)
         if not s.backTried[goal] then
             s.backTried[goal]=true
             local back,_,done,exhausted=R.Explore(s,goal,start,nil,R.BACKLIMIT,nil,true)
-            if done and exhausted and not back[start] then R.KeepApart(s,back,goal,true) end
+            if done and exhausted and not back[start] then R.KeepApart(s,back,goal,true);return nil,"nopath","apart" end
         end
         return nil,"limit"
     end
     -- Searched to the end without the goal: what start reaches is kept.
-    if all and not from[goal] and start~=goal then R.KeepApart(s,cost,goal) end
+    if all and not from[goal] and start~=goal then R.KeepApart(s,cost,goal);return nil,"nopath","searched" end
     return R.Trace(s,from,start,goal,x1,y1,x2,y2)
 end
 -- Parts that do not meet (Florian/Codex 2026-10-14: Rut'theran Village
@@ -1515,34 +1691,90 @@ function R.Round(points,yards,ok)
     return points
 end
 
+-- A straight line may cost this much more than the cells it replaces
+-- (rounding of the samples), in cost-yards.
+R.PULLSLACK=1
 function R.Trace(s,from,start,goal,x1,y1,x2,y2)
     local cols=s.cols
     if not from[goal] and start~=goal then return nil end
     -- Cells back to the start, then pulled tight: a point is kept only where
-    -- the line from the last kept one stops being clear.
+    -- the line from the last kept one stops being clear, or would cost more
+    -- than the cells it replaces (Florian 2026-10-16: the line pulled tight
+    -- left the road the search had taken, and waded beside a bridge; open
+    -- ground and shallow water count as clear).
     local cells={}
     local index=goal
     while index do table.insert(cells,1,index);index=from[index] end
     local points={{x1,y1}}
     local anchor={x1,y1}
     local previous
+    -- The cost of the cells walked so far (per yard, from cell to cell).
+    local walked,anchorCost,previousCost=0,0,0
+    local lastX,lastY=x1,y1
     for i=2,#cells do
-        local px,py=R.Center(s,cells[i]%cols,math.floor(cells[i]/cols))
+        local cx,cy=cells[i]%cols,math.floor(cells[i]/cols)
+        local px,py=R.Center(s,cx,cy)
+        walked=walked+(R.Cost(s,cx,cy) or R.CLEAR)*R.Yards(s,lastX,lastY,px,py)
+        lastX,lastY=px,py
         local link=s.linked and s.linked[cells[i-1]..">"..cells[i]]
         if link then
             -- Through a transition or a given way: both of its ends stay on
             -- the way, where they were set.
             local start=type(link)=="table" and {link[1],link[2]} or previous
             if start and (start[1]~=anchor[1] or start[2]~=anchor[2]) then points[#points+1]={start[1],start[2],fixed=true} end
-            if type(link)=="table" then px,py=link[3],link[4] end
-            points[#points+1]={px,py,link=true,fixed=true};anchor={px,py}
-        elseif not R.Clear(s,anchor[1],anchor[2],px,py) and previous then
-            points[#points+1]=previous;anchor=previous
+            -- Its shape between the ends (without the first and last point, the ends themselves).
+            if type(link)=="table" and link.shape then
+                for j=2,#link.shape-1 do points[#points+1]={link.shape[j][1],link.shape[j][2],fixed=true} end
+            end
+            if type(link)=="table" then px,py=link[3],link[4];lastX,lastY=px,py end
+            points[#points+1]={px,py,link=true,fixed=true};anchor={px,py};anchorCost=walked
+        elseif previous then
+            local clear,cost=R.Clear(s,anchor[1],anchor[2],px,py)
+            -- On terrain also walkable step by step in this direction (Codex
+            -- 2026-10-16: two clear lines crossed a step the search refuses).
+            if clear and s.terrain and cost<=walked-anchorCost+R.PULLSLACK and not R.Walkable(s,anchor[1],anchor[2],px,py) then clear=false end
+            if not clear or cost>walked-anchorCost+R.PULLSLACK then
+                points[#points+1]=previous;anchor=previous;anchorCost=previousCost
+            end
         end
-        previous={px,py}
+        previous={px,py};previousCost=walked
+    end
+    -- The exact goal after the last cell: straight from the last kept point
+    -- only where that is walkable, else by the last cell's middle (Codex
+    -- 2026-10-16: before the Great Lift the appended goal cut a slope).
+    -- Only on terrain, and only when the way by the last cell is walkable
+    -- where the straight one is not (Codex 2026-10-16: on city levels the
+    -- middle was added unproven and 49 of 52 reference ways changed).
+    local last=points[#points]
+    if s.terrain and previous and last and not last.fixed and (previous[1]~=anchor[1] or previous[2]~=anchor[2])
+        and not R.Walkable(s,anchor[1],anchor[2],x2,y2)
+        and R.Walkable(s,anchor[1],anchor[2],previous[1],previous[2]) and R.Walkable(s,previous[1],previous[2],x2,y2) then
+        points[#points+1]=previous
     end
     points[#points+1]={x2,y2}
-    return R.Round(points,function(ax,ay,bx,by) return R.Yards(s,ax,ay,bx,by) end,function(q,r) return R.Clear(s,q[1],q[2],r[1],r[2]) end)
+    local round=R.Round(points,function(ax,ay,bx,by) return R.Yards(s,ax,ay,bx,by) end,function(q,r) return R.Clear(s,q[1],q[2],r[1],r[2]) and (not s.terrain or R.Walkable(s,q[1],q[2],r[1],r[2])) end)
+    -- The rounded way checked as a whole (Codex 2026-10-16: in Silverpine a
+    -- rounded piece crossed a steep cell neither Clear nor Walkable allow):
+    -- more pieces you cannot walk, or more that are not clear, than the way
+    -- before rounding: that one. Not walkable is never traded for clear.
+    local hardR,softR=R.Unclear(s,round)
+    local hardP,softP=R.Unclear(s,points)
+    if hardR>hardP or hardR+softR>hardP+softP then return points end
+    return round
+end
+-- Pieces of a way that cannot be walked (Walkable refuses them), and those
+-- whose straight line is only not clear (both ends of a transition or given
+-- way left out: they cross by design).
+function R.Unclear(s,points)
+    local hard,soft=0,0
+    for i=2,#points do
+        local a,b=points[i-1],points[i]
+        if not (a.fixed and b.fixed) then
+            if s.terrain and not R.Walkable(s,a[1],a[2],b[1],b[2]) then hard=hard+1
+            elseif not R.Clear(s,a[1],a[2],b[1],b[2]) then soft=soft+1 end
+        end
+    end
+    return hard,soft
 end
 
 -- Runs a function as a coroutine in slices (a few milliseconds per frame).
@@ -1555,6 +1787,34 @@ R.BACKLIMIT=60000
 -- Returns its handle: handle:Cancel() stops it. Not the ticker itself:
 -- the game's tickers are read-only (Florian 2026-10-14: "Attempted to
 -- assign to read-only key Cancel").
+-- Where a coroutine stands (file:line, innermost first; Claude 2026-10-20: in
+-- game one piece ran 211 ms that never did offline, the log says where).
+function R.Where(c)
+    if not c then return nil end
+    -- The game has no debug.getinfo: its debugstack(thread, start, count1, count2).
+    local stack=rawget(_G,"debugstack")
+    if stack then
+        local ok,text=pcall(stack,c,0,6,0)
+        if not ok or type(text)~="string" then return nil end
+        local out={}
+        for file,line in text:gmatch("([%w_]+)%.lua\"?%]?:(%d+)") do
+            if #out<4 then out[#out+1]=file..":"..line end
+        end
+        return #out>0 and table.concat(out,"<") or nil
+    end
+    local getinfo=debug and debug.getinfo
+    if not getinfo then return nil end
+    local out={}
+    for level=0,8 do
+        local ok,info=pcall(getinfo,c,level,"Sl")
+        if not ok or not info then break end
+        if info.what~="C" and #out<4 then
+            local file=tostring(info.short_src or "?"):match("([%w_]+)%.lua") or "?"
+            out[#out+1]=file..":"..tostring(info.currentline or 0)
+        end
+    end
+    return #out>0 and table.concat(out,"<") or nil
+end
 function R.Run(fn,done,label)
     local co=coroutine.create(fn)
     local ticker
@@ -1573,17 +1833,32 @@ function R.Run(fn,done,label)
     -- its own work, frames it ran in.
     handle.cpu,handle.frames,handle.longest=0,0,0
     local function step()
+        -- The frame's share (Routing:FrameBudget, the setting); nothing while you fight.
+        local budget=Routing.FrameBudget and Routing:FrameBudget(R.BUDGET) or R.BUDGET
+        if budget<=0 then handle.paused=(handle.paused or 0)+1;return end
+        R.sliceLimit=math.min(R.SLICE,budget)
         local began=clock and clock()
         handle.frames=handle.frames+1
         repeat
             local t=clock and clock()
+            R.sliceBegan=t
+            local kb=collectgarbage and collectgarbage("count")
             local ok,result=coroutine.resume(co)
-            if clock then local d=clock()-t;handle.cpu=handle.cpu+d;if d>handle.longest then handle.longest=d end end
+            if clock then
+                local d=clock()-t;handle.cpu=handle.cpu+d
+                local at=R.Where(R.inner or co)
+                if d>handle.longest then
+                    handle.longest,handle.longestFrom,handle.longestTo=d,handle.at,at
+                    handle.longestKB=kb and collectgarbage("count")-kb
+                end
+                handle.at=at
+            end
             if not ok then stop();Routing:Print("Way failed: "..tostring(result));if done then done(nil) end;return end
             if coroutine.status(co)=="dead" then stop();if done then done(result) end;return end
-        until not clock or clock()-began>=R.BUDGET
+        until not clock or clock()-began>=budget
     end
-    if busy then busy:Start(handle,label or R.nextLabel) end
+    -- label false: quiet, nothing beside the pointer (work in the background).
+    if busy and label~=false then busy:Start(handle,label or R.nextLabel) end
     R.nextLabel=nil
     ticker=C_Timer.NewTicker(.01,step)
     return handle
@@ -1601,8 +1876,15 @@ end
 -- do we define ways for?"). On a level of ways only its cells stay the
 -- streets (onway), as there nothing else is walkable.
 R.WAYCOST=.3
+-- On a level of given ways only, a step from cell to cell only where a way
+-- runs from the one to the other (Codex 2026-10-16, Freewind's west spiral:
+-- two way cells merely side by side were stepped across, the curve cut).
+function R.WayStep(s,a,b)
+    return not (s.waysOnly and s.wayAdj) or s.wayAdj[a..">"..b]==true
+end
 function R.Ways(s,ways)
     s.onway,s.waycheap={},{}
+    s.wayAdj=s.waysOnly and {} or nil
     s.links,s.linked,s.back=s.links or {},s.linked or {},s.back or {}
     for _,zone in ipairs(s.zones) do
         for _,way in ipairs(type(ways)=="table" and ways[zone] or {}) do
@@ -1613,19 +1895,36 @@ function R.Ways(s,ways)
                     if x then points[#points+1]={x,y} end
                 end
                 if #points>=2 then s.hasWays=true end
+                -- Links from cell to cell along the way: from the first point
+                -- of a run in one cell to the first point in another, with
+                -- every point between as its shape (Codex 2026-10-16, Freewind
+                -- Post: dense points in one cell kept only one piece, the
+                -- spiral was cut short).
+                local from=1
                 for i=2,#points do
                     local ax,ay,bx,by=points[i-1][1],points[i-1][2],points[i][1],points[i][2]
                     local acx,acy=R.Cell(s,ax,ay)
                     local bcx,bcy=R.Cell(s,bx,by)
-                    if acx and bcx then
-                        local a,b=acy*s.cols+acx,bcy*s.cols+bcx
-                        local yards=R.Yards(s,ax,ay,bx,by)*R.WAYCOST
-                        s.links[a]=s.links[a] or {};table.insert(s.links[a],{b,yards});s.linked[a..">"..b]={ax,ay,bx,by}
+                    local fx,fy=points[from][1],points[from][2]
+                    local fcx,fcy=R.Cell(s,fx,fy)
+                    if not fcx then from=i
+                    elseif bcx and (bcx~=fcx or bcy~=fcy) then
+                        local a,b=fcy*s.cols+fcx,bcy*s.cols+bcx
+                        local shape,yards={},0
+                        for k=from,i do
+                            shape[#shape+1]=points[k]
+                            if k>from then yards=yards+R.Yards(s,points[k-1][1],points[k-1][2],points[k][1],points[k][2]) end
+                        end
+                        yards=yards*R.WAYCOST
+                        local back
+                        if #shape>2 then back={};for k=#shape,1,-1 do back[#back+1]=shape[k] end else shape=nil end
+                        s.links[a]=s.links[a] or {};table.insert(s.links[a],{b,yards});s.linked[a..">"..b]={fx,fy,bx,by,shape=shape}
                         s.back[b]=s.back[b] or {};table.insert(s.back[b],{a,yards})
                         if not way.oneway then
-                            s.links[b]=s.links[b] or {};table.insert(s.links[b],{a,yards});s.linked[b..">"..a]={bx,by,ax,ay}
+                            s.links[b]=s.links[b] or {};table.insert(s.links[b],{a,yards});s.linked[b..">"..a]={bx,by,fx,fy,shape=back}
                             s.back[a]=s.back[a] or {};table.insert(s.back[a],{b,yards})
                         end
+                        from=i
                     end
                     -- A one-way way only by its links (its cells would lead
                     -- back); its two ends stay walkable, so it can be
@@ -1637,10 +1936,17 @@ function R.Ways(s,ways)
                         if acx then s.onway[acy*s.cols+acx]=true end
                         if bcx then s.onway[bcy*s.cols+bcx]=true end
                         local n=math.max(1,math.ceil(R.Yards(s,ax,ay,bx,by)/((s.cell or R.CELL)/2)))
-                        for j=1,n-1 do
+                        local last
+                        for j=0,n do
                             local cx,cy=R.Cell(s,ax+(bx-ax)*j/n,ay+(by-ay)*j/n)
                             if cx then
-                                if s.waysOnly then s.onway[cy*s.cols+cx]=true else s.waycheap[cy*s.cols+cx]=true end
+                                local here=cy*s.cols+cx
+                                if j>0 and j<n then
+                                    if s.waysOnly then s.onway[here]=true else s.waycheap[here]=true end
+                                end
+                                -- The cells the way runs through, one after another.
+                                if s.wayAdj and last and last~=here then s.wayAdj[last..">"..here]=true;s.wayAdj[here..">"..last]=true end
+                                last=here
                             end
                         end
                     end
@@ -1651,20 +1957,102 @@ function R.Ways(s,ways)
 end
 -- Everything Routing's store knows for a space: painted areas, walls,
 -- transitions and given ways of its level (on the ground: also enemy bases).
+-- Road Studio's roads (Data/Roads.lua, BVRoutingRoads: per continent
+-- polylines in its 0..1 coordinates with their width in yards) as cells of
+-- the ground's space: cheaper there (R.Ground), nothing else.
+-- The last spaces' road cells, by the data and the space's grid (Claude 2026-10-20:
+-- each new way painted a continent's roads again, 300 ms and 8 MB in game).
+R.roadCache={}
+R.ROADCACHE=2
+function R.Roads(s)
+    s.roads=nil
+    if (s.level or 0)~=0 then return end
+    local data=rawget(_G,"BVRoutingRoads")
+    local list=type(data)=="table" and type(data.cont)=="table" and data.cont[s.mapID]
+    if type(list)~="table" then return end
+    local cell,cols,rows=s.cell or R.CELL,s.cols,s.rows
+    local id=table.concat({tostring(list),s.mapID,cell,cols,rows,s.minX,s.minY,s.maxX,s.maxY},":")
+    for _,c in ipairs(R.roadCache) do if c.id==id then s.roads=c.roads;return end end
+    local roads,count={},0
+    for _,road in ipairs(list) do
+        local p=type(road)=="table" and road.p
+        if type(p)=="table" then
+            -- Only the width the data shows (Codex 2026-10-16: no width given is
+            -- the centre line's cells alone, not a band around it).
+            local rc=math.floor(math.max(0,(tonumber(road.w) or 0)/2)/cell)
+            for i=1,#p-3,2 do
+                -- Given back by time, counted over all roads (many are short).
+                count=count+1;if count%8==0 then R.Breathe() end
+                local ax,ay,bx,by=p[i],p[i+1],p[i+2],p[i+3]
+                local n=math.max(1,math.ceil(R.Yards(s,ax,ay,bx,by)/(cell/2)))
+                for j=0,n do
+                    local cx,cy=R.Cell(s,ax+(bx-ax)*j/n,ay+(by-ay)*j/n)
+                    if cx then
+                        for dy=-rc,rc do for dx=-rc,rc do
+                            local x,y=cx+dx,cy+dy
+                            if x>=0 and y>=0 and x<cols and y<rows then roads[y*cols+x]=true end
+                        end end
+                    end
+                end
+            end
+        end
+    end
+    table.insert(R.roadCache,1,{id=id,roads=roads})
+    while #R.roadCache>R.ROADCACHE do table.remove(R.roadCache) end
+    s.roads=roads
+end
+-- Is a cell in a zone above your level? Asked per block of ZONEBLOCK cells.
+function R.HighZone(s,cx,cy)
+    local B=R.ZONEBLOCK
+    local key=math.floor(cy/B)*1e5+math.floor(cx/B)
+    local known=s.highZones[key]
+    if known==nil then
+        local x,y=R.Center(s,math.floor(cx/B)*B+math.floor(B/2),math.floor(cy/B)*B+math.floor(B/2))
+        local zone=Routing.ZoneAt and Routing:ZoneAt(s.mapID,x,y)
+        known=(zone and Routing:ZoneAbove(zone,s.playerLevel)) and true or false
+        s.highZones[key]=known
+    end
+    return known
+end
+-- What preparing spaces cost, per part (ms of time between its start and end,
+-- KB the memory grew; Claude 2026-10-20: the first way in game ran one piece of
+-- 200 ms there that never did offline). Navigate's cost line says it.
+R.prepCost={}
+local function timed(name,fn,...)
+    local clock=rawget(_G,"debugprofilestop")
+    local t=clock and clock()
+    local kb=collectgarbage and collectgarbage("count")
+    fn(...)
+    local c=R.prepCost[name] or {0,0,0};R.prepCost[name]=c
+    c[1]=c[1]+(t and clock()-t or 0);c[2]=c[2]+(kb and collectgarbage("count")-kb or 0);c[3]=c[3]+1
+end
+function R.PrepCostText()
+    local out={}
+    for _,name in ipairs({"level","roads","data","paint","walls","ways","joinends","links","clearance"}) do
+        local c=R.prepCost[name]
+        if c then out[#out+1]=string.format("%s %.0f ms %+.0f KB",name,c[1],c[2]) end
+    end
+    return #out>0 and table.concat(out,", ") or nil
+end
 function R.Prepare(s)
-    local level=s.level and Routing.Level and Routing.Level:Find(s.level)
+    local level
+    timed("level",function() level=s.level and Routing.Level and Routing.Level:Find(s.level) end)
+    timed("roads",R.Roads,s)
+    -- Zones above your level avoided (Routing's setting): their blocks known as asked.
+    if (s.level or 0)==0 and Routing:ZoneMode()=="avoid" then s.highZones={};s.playerLevel=UnitLevel and UnitLevel("player") or nil else s.highZones=nil end
     s.waysOnly=type(level)=="table" and level.waysOnly==true or nil
     s.open=type(level)=="table" and level.open==true or nil
     -- Your store with the shipped maps (Routing:Data).
-    local data=Routing:Data()
+    local data
+    timed("data",function() data=Routing:Data() end)
     s.data=data
-    R.Paint(s,data.areas)
-    R.Walls(s,data.walls)
+    timed("paint",R.Paint,s,data.areas)
+    timed("walls",R.Walls,s,data.walls)
     -- Ways before transitions: a transition's end may snap onto a way.
-    R.Ways(s,data.ways)
-    R.JoinEnds(s,data.links)
-    R.Links(s,data.links)
-    R.Clearance(s)
+    timed("ways",R.Ways,s,data.ways)
+    timed("joinends",R.JoinEnds,s,data.links)
+    timed("links",R.Links,s,data.links)
+    timed("clearance",R.Clearance,s)
     return s
 end
 -- Keeping off walls (Florian 2026-10-13: "a player does not like to run

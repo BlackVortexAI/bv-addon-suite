@@ -1,9 +1,10 @@
 local _,Routing=...
 if not Routing.ready then return end
--- /bv route <what> | way | <x> <y> | stop | status | level [<name>]
+-- /bv route <what> | way | <x> <y> | <zone> <x> <y> | stop | status | level [<name>]
 --   <what>   a place by name (BV Map Data): an NPC, a title ("innkeeper"),
 --            a flight master, an instance entrance, "my trainer"
---   way      to your map pin; <x> <y> to a point of the map you are on
+--   way      to your map pin; <x> <y> to a point of the map you are on;
+--            <zone> <x> <y> to a point of a zone (its name or map ID)
 --   stop     ends the way; status: where you are on it; level: your level
 --   probe    measures while you walk, the report to copy (on / off)
 --   height   your height now from the NPCs near, and the levels it fits
@@ -43,10 +44,34 @@ local function build(parent)
         "How visible the legs after the one you walk stay on the maps (100 %: not dimmed). Their stops fade a little less.")
     row("aheadSteps","Dims over",UI:InlineSlider(g,190,1,6,1,"%d legs",function(value) cfg().aheadSteps=value;redraw() end),
         "The next leg is dimmed a little, each further one more, until this many legs ahead.")
+    g:Section("roads","Roads")
+    -- Florian 2026-10-16: a loose preference, a slider each for roads and your walked ways.
+    local function fresh() N.spaces=nil;if Routing.Grid then Routing.Grid.costCache=nil end end
+    local mode=row("routeMode","Route mode",UI:Dropdown(g,190,{},function(value) cfg().routeMode=value;fresh() end),
+        "How new ways start. Safe: keeps to roads much more (roads cost at most 40 %, whatever the slider below says), swims only where it saves a lot, and goes round zones above your level (unless that is set to Off); ways get longer. Normal: as set below. The shield in the guide switches the way you walk.")
+    mode:SetOptions({{value="normal",label="Normal"},{value="safe",label="Safe"}})
+    row("roadPercent","Road preference",UI:InlineSlider(g,190,30,100,5,"%d %%",function(value) cfg().roadPercent=value;fresh() end),
+        "What a yard of road costs against open ground: 100 % like any ground; 60 % (the default) a road up to about 1.7 times as long is still taken. Below 50 % ways bend far for roads. Steep slopes, walls and water stay what they are.")
+    row("walkedPercent","Walked ways",UI:InlineSlider(g,190,30,100,5,"%d %%",function(value) cfg().walkedPercent=value;fresh() end),
+        "The same for the ways you walked often (BV Gather's walked ways), apart from roads.")
+    g:Section("zones","Zones above your level")
+    local zones=row("zoneLevels","Zones above your level",UI:Dropdown(g,190,{},function(value) cfg().zoneLevels=value;fresh() end),
+        "A way through a zone whose lowest level is above yours: say so after planning, or also go round it where another way exists (it stays possible when there is none).")
+    zones:SetOptions({{value="warn",label="Say so"},{value="avoid",label="Avoid and say so"},{value="off",label="Off"}})
     g:Section("flights","Flights")
+    row("useFlights","Use flights",UI:Switch(g,true,function(value) cfg().useFlights=value==true;N.spaces=nil end),
+        "Off: ways are planned on foot (and by boat, zeppelin and tram) only, no flight master. Also /bv route flights on | off.")
     local unknown=row("flightsUnknown","Unknown flight points",UI:Dropdown(g,190,{},function(value) cfg().flightsUnknown=value end),
         "On a continent whose flight map you have not opened: leave its flight points out (you are asked once), or count all of your side.")
     unknown:SetOptions({{value="leave",label="Leave out (asked)"},{value="all",label="Count all of yours"}})
+    g:Section("compute","Planning time")
+    local budget=row("computeBudget","Time per frame",UI:Dropdown(g,190,{},function(value) cfg().computeBudget=value end),
+        "How much of each frame planning a way may use. Auto: half a frame at your frame rate (at most 14 ms). Less: smoother while it plans, the way takes longer; more: the way comes sooner, the frame rate drops a little meanwhile.")
+    budget:SetOptions({{value="auto",label="Auto (frame rate)"},{value="5",label="5 ms (smoothest)"},{value="10",label="10 ms"},{value="15",label="15 ms"},{value="25",label="25 ms (fastest)"}})
+    row("pauseInCombat","Pause in combat",UI:Switch(g,true,function(value) cfg().pauseInCombat=value==true end),
+        "While you fight, planning waits and goes on afterwards.")
+    row("prepareAtLogin","Prepare after login",UI:Switch(g,true,function(value) cfg().prepareAtLogin=value==true end),
+        "A few seconds after you log in, the precomputed ways of both continents and your map data are made ready in the background, so the first way is planned as fast as the next. Holds about 17 MB from then on (otherwise from your first way). Off: made when you first ask for a way.")
     g:Section("guide","Guide")
     local guide=row("guide","Guide window",UI:Dropdown(g,190,{},function(value) if Routing.Guide then Routing.Guide:SetSide(value) else cfg().guide=value end end),
         "Where the guide shows while you are led: beside the tour window, where you drag it, or not at all.")
@@ -70,7 +95,10 @@ local function build(parent)
             if controls[key] and controls[key].SetValue then controls[key]:SetValue(hex.."FF") end
         end
         controls.aheadOpacity:SetValue(c.aheadOpacity);controls.aheadSteps:SetValue(c.aheadSteps)
-        controls.flightsUnknown:SetValue(c.flightsUnknown);controls.guide:SetValue(c.guide);controls.guideGround:SetValue(c.guideGround)
+        controls.roadPercent:SetValue(c.roadPercent);controls.walkedPercent:SetValue(c.walkedPercent);controls.zoneLevels:SetValue(c.zoneLevels)
+        controls.routeMode:SetValue(c.routeMode)
+        controls.computeBudget:SetValue(c.computeBudget);controls.pauseInCombat:SetValue(c.pauseInCombat);controls.prepareAtLogin:SetValue(c.prepareAtLogin)
+        controls.useFlights:SetValue(c.useFlights);controls.flightsUnknown:SetValue(c.flightsUnknown);controls.guide:SetValue(c.guide);controls.guideGround:SetValue(c.guideGround)
     end
     page:Refresh()
     return page
@@ -87,6 +115,24 @@ ns.Commands:RegisterAction("route",function(text)
         return
     end
     if text=="probe" then Routing.Probe:Toggle();return end
+    -- Flights on or off (Florian 2026-10-16: ways on foot to test).
+    -- The precomputed walks on short ways too, for testing them (Codex
+    -- 2026-10-17: the pilot's ways are shorter than its 2000 yards).
+    local net=text:match("^network%s*(%a*)$")
+    if net then
+        local T=Routing.Transit
+        if net=="always" then T.always=true elseif net=="auto" then T.always=false end
+        Routing:Print("Precomputed walks: "..(T.always and "always (test)" or "long ways only").." (/bv route network always | auto).")
+        return
+    end
+    local fly=text:match("^flights%s*(%a*)$")
+    if fly then
+        local c=Routing:Config()
+        if fly=="on" or fly=="off" then c.useFlights=fly=="on";N.spaces=nil end
+        Routing:Print("Flights: "..(c.useFlights and "on" or "off").." (/bv route flights on | off).")
+        if page then page:Refresh() end
+        return
+    end
     -- The log of the way, and the whole way as text for a bug report (Florian 2026-10-14).
     if text=="log" then ns.UI:DiagnosticReport("Routing log",Routing:LogText());return end
     if text=="export" then

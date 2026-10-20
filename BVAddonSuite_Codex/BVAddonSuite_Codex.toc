@@ -3,7 +3,7 @@
 ## Notes: Find anything: NPCs, trainers, flight masters, zeppelins, instances, mailboxes. Put several places in a tour and BV Routing leads you through it the shortest way. Requires BV Core; uses BV Map Data and BV Routing.
 ## Author: BV
 ## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.1.1
+## Version: 0.1.2
 ## Dependencies: BVAddonSuite
 ## OptionalDeps: BVAddonSuite_Routing, BVAddonSuite_Map, BVAddonSuite_MapData
 ## SavedVariables: BVCodexDB

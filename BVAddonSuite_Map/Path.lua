@@ -59,16 +59,58 @@ function T:Register()
 end
 function T:Refresh() if ns.MapPins then ns.MapPins:Refresh() end end
 
--- Alt+click on the map appends a waypoint where you clicked.
-function T:MapClick(button)
-    if button~="LeftButton" or not (IsAltKeyDown and IsAltKeyDown()) then return end
-    if not (P:Active() and P:Config().altClick) then return end
+-- BV Routing loaded and ready to plan (Map does not need it).
+function T:Routing()
+    local R=ns.Routing
+    return R and R.ready and R.Navigate and R.Navigate.Start and R.OnContinent and R or nil
+end
+-- Where on the map the cursor is: map ID, x, y (0..1), or nil.
+local function cursor()
     local map=P:WorldMap()
     local scroll=map and map.ScrollContainer
-    if not (scroll and scroll.GetNormalizedCursorPosition and map.GetMapID) then return end
+    if not (scroll and scroll.GetNormalizedCursorPosition and map.GetMapID) then return nil end
     local ok,x,y=pcall(scroll.GetNormalizedCursorPosition,scroll)
-    if not ok or type(x)~="number" or x<0 or x>1 or y<0 or y>1 then return end
-    P.Waypoints:Add({mapID=map:GetMapID(),x=x,y=y},true)
+    if not ok or type(x)~="number" or x<0 or x>1 or y<0 or y>1 then return nil end
+    return map:GetMapID(),x,y
+end
+-- Ctrl+Shift+click: Routing's way to the point (Florian 2026-10-16: every
+-- point of the map reachable by Routing); Alt+click appends a waypoint.
+function T:MapClick(button)
+    if button~="LeftButton" or not P:Active() then return end
+    local c=P:Config()
+    if IsControlKeyDown and IsControlKeyDown() and IsShiftKeyDown and IsShiftKeyDown() then
+        if not c.routeClick then return end
+        local R=self:Routing()
+        if not R then return end
+        local mapID,x,y=cursor()
+        if not mapID then return end
+        return self:RouteTo(R,mapID,x,y)
+    end
+    if not (IsAltKeyDown and IsAltKeyDown()) or not c.altClick then return end
+    local mapID,x,y=cursor()
+    if not mapID then return end
+    P.Waypoints:Add({mapID=mapID,x=x,y=y},true)
+end
+function T:RouteTo(R,mapID,x,y)
+    local cont,cx,cy=R:OnContinent(mapID,x,y)
+    if not cont then P:Print("Routing cannot reach that point (no continent map).");return false end
+    local name=P.Waypoints:MapName(mapID).." "..P:Format(x,y)
+    R.Navigate:Start({cont=cont,x=cx,y=cy,name=name,label="map point"})
+    -- Blizzard sets its own waypoint on Ctrl+click, Shift held or not
+    -- (Florian 2026-10-16): the one at this very point is taken away again,
+    -- now and a moment later (it may come after this click).
+    local function drop()
+        local current=P.Call("C_Map.GetUserWaypoint")
+        local position=type(current)=="table" and current.position
+        local px,py
+        if type(position)=="table" and position.GetXY then px,py=position:GetXY() elseif type(position)=="table" then px,py=position.x,position.y end
+        if current and current.uiMapID==mapID and type(px)=="number" and math.abs(px-x)<.002 and math.abs(py-y)<.002 then
+            P.Waypoints.setting=true;P.Call("C_Map.ClearUserWaypoint");P.Waypoints.setting=false
+        end
+    end
+    drop()
+    if C_Timer and C_Timer.NewTimer then C_Timer.NewTimer(.3,drop) end
+    return true
 end
 function T:Enable(context)
     self:Register()

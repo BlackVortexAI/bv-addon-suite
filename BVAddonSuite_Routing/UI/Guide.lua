@@ -63,7 +63,11 @@ function G:Build()
         f.log=UI:IconButton(f,"scroll-text",function() ns.UI:DiagnosticReport("Routing log",Routing:LogText()) end,"ghost")
         M.Size(f.log,20,20);M.Point(f.log,"RIGHT",f.export,"LEFT",-4,0)
         UI:AttachTooltip(f.log,"Log","What Routing did for this way: the plan, its steps, levels, new searches (/bv route log).")
-        f.count=UI:Label(f,"",10,"muted");M.Point(f.count,"RIGHT",f.log,"LEFT",-6,0);f.count:SetJustifyH("RIGHT")
+        -- Safe or normal for this way (Florian 2026-10-16), the setting the default.
+        f.safe=UI:IconButton(f,"shield",function() Routing.Navigate:ToggleSafe() end,"ghost")
+        M.Size(f.safe,20,20);M.Point(f.safe,"RIGHT",f.log,"LEFT",-4,0)
+        UI:AttachTooltip(f.safe,"Safe way","Switches this way between safe (keeps to roads, swims little, goes round zones above your level) and normal, and searches it again. New ways start as set on Routing's settings page (Route mode).")
+        f.count=UI:Label(f,"",10,"muted");M.Point(f.count,"RIGHT",f.safe,"LEFT",-6,0);f.count:SetJustifyH("RIGHT")
         f.now=UI:Label(f,"",21,"text",true);M.Point(f.now,"TOPLEFT",f,"TOPLEFT",x,-31);M.Size(f.now,G.WIDTH-x-16,26)
         -- Two lines: a transition's own name may be long ("Trade Quarter
         -- Exit (Southeast) - to the lower city").
@@ -246,6 +250,14 @@ function G:Paint()
     symbol(f.kind,parts.icon,32)
     f.head:SetText(parts.head:upper())
     f.count:SetText(#N.steps>1 and string.format("Step %d of %d",i,#N.steps) or "")
+    -- The shield shows the mode of this way: checked when safe, lit up.
+    local safe=Routing:RouteMode()=="safe"
+    -- (The button's icon is Core's symbol frame: its glyph texture and colour role.)
+    local icon=f.safe.icon
+    if icon and icon.glyph then
+        symbol(icon.glyph,safe and "shield-check" or "shield",32)
+        icon.colorRole=safe and "accent" or "muted";icon:SetColor(color(icon.colorRole))
+    end
     if step.kind=="walk" then
         local yards=N.left or step.yards
         f.now:SetText(yards and (math.floor(yards+.5).." yd") or "Walk")

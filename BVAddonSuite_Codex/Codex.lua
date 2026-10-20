@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.1.1","0.8.101",1) then return end
+if not ns:RequireCore(package,"0.1.2","0.8.101",1) then return end
 -- Codex (Florian 2026-10-11, docs/codex-concept.md): find anything, like
 -- Spotlight or EasyFind, and put several places into a tour that BV Routing
 -- leads you through the shortest way. Files fill C: Codex (this: the places
@@ -287,7 +287,11 @@ function C:Entries()
         elseif e.kind=="quest" then e.detail=((e.level or 0)>0 and ("level "..e.level..", ") or "").."from "..e.from end
         if e.kind=="item" or e.kind=="quest" then e.words=(e.name.." "..e.detail):lower() end
     end
-    -- Zones and cities of both continents (the client's maps): their middle.
+    -- Zones and cities of both continents (the client's maps): their middle, or the
+    -- arrival point Map Data has for your side (Codex 2026-10-20: Winterspring's
+    -- middle lay where no way leads; a checked point on a recorded way instead).
+    local arrivals=type(d)=="table" and type(d.zoneArrivals)=="table" and d.zoneArrivals or {}
+    local side=call("UnitFactionGroup","player")
     for _,cont in ipairs(C.CONTINENTS) do
         for _,info in ipairs(call("C_Map.GetMapChildrenInfo",cont,3,true) or {}) do
             if type(info)=="table" and info.mapType==3 and type(info.name)=="string" then
@@ -295,7 +299,12 @@ function C:Entries()
                 if type(minX)=="number" and maxX>minX then
                     local e=entry("zone:"..info.mapID,info.name,C.CITY[info.mapID] and "City" or "Zone","zone")
                     e.mapID=info.mapID
-                    place(e,{cont=cont,x=(minX+maxX)/2,y=(minY+maxY)/2,name=info.name,label="Zone"})
+                    local a=type(arrivals[info.mapID])=="table" and arrivals[info.mapID][side]
+                    if type(a)=="table" and a.cont==cont and type(a.x)=="number" and type(a.y)=="number" then
+                        place(e,{cont=cont,x=a.x,y=a.y,name=info.name,label="Zone"})
+                    else
+                        place(e,{cont=cont,x=(minX+maxX)/2,y=(minY+maxY)/2,name=info.name,label="Zone"})
+                    end
                 end
             end
         end

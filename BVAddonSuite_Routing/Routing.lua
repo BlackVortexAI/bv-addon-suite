@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.1.4","0.8.101",1) then return end
+if not ns:RequireCore(package,"0.1.7","0.8.101",1) then return end
 -- BV Routing (Florian 2026-10-10, docs/module-structure-routing.md): ways
 -- you can really walk, round slopes, water, cliffs, enemy bases, painted
 -- areas and walls, through cities and between their levels, by flight,
@@ -41,6 +41,9 @@ R.DEFAULTS={
     -- "off" not shown; guideGround: with its background (Florian
     -- 2026-10-14: none by default, switched on in its menu; was guideBare).
     guide="right",guideGround=false,
+    -- Flights at all (Florian 2026-10-16: to test ways on foot): off, no
+    -- flight master is planned with.
+    useFlights=true,
     -- Flight masters on a continent whose flight map you have not opened
     -- yet (Florian 2026-10-15): "leave" them out (asked once, a hint in the
     -- guide) or count "all" of your side.
@@ -51,10 +54,28 @@ R.DEFAULTS={
     -- The legs after the one you are on (Florian 2026-10-16: players set the
     -- dimming): the line's opacity at full dimming in percent (100: none)
     -- and over how many legs it gets there.
-    aheadOpacity=30,aheadSteps=3}
+    aheadOpacity=30,aheadSteps=3,
+    -- Roads and walked ways (Florian 2026-10-16: a slider each, a loose
+    -- preference): what a yard there costs, in percent of open ground.
+    roadPercent=60,walkedPercent=60,   -- 60 since Florian's walk 2026-10-16 (search weight 1)
+    -- Zones above your level (Florian 2026-10-16): said ("warn"), avoided
+    -- ("avoid", and said) or "off".
+    zoneLevels="warn",
+    -- Safe (Florian 2026-10-16: the shorter way led through more mobs):
+    -- roads at most SAFEROAD, swimming dearer, zones above your level avoided.
+    routeMode="normal",
+    -- Planning time per frame (Florian 2026-10-19: a setting for the budget):
+    -- "auto" by the frame rate, or fixed milliseconds; paused while you fight.
+    computeBudget="auto",pauseInCombat=true,
+    -- The precomputed network and your map data made ready after login, in
+    -- the background (Florian 2026-10-20): the first way starts warm; about
+    -- 17 MB held from then on instead of from the first way.
+    prepareAtLogin=true}
+-- On/off settings, kept true or false (one list, not a new one on every call).
+local SWITCHES={"routeTerrain","avoidWater","preferRoads","guideGround","useFlights","pauseInCombat","prepareAtLogin"}
 -- Numbers kept in their range: {low, high}.
-local RANGES={aheadOpacity={10,100},aheadSteps={1,6}}
-local CHOICES={flightsUnknown={leave=true,all=true},risk={ignore=true,avoid=true,block=true},enemy={ignore=true,avoid=true,block=true},cliffs={never=true,safe=true,always=true},guide={left=true,right=true,free=true,off=true}}
+local RANGES={aheadOpacity={10,100},aheadSteps={1,6},roadPercent={30,100},walkedPercent={30,100}}
+local CHOICES={computeBudget={auto=true,["5"]=true,["10"]=true,["15"]=true,["25"]=true},routeMode={normal=true,safe=true},zoneLevels={off=true,warn=true,avoid=true},flightsUnknown={leave=true,all=true},risk={ignore=true,avoid=true,block=true},enemy={ignore=true,avoid=true,block=true},cliffs={never=true,safe=true,always=true},guide={left=true,right=true,free=true,off=true}}
 function R:Config()
     local cfg=ns.Settings:Module(self.ID)
     -- These settings were Gather's until 2026-10-10: taken over once per profile.
@@ -68,13 +89,26 @@ function R:Config()
     end
     for key,value in pairs(self.DEFAULTS) do if cfg[key]==nil then cfg[key]=value end end
     cfg.guideBare=nil
-    for _,key in ipairs({"routeTerrain","avoidWater","preferRoads","guideGround"}) do cfg[key]=cfg[key]==true end
+    for _,key in ipairs(SWITCHES) do cfg[key]=cfg[key]==true end
     for key,valid in pairs(CHOICES) do if not valid[cfg[key]] then cfg[key]=self.DEFAULTS[key] end end
     for key,range in pairs(RANGES) do
         local v=tonumber(cfg[key]) or self.DEFAULTS[key]
         cfg[key]=math.max(range[1],math.min(range[2],math.floor(v+.5)))
     end
     return cfg
+end
+-- Milliseconds of planning a frame (computeBudget): auto half a frame at your
+-- frame rate, between AUTOMIN and most (the caller's own cap); 0 while you
+-- fight and pauseInCombat is on (the plan waits, the game keeps every frame).
+R.AUTOMIN=4
+function R:FrameBudget(most)
+    local c=self:Config()
+    if c.pauseInCombat and ((InCombatLockdown and InCombatLockdown()) or (UnitAffectingCombat and UnitAffectingCombat("player"))) then return 0 end
+    local fixed=tonumber(c.computeBudget)
+    if fixed then return fixed end
+    local fps=GetFramerate and GetFramerate() or 0
+    if not (type(fps)=="number" and fps>0) then return most end
+    return math.max(self.AUTOMIN,math.min(most,500/fps))
 end
 
 -- The shared store, account-wide (BVRoutingDB):
@@ -215,6 +249,23 @@ local function merge(own,shipped)
     merged[shipped]={own=own,n=#own,list=list}
     return list
 end
+-- Yours and several shipped lists in one pass, the same order and ids as merge()
+-- one after the other (Claude 2026-10-20: map by map copied the growing list
+-- each time, 10 MB and 60-200 ms at the first way in game).
+local function mergeAll(own,lists)
+    own=type(own)=="table" and own or {}
+    local seen,list={},{}
+    for _,e in ipairs(own) do
+        list[#list+1]=e
+        if type(e)=="table" and e.id~=nil then seen[e.id]=true end
+    end
+    for _,shipped in ipairs(lists) do
+        for _,e in ipairs(shipped) do
+            if type(e)=="table" and not (e.id~=nil and seen[e.id]) then list[#list+1]=e;if e.id~=nil then seen[e.id]=true end end
+        end
+    end
+    return list
+end
 -- What the way finding reads: the store, with the shipped maps that are
 -- not yours laid in (the store itself while nothing is shipped).
 -- Data sets switched off: their elements are kept, but not read. Is an
@@ -272,11 +323,12 @@ local function shippedOnly()
         for mapID,data in pairs(R.SHIPPED) do if type(data[kind])=="table" then out[mapID]=data[kind] end end
         view[kind]=out
     end
-    local links,maps={},{}
+    local lists,maps={},{}
     for mapID,data in pairs(R.SHIPPED) do
-        if type(data.links)=="table" then links=merge(links,data.links) end
+        if type(data.links)=="table" then lists[#lists+1]=data.links end
         if type(data.settings)=="table" then maps[mapID]=data.settings end
     end
+    local links=mergeAll({},lists)
     view.links,view.maps=links,maps
     return view
 end
@@ -322,14 +374,15 @@ function R:BuildData(db)
         view[kind]=out
     end
     local links=off and filter(self,db.links,nil,true) or db.links
-    local maps={}
+    local maps,lists={},{}
     for mapID,m in pairs(db.maps) do maps[mapID]=m end
     for mapID,data in pairs(R.SHIPPED) do
         if not self:Own(mapID) and not self:ShippedOff(mapID) then
-            if type(data.links)=="table" then links=merge(links,data.links) end
+            if type(data.links)=="table" then lists[#lists+1]=data.links end
             if type(data.settings)=="table" and type(maps[mapID])~="table" then maps[mapID]=data.settings end
         end
     end
+    if #lists>0 then links=mergeAll(links,lists) end
     view.links,view.maps=links,maps
     return view
 end

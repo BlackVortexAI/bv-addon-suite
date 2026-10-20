@@ -46,12 +46,29 @@ N.OTHERSTART=900  -- seconds a start on another level than the one Routing
 N.STARTWEIGHT=3   -- unknown level: a level's street farther than the nearest
                   -- costs this many times its extra walk
 N.LIMIT=200000    -- cells a search may look at
-N.WEIGHT=4        -- the search heads for the goal (Grid.Search weight; measured
+N.GROUNDLIMIT=100000 -- on the ground (Codex 2026-10-16: the 52 reference ways
+                  -- need at most 18,191 there and stay the same; Crossroads
+                  -- to Silithus on foot 37 -> 4.7 s offline before it gives up)
+N.WEIGHT=1        -- the search heads for the goal (Grid.Search weight; measured
                   -- 2026-10-10 on Kalimdor: Ratchet -> Nartok 116,000 cells at 1,
-                  -- 44,000 at 4, the way 2 % longer)
+                  -- 44,000 at 4, the way 2 % longer). 1 since 2026-10-16 (Florian:
+                  -- roads ignored; Codex's matrix: at 4 a fifth of the ground on
+                  -- roads, at 1 two thirds; 640/640 found, median 0.6 s, max 2.3 s
+                  -- offline; 1.5 to 3 still miss roads in some cases)
 N.BUDGET=14       -- ms a frame while searching (the grid's own 8 for routes)
 N.ZTIE=2          -- yards: goal levels fitting about as well are told apart by the nearest street
 N.REPLAN=10       -- plans tried with the walked lengths found (then the best searched through)
+N.NEAR=3          -- precomputed walks' anchors a start or goal joins
+N.JOINSECONDS=10  -- seconds a walk joining the precomputed walks may search
+N.NEARJOINSECONDS=3 -- the same when only the short-way rule (Transit NEARNODE) joined the network
+N.WIDESECONDS=30  -- seconds a walk may search when the network found no way
+N.WIDETOTAL=45    -- seconds all such walks of one way may search together
+N.SPUR=12         -- yards: a walk going back along the one before it this near is cut there
+N.NEARZONE=200    -- yards an anchor in the start's or goal's own zone counts nearer
+N.NEARCELL=250    -- yards a cell of the grid the nearest anchors are looked up in
+N.LOCALWALK=400   -- yards a guessed walk between two nodes off the network may have (with the network in)
+N.JOINEXACT=2     -- yards: a start or goal this near an anchor joins that anchor only
+N.WAYEND=15       -- yards: a goal on a level this near the last point of its way ends there
 N.NOWAY=1e7       -- yards a leg without a walkable way counts (never chosen
                   -- while any other way exists)
 N.CONTINENTS={1414,1415}
@@ -255,7 +272,7 @@ end
 -- Continents of a way (where you are, where it goes) whose flight points
 -- are not known, when flying may matter there; {} with "count all".
 function N:FlightsMissing(goal)
-    if Routing:Config().flightsUnknown=="all" then return {} end
+    if Routing:Config().flightsUnknown=="all" or not Routing:Config().useFlights then return {} end
     local cont,px,py=self:Here()
     if not cont then return {} end
     if goal.cont==cont and N.Yards(cont,px,py,goal.x,goal.y)<N.FLIGHTASK then return {} end
@@ -325,7 +342,13 @@ end
 -- The travel graph: you, the goal, known flight masters of your faction,
 -- transport stops, transitions between levels. Dijkstra on estimated seconds.
 -- A node: {cont, x, y, level (nil: the ground), kind, name}.
-local function key(n) return string.format("%d:%.4f:%.4f:%s",n.cont,n.x,n.y,tostring(n.level or 0)) end
+-- One empty list for "nothing" in the search's loops (a new {} for every node was garbage).
+local EMPTY={}
+local function key(n)
+    -- A precomputed walk's node by its own key (Transit.lua), never by position.
+    if n.tkey then return n.tkey end
+    return string.format("%d:%.4f:%.4f:%s",n.cont,n.x,n.y,tostring(n.level or 0))
+end
 N.Key=key
 -- A transition's walked shape (link.path: x1, y1, ... on its start's map)
 -- as continent points {{x, y}, ...} from a to b; nil without one.
@@ -338,6 +361,9 @@ function N:LinkPath(link,cont)
         if c~=cont then return nil end
         out[#out+1]={x,y}
     end
+    -- A lift's cabin way stays as measured (Codex 2026-10-16: the Great
+    -- Lift's rounded cabin way cut the bottom edge).
+    if link.kind=="lift" then return out end
     -- Drawn by clicks: its corners rounded (a ramp round a tower).
     return Routing.Grid.Round(out,function(ax,ay,bx,by) return N.Yards(cont,ax,ay,bx,by) end)
 end
@@ -410,7 +436,9 @@ function N:Doors()
                     out[#out+1]={a,b,link,edge=true}
                 end
             end
-        elseif type(link)=="table" and type(link.a)=="table" and type(link.b)=="table" and (link.a.level or 0)~=(link.b.level or 0) then
+        -- Between levels, or a lift also between two ground places (the Great
+        -- Lift: wait for it and ride, Codex 2026-10-16).
+        elseif type(link)=="table" and type(link.a)=="table" and type(link.b)=="table" and ((link.a.level or 0)~=(link.b.level or 0) or link.kind=="lift") then
             local ca,ax,ay=Routing:OnContinent(link.a.mapID,link.a.x,link.a.y)
             local cb,bx,by=Routing:OnContinent(link.b.mapID,link.b.x,link.b.y)
             if ca and cb then
@@ -453,11 +481,22 @@ end
 -- entrance quickest from you, on its ground side; a transition from the
 -- ground onto one of the city's levels (one way only inward). A zone, or
 -- a city without levels: its middle as before.
+-- The six capitals (Grid's lists of both sides).
+function N.IsCapital(mapID)
+    local G=Routing.Grid
+    for _,list in ipairs({G.HORDECAPITALS or {},G.ALLIANCECAPITALS or {}}) do
+        for _,id in ipairs(list) do if id==mapID then return true end end
+    end
+    return false
+end
 function N:CityEntrance(goal)
     if goal.label~="Zone" or goal.entrance then return end
     local info=call("C_Map.GetMapInfoAtPosition",goal.cont,goal.x,goal.y)
     local mapID=type(info)=="table" and info.mapID
     if not mapID then return end
+    -- Only the capitals (Codex 2026-10-20: Thousand Needles as a goal went to
+    -- Freewind Post's lift, its levels lie on the zone's own map).
+    if not N.IsCapital(mapID) then return end
     local ids,any={},false
     for _,level in ipairs(Routing:ReadLevels(mapID) or {}) do if type(level)=="table" and level.id~=nil then ids[level.id]=true;any=true end end
     if not any then return end
@@ -483,9 +522,39 @@ function N:CityEntrance(goal)
     goal.x,goal.y,goal.level,goal.ground,goal.entrance,goal.entrances=best.x,best.y,nil,true,true,list
     Routing:Note(string.format("%s: to whichever of its %d entrances the way reaches first (by the line: %s).",goal.name,#list,tostring(best.name)))
 end
+-- No way through the precomputed walks: wide (the network with guessed walks between),
+-- or, when only the short-way rule (Transit NEARNODE) turned it on, on the ground as
+-- before that rule (Codex 2026-10-20, Mountaineer Grugelm).
+function N:LeaveNetwork()
+    -- On the ground only when a join ran out of time (a way may exist, Grugelm); joins
+    -- proved without a way keep the quick wide plan (Codex 2026-10-20: Johan Focht,
+    -- 1.5 s with it, 65 s of searches on the ground).
+    if self.nearOnly and self.nearLimit then
+        self.noNear=true;self.nearOnly=nil
+        Routing:Note("No way through the precomputed walks near you: planned on the ground.")
+    else
+        self.transitWide=true
+        Routing:Note("No way through the precomputed walks: planned without them.")
+    end
+end
+-- Gives the frame back when the slice is used up (Grid.Breathe), in a coroutine.
+function N.Breathe() local G=Routing.Grid;if G and G.Breathe then G.Breathe() end end
+-- A walk's key "a>b" split into its two node keys, kept (the network's 15000
+-- keys were split again for every plan; Claude 2026-10-20).
+N.splitKeys,N.splitCount={},0
+function N.SplitKey(k)
+    local t=N.splitKeys[k]
+    if t==nil then
+        local a,b=k:match("^(.-)>(.*)$")
+        -- Searched walks add keys of their own: emptied before it grows without end.
+        if N.splitCount>=60000 then N.splitKeys,N.splitCount={},0 end
+        t=a and {a,b} or false;N.splitKeys[k]=t;N.splitCount=N.splitCount+1
+    end
+    if t then return t[1],t[2] end
+end
 -- many: several goals (EstimateMany), goal the first of them; the times
 -- to each are returned ({seconds or false}), no steps.
-function N:Plan(goal,known,from,many)
+function N:Plan(goal,known,from,many,groundDetour)
     local cont,px,py,level
     if from then cont,px,py,level=from.cont,from.x,from.y,from.level else cont,px,py,level=self:Here() end
     if not cont then return nil,"No position here (instance?)." end
@@ -515,7 +584,7 @@ function N:Plan(goal,known,from,many)
     -- Per continent: where its flight map was opened, the flight points you
     -- know; elsewhere none (or all, by the setting).
     local conts,countAll=self:FlightConts(),Routing:Config().flightsUnknown=="all"
-    for _,f in ipairs(self:FlightMasters()) do
+    for _,f in ipairs(Routing:Config().useFlights and self:FlightMasters() or {}) do
         if shares(f.mask,mine) and ((conts[f.cont] and flights[f.name]) or (not conts[f.cont] and countAll)) then nodes[#nodes+1]={cont=f.cont,x=f.x,y=f.y,kind="flight",name=f.name,level=self:FlightLevel(f)} end
     end
     for _,t in ipairs(Routing.TRANSPORTS or {}) do
@@ -544,6 +613,7 @@ function N:Plan(goal,known,from,many)
             or tonumber(link.seconds) or math.max(N.PASS,door.yards/speed)
         a.pairs={{b,seconds,link}}
         if not link.oneway then b.pairs={{a,seconds,link}} end
+        a.doorLink,b.doorLink=link.id,link.id
         nodes[#nodes+1]=a;nodes[#nodes+1]=b
     end
     -- The same plan as walking every pair of nodes, found faster (Florian/
@@ -563,62 +633,260 @@ function N:Plan(goal,known,from,many)
             if not (e.x==goal.x and e.y==goal.y) then nodes[#nodes+1]={cont=e.cont,x=e.x,y=e.y,kind="goal",name=goal.name,anyGoal=true} end
         end
     end
+    -- Precomputed walks between zones (Transit.lua, Florian 2026-10-16):
+    -- their nodes on the ground of where you are and where you go.
+    -- With them a long walk on the ground nobody measured is no edge
+    -- (Codex 2026-10-17: the first plan still took the whole line
+    -- Crossroads to Silithus and searched it to the limit): start and goal
+    -- join the network near them, the network's stored walks carry the
+    -- rest. Planned again without this when it finds no way (transitWide).
+    local narrow
+    self.narrowed=nil
+    local long,why
+    if not many and Routing.Transit then long,why=Routing.Transit:Long(cont,px,py,goal) end
+    self.nearOnly=long and why=="near" or nil
+    if long then
+        local seen={}
+        for _,c in ipairs({cont,goal.cont}) do
+            if c and not seen[c] and Routing.Transit:Usable(c) then
+                seen[c]=true
+                local net=Routing.Transit:Net(c)
+                for _,n in ipairs(net and net.nodes or {}) do nodes[#nodes+1]=n;narrow=not self.transitWide end
+            end
+        end
+    end
+    -- A ride the network knows (the Great Lift) only as the network's
+    -- (Codex 2026-10-17: the same lift from your data beside it let a
+    -- guessed walk start at its ends, round the proven ways).
+    if narrow then
+        local rides={}
+        for _,n in ipairs(nodes) do
+            for _,p in ipairs(n.tkey and n.pairs or EMPTY) do if p[3] and p[3].linkId then rides[p[3].linkId]=true end end
+        end
+        if next(rides) then
+            local kept={}
+            for _,n in ipairs(nodes) do if not (n.doorLink and rides[n.doorLink]) then kept[#kept+1]=n end end
+            nodes=kept
+        end
+    end
+    -- Nodes off the network join only their nearest anchors (Codex 2026-10-17:
+    -- Darkshore's start went to a bridge into Felwood within the radius,
+    -- 18 s and then 25 s searched, the inn beside it cost nothing): the
+    -- NEAR nearest; its own zone only a hint (NEARZONE yards ahead), never
+    -- before an anchor right beside it.
+    local near,exact={},{}
+    if narrow then
+        self.narrowed=true
+        near={}
+        -- The network's nodes of a continent in square cells of CELL yards (built once per plan).
+        local grids={}
+        -- free: may give the frame back (not inside near[]'s lookup).
+        local function grid(c,free)
+            local g=grids[c]
+            if g then return g end
+            local w,h=N.Yards(c,0,0,1,0),N.Yards(c,0,0,0,1)
+            local cell=N.NEARCELL
+            g={cells={},cw=w>0 and cell/w or 1,ch=h>0 and cell/h or 1,cell=cell}
+            g.max=math.ceil(math.max(1/g.cw,1/g.ch))+1
+            for i,n in ipairs(nodes) do
+                if free and i%2000==0 and Routing.Grid.Breathe then Routing.Grid.Breathe() end
+                if n.tkey and n.cont==c then
+                    local k=math.floor(n.x/g.cw)*4096+math.floor(n.y/g.ch)
+                    local l=g.cells[k];if not l then l={};g.cells[k]=l end;l[#l+1]=n
+                end
+            end
+            grids[c]=g
+            return g
+        end
+        local ringBuf={}
+        local function pick(e)
+            local zones=N.Zones(e.cont,e.x,e.y,e.x,e.y)
+            local zone=zones and zones[1]
+            -- Only the NEAR best kept, not every node sorted (Claude 2026-10-20: thousands of
+            -- network nodes sorted again for each node off the network).
+            -- Nodes from a grid of CELL yards, ring by ring, until no farther ring can hold
+            -- a better one (its nearest point beyond the NEAR-th score plus the zone bonus).
+            local list={}
+            local ground=(e.level or 0)==0
+            local on
+            local g=grid(e.cont)
+            local cx,cy=math.floor(e.x/g.cw),math.floor(e.y/g.ch)
+            local r=0
+            while r<=g.max do
+                if #list>=N.NEAR and (r-1)*g.cell-N.NEARZONE>list[#list][2] then break end
+                -- The ring's cells only (its border), not the whole square again; into one
+                -- list kept for the plan, empty cells skipped (Claude 2026-10-20: a new list
+                -- per ring and an empty table per empty cell, over a hundred rings in empty
+                -- country, were up to 180 MB of garbage a plan and stops of 600-700 ms).
+                local ring,nr=ringBuf,0
+                if r==0 then nr=1;ring[1]=cx*4096+cy
+                else
+                    for gx=cx-r,cx+r do ring[nr+1]=gx*4096+cy-r;ring[nr+2]=gx*4096+cy+r;nr=nr+2 end
+                    for gy=cy-r+1,cy+r-1 do ring[nr+1]=(cx-r)*4096+gy;ring[nr+2]=(cx+r)*4096+gy;nr=nr+2 end
+                end
+                for k=1,nr do
+                local cellList=g.cells[ring[k]]
+                if cellList then for _,n in ipairs(cellList) do
+                    local yards=N.Yards(e.cont,e.x,e.y,n.x,n.y)
+                    local score=yards-((zone and n.zone==zone) and N.NEARZONE or 0)
+                    -- Standing on an anchor (on the ground): that one only (Codex
+                    -- 2026-10-17: from Calandrath's own anchor the plan went to a
+                    -- junction beside it, a guessed walk instead of the proven ways).
+                    if ground and yards<=N.JOINEXACT and (not on or yards<on[3]) then on={n,score,yards} end
+                    if #list<N.NEAR or score<list[#list][2] then
+                        if #list>=N.NEAR then list[#list]=nil end
+                        local i=#list
+                        while i>=1 and list[i][2]>score do list[i+1]=list[i];i=i-1 end
+                        list[i+1]={n,score,yards}
+                    end
+                end end
+                end
+                r=r+1
+            end
+            local set={}
+            if on then set[on[1]]=true;exact[e]=true
+            else for i=1,math.min(N.NEAR,#list) do set[list[i][1]]=true end end
+            near[e]=set
+        end
+        -- Every node off the network the same way, not only start and goal
+        -- (Florian's Crossroads 2026-10-17: from the Great Lift's foot a
+        -- guessed 1587 yd walk to Marshal's Refuge, up Un'Goro's cliffs,
+        -- searched for minutes; the lift's own anchors lie beside it).
+        setmetatable(near,{__index=function(t,e) pick(e);return rawget(t,e) end})
+        -- The grids of the network's continents built here, given back now and then.
+        for _,n in ipairs(nodes) do if n.tkey and not grids[n.cont] then grid(n.cont,true) end end
+    end
     local level0=function(n) return tostring(n.level or 0) end
     local byCont,byLevel={},{}
+    local Breathe=Routing.Grid.Breathe or function() end
     for i,n in ipairs(nodes) do
+        if i%2000==0 then Breathe() end
         n.idx,n.k=i,key(n)
         if n.kind~="start" then
             local c=byCont[n.cont];if not c then c={};byCont[n.cont]=c end;c[#c+1]=n
-            local lk=n.cont..":"..level0(n)
+            -- A network node's level key kept with it (the same in every plan).
+            local lk=n.lkey or n.cont..":"..level0(n)
+            if n.tkey then n.lkey=lk end
             local l=byLevel[lk];if not l then l={};byLevel[lk]=l end;l[#l+1]=n
         end
     end
     local walkedBy
     if known then
         walkedBy={}
+        local i=0
         for k,v in pairs(known) do
-            local a,b=k:match("^(.-)>(.*)$")
+            i=i+1;if i%1000==0 then N.Breathe() end
+            local a,b=N.SplitKey(k)
             if a then local t=walkedBy[a];if not t then t={};walkedBy[a]=t end;t[b]=v end
+        end
+    end
+    -- A measured complete ground walk tells this plan more about its
+    -- detour than the fixed estimate. Otherwise each unused nearby gate
+    -- makes two unmeasured walks look cheaper than that same known way.
+    -- Only estimates change: every edge and real transport remains available.
+    -- This is local to Plan, not a new cache or a reachability assertion.
+    local groundFactor=N.DETOUR
+    local groundFrom,groundTo
+    if groundDetour and known and #starts==1 and not many and not goal.entrances
+        and not starts[1].level and not goalNode.level and starts[1].cont==goalNode.cont then
+        local yards=known[key(starts[1])..">"..key(goalNode)]
+        local line=N.Yards(cont,px,py,goalNode.x,goalNode.y)
+        if yards and yards<N.NOWAY and line>=Routing.Grid.COARSEMIN then
+            groundFactor=math.max(groundFactor,yards/line)
+            -- Measured long prefixes/suffixes refine estimates from/to their
+            -- shared endpoint. These small maps die with this Plan call.
+            groundFrom,groundTo={},{}
+            local at={}
+            for _,node in ipairs(nodes)do
+                if node.cont==cont and not node.level then at[node.k]=node end
+            end
+            for ak,list in pairs(walkedBy or {})do
+                local a=at[ak]
+                if a then for bk,yards in pairs(list)do
+                    local b=at[bk]
+                    if b and yards<N.NOWAY then
+                        local line=N.Yards(cont,a.x,a.y,b.x,b.y)
+                        if line>=Routing.Grid.COARSEMIN then
+                            local factor=yards/line
+                            groundFrom[ak]=math.max(groundFrom[ak]or N.DETOUR,factor)
+                            groundTo[bk]=math.max(groundTo[bk]or N.DETOUR,factor)
+                        end
+                    end
+                end end
+            end
         end
     end
     local dist,prev,via,what,done={},{},{},{},{}
     local reached
-    local heap={}
-    local function less(x,y) return x[1]<y[1] or (x[1]==y[1] and x[2]<y[2]) end
+    -- The heap as two arrays, cost and node (Claude 2026-10-20: a table for each
+    -- entry was most of 100+ MB of garbage a plan, collected in one 200-465 ms piece).
+    local hc,hn,size={},{},0
+    local function less(i,j) return hc[i]<hc[j] or (hc[i]==hc[j] and hn[i].idx<hn[j].idx) end
+    local function swap(i,j) hc[i],hc[j]=hc[j],hc[i];hn[i],hn[j]=hn[j],hn[i] end
     local function push(cost,n)
-        local item={cost,n.idx,n}
-        heap[#heap+1]=item
-        local i=#heap
+        size=size+1;hc[size],hn[size]=cost,n
+        local i=size
         while i>1 do
             local p=math.floor(i/2)
-            if less(heap[i],heap[p]) then heap[i],heap[p]=heap[p],heap[i];i=p else break end
+            if less(i,p) then swap(i,p);i=p else break end
         end
     end
     local function pop()
-        local top=heap[1]
-        local last=table.remove(heap)
-        if #heap>0 then
-            heap[1]=last
-            local i=1
-            while true do
-                local l,r,m=2*i,2*i+1,i
-                if heap[l] and less(heap[l],heap[m]) then m=l end
-                if heap[r] and less(heap[r],heap[m]) then m=r end
-                if m==i then break end
-                heap[i],heap[m]=heap[m],heap[i];i=m
-            end
+        local cost,node=hc[1],hn[1]
+        hc[1],hn[1]=hc[size],hn[size];hc[size],hn[size]=nil,nil;size=size-1
+        local i=1
+        while true do
+            local l,r,m=2*i,2*i+1,i
+            if l<=size and less(l,m) then m=l end
+            if r<=size and less(r,m) then m=r end
+            if m==i then break end
+            swap(i,m);i=m
         end
-        return top
+        return cost,node
     end
     local function try(v,cost,u,kind,by)
         if not dist[v] or cost<dist[v] then dist[v],prev[v],via[v],what[v]=cost,u,kind,by;push(cost,v) end
     end
     for _,node in ipairs(starts) do dist[node]=node.cost or 0 end
     for _,node in ipairs(nodes) do if dist[node] then push(dist[node],node) end end
+    -- Per level list: its nodes by key, those off the network and those at a walked transition.
+    local index={}
+    local extraBuf,outBuf={},{}
+    local function byIdx(a,b) return a.idx<b.idx end
+    local function reach(list,u,walked)
+        local ix=index[list]
+        if not ix then
+            ix={byKey={},rest={}}
+            for _,n in ipairs(list) do
+                ix.byKey[n.k]=n
+                if not n.tkey or n.bound then ix.rest[#ix.rest+1]=n end
+            end
+            index[list]=ix
+        end
+        -- In the list's own order (ties resolved as before): the few walked ends sorted and
+        -- merged into the rest, which is in that order already (Claude 2026-10-20: sorting
+        -- all of them for every node was a fifth of the search).
+        -- Into two lists kept for the whole plan (a new one for every node was garbage).
+        local extra,ne=extraBuf,0
+        for k in pairs(walked or EMPTY) do
+            local n=ix.byKey[k]
+            if n and n.tkey and not n.bound then ne=ne+1;extra[ne]=n end
+        end
+        for t=ne+1,#extra do extra[t]=nil end
+        if ne==0 then return ix.rest end
+        table.sort(extra,byIdx)
+        local out,no,i,j,rest=outBuf,0,1,1,ix.rest
+        while i<=#rest or j<=ne do
+            local a,b=rest[i],extra[j]
+            no=no+1
+            if b and (not a or b.idx<a.idx) then out[no]=b;j=j+1 else out[no]=a;i=i+1 end
+        end
+        for t=no+1,#out do out[t]=nil end
+        return out
+    end
     local Grid=Routing.Grid
-    while #heap>0 do
-        local item=pop()
-        local u,best=item[3],item[1]
+    while size>0 do
+        local best,u=pop()
         if not done[u] and dist[u]==best then
             if goalNodes then
                 -- Several goals: done when all are reached (walking on
@@ -626,11 +894,20 @@ function N:Plan(goal,known,from,many)
                 if u.kind=="goal" then left=left-1;if left<=0 then break end end
             elseif u==goalNode or u.anyGoal then reached=u;break end
             done[u]=true
-            local list=u.kind=="flight" and byCont[u.cont] or byLevel[u.cont..":"..level0(u)] or {}
+            local list=u.kind=="flight" and byCont[u.cont] or byLevel[u.lkey or u.cont..":"..level0(u)] or EMPTY
             local walked=walkedBy and walkedBy[u.k]
             local level=(u.level or 0)
-            local factor=level~=0 and 1 or N.DETOUR
-            for _,b in ipairs(list) do
+            local factor=level~=0 and 1 or (u.cont==cont and groundFactor or N.DETOUR)
+            -- A node of the precomputed network reaches on its level only its stored walks, the
+            -- other end of a walked transition and the nodes off the network (Claude 2026-10-20:
+            -- every other network node is ruled out below anyway; looking at all of them made the
+            -- search quadratic, 23 of 33 s of a way across both continents, pieces of 0.9 s).
+            local cands=list
+            if u.tkey and u.kind~="flight" then cands=reach(list,u,walked) end
+            for j,b in ipairs(cands) do
+                -- Each node off the network picks its anchors when first met (near[]):
+                -- given back between them, never inside that lookup.
+                if j%8==0 then Breathe() end
                 if b~=u then
                     -- Walking only on one level.
                     if (b.level or 0)==level then
@@ -639,13 +916,45 @@ function N:Plan(goal,known,from,many)
                         -- 2026-10-11: the nearer stairs looked worse on paper than the
                         -- way measured to the farther ones and were never tried).
                         local w=walked and walked[b.k]
-                        try(b,best+(w or N.Yards(u.cont,u.x,u.y,b.x,b.y)*factor)/speed,u,"walk")
+                        -- Between two nodes of the precomputed network only its
+                        -- stored walks (Codex 2026-10-16): no estimated shortcut
+                        -- the network never found, but the two ends of a bridge
+                        -- of your data (searched as usual); everything else stays.
+                        if u.tkey and b.tkey and not w and not Routing.Transit:Bound(u,b) then w=false end
+                        local estimate=factor
+                        if level==0 and u.cont==cont and groundFrom then
+                            estimate=math.max(estimate,groundFrom[u.k]or N.DETOUR,groundTo[b.k]or N.DETOUR)
+                        end
+                        local line=not w and N.Yards(u.cont,u.x,u.y,b.x,b.y)
+                        if narrow and level==0 and line and line>=Routing.Transit.LONG then w=false end
+                        -- Between two nodes off the network only short walks (Codex
+                        -- 2026-10-17: from the Great Lift's top a row of guessed walks
+                        -- via flight masters and docks went round the lift and the
+                        -- network); the way between places is the network's.
+                        if narrow and level==0 and line and not u.tkey and not b.tkey and line>N.LOCALWALK then w=false end
+                        -- Standing on an anchor: from there only the network
+                        -- (Codex 2026-10-17: Crossroads' flight master to its inn,
+                        -- both on anchors, went the short guessed way over ground
+                        -- that does not hold, not the proven 272 yd).
+                        if narrow and level==0 and line and not u.tkey and not b.tkey then
+                            if near[u] and exact[u] or near[b] and exact[b] then w=false end
+                        end
+                        if narrow and line and (u.tkey or b.tkey) and not (u.tkey and b.tkey) then
+                            if not near[u.tkey and b or u][u.tkey and u or b] then w=false end
+                        end
+                        -- A place off the network walked through from the network
+                        -- back onto it (Codex 2026-10-19: Thunder Bluff's gate 64
+                        -- as a waypoint between two proven walks, both guessed
+                        -- pieces unwalkable): its own transition only, never a
+                        -- shortcut on the ground.
+                        if narrow and b.tkey and not u.tkey and via[u]=="walk" and prev[u] and prev[u].tkey then w=false end
+                        if w~=false then try(b,best+(w or line*estimate)/speed,u,"walk") end
                     end
                     if u.kind=="flight" and b.kind=="flight" then try(b,best+self:FlightSeconds(u,b),u,"flight") end
                 end
             end
-            for _,p in ipairs(u.pairs or {}) do try(p[1],best+p[2],u,u.kind=="dock" and "transport" or "transition",p[3]) end
-            if Grid.Pace and coroutine.running() then Grid.Pace(#list) end
+            for _,p in ipairs(u.pairs or EMPTY) do try(p[1],best+p[2],u,u.kind=="dock" and "transport" or "transition",p[3]) end
+            Breathe()
         end
     end
     if goalNodes then
@@ -659,11 +968,15 @@ function N:Plan(goal,known,from,many)
     end
     local steps={}
     local n=goalNode
-    while prev[n] do table.insert(steps,1,{from=prev[n],to=n,kind=via[n],by=what[n]});n=prev[n] end
+    while prev[n] do table.insert(steps,1,{from=prev[n],to=n,kind=via[n],by=what[n],cost=dist[n]-dist[prev[n]]});n=prev[n] end
     -- A transition walked in Route Studio (a ramp round a tower): its shape,
     -- in the direction taken.
     for _,step in ipairs(steps) do
-        if step.kind=="transition" and type(step.by)=="table" then
+        if step.kind=="transition" and type(step.by)=="table" and step.by.transitEdge then
+            -- A stored walk between levels: the network's own shape.
+            local net=Routing.Transit:Net(step.by.cont)
+            step.path=net and Routing.Transit:Path(step.by.transitEdge,net)
+        elseif step.kind=="transition" and type(step.by)=="table" then
             local shape=N:LinkPath(step.by,step.from.cont)
             if shape and step.from.side=="b" then
                 local back={}
@@ -681,10 +994,7 @@ end
 -- Zones a walk crosses (sampled along the line), for the grid's space.
 function N.Zones(cont,x1,y1,x2,y2)
     local zones,seen={},{}
-    local yards=N.Yards(cont,x1,y1,x2,y2)
-    local n=math.max(1,math.ceil(yards/250))
-    for i=0,n do
-        local x,y=x1+(x2-x1)*i/n,y1+(y2-y1)*i/n
+    local function add(x,y)
         local info=call("C_Map.GetMapInfoAtPosition",cont,x,y)
         local guard=0
         while type(info)=="table" and info.mapType and info.mapType>3 and info.parentMapID and guard<4 do
@@ -692,6 +1002,23 @@ function N.Zones(cont,x1,y1,x2,y2)
         end
         local id=type(info)=="table" and info.mapType==3 and info.mapID
         if id and not seen[id] then seen[id]=true;zones[#zones+1]=id end
+    end
+    local yards=N.Yards(cont,x1,y1,x2,y2)
+    local n=math.max(1,math.ceil(yards/250))
+    for i=0,n do add(x1+(x2-x1)*i/n,y1+(y2-y1)*i/n) end
+    -- No zone under a short line (Florian 2026-10-20: "Gate 67 -> Gate 67 recorded road,
+    -- 0 yd", the gate spot outside Orgrimmar has none in game): the zones round its ends.
+    if #zones==0 and yards<200 then
+        local w,h=N.Yards(cont,0,0,1,0),N.Yards(cont,0,0,0,1)
+        if w>0 and h>0 then
+            for _,r in ipairs({15,40,80}) do
+                for k=0,7 do
+                    local dx,dy=math.cos(k*math.pi/4)*r/w,math.sin(k*math.pi/4)*r/h
+                    add(x1+dx,y1+dy);add(x2+dx,y2+dy)
+                end
+                if #zones>0 then break end
+            end
+        end
     end
     return zones
 end
@@ -741,6 +1068,37 @@ function N.WhyNoWay(s,x1,y1,x2,y2)
     for _ in pairs(fromB or {}) do nb=nb+1 end
     return string.format("start and goal on streets that do not meet: %d cells from the start, %d to the goal",na,nb)
 end
+-- A leg's outcome (Codex/Florian 2026-10-16): "ok", "nopath" (proven: no
+-- walkable way), "limit" (not found within the search's limit: it may
+-- exist), "unknown" (the data cannot tell). Only "nopath" says "no way".
+N.STATUSLABEL={nopath="NO WAY",limit="SEARCH LIMIT",unknown="UNKNOWN"}
+N.STATUSWORD={nopath="no way",limit="search limit",unknown="unknown"}
+-- Zones above your level on the way (Florian 2026-10-16): said once per way,
+-- with their levels; with "avoid" the search already went round where it could.
+N.ZONESAMPLE=6   -- every this many points of a walk asked for its zone
+function N:ZoneWarning(steps)
+    local mode=Routing:ZoneMode()
+    if mode=="off" or not Routing.ZoneAt then return end
+    local level=UnitLevel and UnitLevel("player") or 1
+    local seen,list={},{}
+    local function look(cont,x,y)
+        local zone,name=Routing:ZoneAt(cont,x,y)
+        local range=zone and Routing:ZoneAbove(zone,level)
+        if range and not seen[zone] then seen[zone]=true;list[#list+1]=string.format("%s (%d-%d)",name or ("map "..zone),range[1],range[2]) end
+    end
+    for _,step in ipairs(steps or {}) do
+        local cont=step.from and step.from.cont
+        local path=step.path
+        if cont and type(path)=="table" then
+            for i=1,#path,N.ZONESAMPLE do look(cont,path[i][1],path[i][2]) end
+            if #path>0 then look(cont,path[#path][1],path[#path][2]) end
+        elseif step.to and step.to.cont then look(step.to.cont,step.to.x,step.to.y) end
+    end
+    if #list==0 then return nil end
+    local text=string.format("Above your level on this way: %s.%s",table.concat(list,", "),mode=="avoid" and " Routing went round where it could." or "")
+    Routing:Print(text)
+    return text
+end
 -- project: the goal of the way (not a transition's end): on a blocked spot
 -- the way ends on the nearest free one (Grid.Search).
 function N:Walk(cont,level,x1,y1,x2,y2,project)
@@ -755,7 +1113,7 @@ function N:Walk(cont,level,x1,y1,x2,y2,project)
         local _,map=Routing.Level:Find(level)
         if type(map)=="number" then owner=map;zones={map} end
     end
-    if #zones==0 then return {{x1,y1},{x2,y2}},"no zone under the line: straight" end
+    if #zones==0 then return {{x1,y1},{x2,y2}},"UNKNOWN (no zone under the line): straight",false,"unknown" end
     -- One space per continent and level, kept while you navigate: every leg
     -- and every new search on the way reuses what earlier ones worked out
     -- about the ground (first native run 2026-10-10: each replanned leg
@@ -785,7 +1143,7 @@ function N:Walk(cont,level,x1,y1,x2,y2,project)
         local has,list={},{}
         for _,zone in ipairs(all) do if not has[zone] then has[zone]=true;list[#list+1]=zone end end
         s=Grid.Space(list,level)
-        if s.mapID~=cont then return {{x1,y1},{x2,y2}},"zones on another map: straight" end
+        if s.mapID~=cont then return {{x1,y1},{x2,y2}},"UNKNOWN (zones on another map): straight",false,"unknown" end
         s.has=has
         s.owner=owner
         if not level then Grid.Cities(s,N.CITIES) end
@@ -794,17 +1152,64 @@ function N:Walk(cont,level,x1,y1,x2,y2,project)
         s.costs={}
         self.spaces[id]=s
     end
-    local path,why=Grid.Search(s,x1,y1,x2,y2,N.LIMIT,N.WEIGHT,project,true)
+    local limit=level and N.LIMIT or N.GROUNDLIMIT
+    -- "blocked": the goal moved onto a free cell only when its own cell is
+    -- not (a goal on a city's level, Codex 2026-10-17).
+    if project=="blocked" then
+        local cx,cy=Grid.Cell(s,x2,y2)
+        project=not (cx and Grid.CellCost(s,cx,cy))
+    end
+    local path,why=Grid.Search(s,x1,y1,x2,y2,limit,N.WEIGHT,project,true)
+    local status=path and "ok" or (why=="limit" or why=="nopath") and why or "unknown"
     local note=string.format("%d zone(s), %dx%d cells, %s, %s",#zones,s.cols,s.rows,
         level and ("level "..Routing.Level:Name(level)) or (s.terrain and "terrain" or "NO terrain"),warm and "warm" or "cold")
     -- At the limit: not searched again to say why (Florian 2026-10-14,
     -- Darnassus to Orgrimmar: three more searches of LIMIT cells each,
     -- minutes in the game).
     if not path then
-        local reason=why=="limit" and "not reached within the search's limit" or N.WhyNoWay(s,x1,y1,x2,y2)
-        return {{x1,y1},{x2,y2}},note..", NO WAY FOUND ("..reason.."): straight",false
+        local reason=status=="limit" and ("not reached within the search's limit of "..limit.." cells; a way may exist") or N.WhyNoWay(s,x1,y1,x2,y2)
+        return {{x1,y1},{x2,y2}},note..", "..N.STATUSLABEL[status].." ("..reason.."): straight",false,status
     end
-    return path,note,true
+    return path,note,true,"ok"
+end
+-- Two walks in a row where the second goes back along the first (Florian
+-- 2026-10-17: a precomputed walk ends in Everlook's middle, the walk on
+-- to the goal leads straight back out; in and out again): both cut where
+-- they part. Followed from the joint while the second walk's points stay
+-- within SPUR yards of the first walk's line, going back along it.
+function N.Trim(cont,a,b)
+    if #a<2 or #b<2 then return a,b end
+    local sx,sy=N.Yards(cont,0,0,1,0),N.Yards(cont,0,0,0,1)
+    local function near(p,k)
+        -- p to the piece of a from point k-1 to k, in yards.
+        local ax,ay=a[k-1][1]*sx,a[k-1][2]*sy
+        local bx,by=a[k][1]*sx,a[k][2]*sy
+        local px,py=p[1]*sx,p[2]*sy
+        local dx,dy=bx-ax,by-ay
+        local l=dx*dx+dy*dy
+        local t=l>0 and math.max(0,math.min(1,((px-ax)*dx+(py-ay)*dy)/l)) or 0
+        local qx,qy=ax+t*dx-px,ay+t*dy-py
+        return math.sqrt(qx*qx+qy*qy)
+    end
+    local i,j=#a,1
+    while j<#b do
+        local p=b[j+1]
+        local best,at=math.huge,nil
+        for k=i,math.max(2,i-40),-1 do
+            local d=near(p,k)
+            if d<best then best,at=d,k end
+        end
+        if not at or best>N.SPUR then break end
+        i,j=at,j+1
+    end
+    if j==1 then return a,b end
+    -- a kept to the end of its piece nearer to where b goes on.
+    local function yards(p,q) local dx,dy=(p[1]-q[1])*sx,(p[2]-q[2])*sy;return dx*dx+dy*dy end
+    if yards(b[j],a[i-1])<yards(b[j],a[i]) then i=i-1 end
+    local na,nb={},{}
+    for k=1,math.max(1,i) do na[k]=a[k] end
+    for k=j,#b do nb[#nb+1]=b[k] end
+    return na,nb
 end
 local function length(cont,path)
     local yards=0
@@ -812,19 +1217,141 @@ local function length(cont,path)
     return yards
 end
 -- A leg searched (inside the coroutine), kept by its key.
+-- The precomputed walks of the continents a way touches, as walks already
+-- known (their points decoded when the way uses one).
+function N:SeedTransit(legs,conts)
+    local T=Routing.Transit
+    if not T then return 0 end
+    local n=0
+    local roadCost=(tonumber(Routing:Config().roadPercent) or 60)/100
+    for c in pairs(conts) do
+        local net=T:Usable(c) and T:Net(c)
+        -- Each walk's entry made once per network and road preference and shared by
+        -- every way (Claude 2026-10-20: 15000 new tables twice a way, 24 MB of garbage
+        -- whose collection stopped the game for 200-465 ms). Only its points are
+        -- added later, the same for every way.
+        local seed=net and net.seed
+        if net and not (seed and seed.cost==roadCost) then
+            seed={cost=roadCost,keys={},legs={}}
+            for i,e in ipairs(net.edges or {}) do
+                if i%500==0 then N.Breathe() end
+                local k=e.legKey
+                if not k then k=key(e.a)..">"..key(e.b);e.legKey=k end
+                seed.keys[#seed.keys+1]=k
+                seed.legs[#seed.legs+1]={yards=e.yards,rank=T.Rank(e,roadCost),ok=true,status="ok",note="precomputed",seconds=0,transit=e,net=net}
+            end
+            net.seed=seed
+        end
+        for i,k in ipairs(seed and seed.keys or {}) do
+            if i%2000==0 then N.Breathe() end
+            if not legs[k] then legs[k]=seed.legs[i];n=n+1 end
+        end
+    end
+    return n
+end
+-- The yards of a way's walks searched on the terrain past the precomputed
+-- ones, longer than a local walk (nil when none).
+function N.Guessed(steps,legs)
+    local yards=0
+    for _,step in ipairs(steps or {}) do
+        local found=step.kind=="walk" and legs[key(step.from)..">"..key(step.to)]
+        if found and found.ok and not found.transit and (found.yards or 0)>N.LOCALWALK then yards=yards+found.yards end
+    end
+    return yards>0 and math.floor(yards+0.5) or nil
+end
 local function leg(legs,step)
     local k=key(step.from)..">"..key(step.to)
+    local known=legs[k]
+    if known and known.transit and not known.path then
+        known.path=Routing.Transit:Path(known.transit,known.net) or {{step.from.x,step.from.y},{step.to.x,step.to.y}}
+    end
     if not legs[k] then
         N.searched=(N.searched or 0)+1
         local t0=GetTime()
-        local path,note,ok=N:Walk(step.from.cont,step.from.level,step.from.x,step.from.y,step.to.x,step.to.y,step.to.kind=="goal")
-        legs[k]={path=path,yards=length(step.from.cont,path),note=note,seconds=GetTime()-t0,ok=ok}
+        -- Each walk said as it is searched (Florian 2026-10-17: a search ran
+        -- for minutes and the log told nothing about which walk).
+        Routing:Note(string.format("  searching walk %d: %s -> %s, %d yd in a line...",N.searched,tostring(step.from.name),tostring(step.to.name),
+            N.Yards(step.from.cont,step.from.x,step.from.y,step.to.x,step.to.y)))
+        -- Joining the precomputed walks: a few seconds, then it counts as
+        -- failed and the plan takes another anchor (never one walk holding
+        -- up the whole way).
+        local function walk()
+            local s,t=step.from,step.to
+            -- A goal on a city's level: its own spot first (Codex 2026-10-17,
+            -- Freewind Post: moved onto the nearest cell's middle, the last
+            -- piece to it was a guess through the post); moved only when its
+            -- own spot cannot be reached.
+            local project=t.kind=="goal"
+            if project and t.level then project="blocked" end
+            return N:Walk(s.cont,s.level,s.x,s.y,t.x,t.y,project)
+        end
+        local path,note,ok,status,late
+        -- Planned without the network after it found no way (a gap in it,
+        -- Florian 2026-10-18: Winterspring behind Timbermaw searched for
+        -- minutes): those walks get WIDESECONDS, then they count as failed.
+        -- Joined only by the short-way rule: a join of at most NEARNODE yards gets NEARJOINSECONDS.
+        local limit=N.narrowed and (N.nearOnly and N.NEARJOINSECONDS or N.JOINSECONDS) or (N.transitWide and N.WIDESECONDS) or nil
+        -- All walks of that plan without the network together WIDETOTAL
+        -- (Codex 2026-10-18: each ended after 30 s, the rounds tried the
+        -- same gap from one anchor after another for minutes).
+        local wide=not N.narrowed and N.transitWide
+        if wide then limit=math.min(limit,N.WIDETOTAL-(N.wideUsed or 0)) end
+        if wide and limit<=0 then
+            late=true;N.gapNoted=true
+            path,ok,status={{step.from.x,step.from.y},{step.to.x,step.to.y}},false,"limit"
+            note="not searched: the time for ways outside the precomputed walks is used up"
+        elseif limit and coroutine.running() then
+            -- The walk in a coroutine of its own: each slice it gives back is
+            -- passed on to the frame, and past its time it is left (its
+            -- space dropped: a search left halfway may hold borrowed tables).
+            local co=coroutine.create(walk)
+            -- Where it stands is where the run stands (Grid.Where, the cost line).
+            Routing.Grid.inner=co
+            while true do
+                local res={coroutine.resume(co)}
+                if not res[1] then Routing.Grid.inner=nil end
+                if not res[1] then error(res[2],0) end
+                if coroutine.status(co)=="dead" then path,note,ok,status=res[2],res[3],res[4],res[5];break end
+                if GetTime()-t0>limit then
+                    late=true
+                    if N.spaces then N.spaces[step.from.cont..":"..tostring(step.from.level or 0)]=nil end
+                    path,ok,status={{step.from.x,step.from.y},{step.to.x,step.to.y}},false,"limit"
+                    note=string.format("ended after %d s (%s): straight",limit,N.narrowed and "joining the precomputed walks" or "not in the precomputed walks")
+                    if not N.narrowed then N.gapNoted=true end
+                    break
+                end
+                coroutine.yield()
+            end
+            Routing.Grid.inner=nil
+        else
+            path,note,ok,status=walk()
+        end
+        if wide then N.wideUsed=(N.wideUsed or 0)+(GetTime()-t0) end
+        legs[k]={path=path,yards=length(step.from.cont,path),note=note,seconds=GetTime()-t0,ok=ok,status=status or (ok and "ok" or "unknown")}
+        Routing:Note(string.format("  walk %d: %s, %.1f s",N.searched,ok and "found" or late and "too long, another anchor" or tostring(status or "no way"),GetTime()-t0))
     end
     return legs[k],k
 end
+N.Leg=leg
 
+-- A zone by its map ID or its name (the start of it, any case: "silverpine"),
+-- among the zones with levels (ZoneLevels.lua: all of the continents').
+function N:ZoneNamed(text)
+    local id=tonumber(text)
+    if id then return id end
+    text=text:lower()
+    local found
+    for mapID in pairs(Routing.ZONE_LEVELS or {}) do
+        local ok,info=pcall(C_Map.GetMapInfo,mapID)
+        local name=ok and type(info)=="table" and type(info.name)=="string" and info.name:lower()
+        if name==text then return mapID end
+        if name and name:sub(1,#text)==text and (not found or mapID<found) then found=mapID end
+    end
+    return found
+end
 -- The goal from the command: "way" (your map pin), "<x> <y>" (your map),
--- else a name (Map Data).
+-- "<zone> <x> <y>" (a zone by name or map ID, Florian 2026-10-16: whole
+-- commands for test ways into another zone), else a name (Map Data).
 function N:Goal(text)
     if text=="way" then
         local point=call("C_Map.GetUserWaypoint")
@@ -842,6 +1369,16 @@ function N:Goal(text)
         if mapID then cont,cx,cy=Routing:OnContinent(mapID,tonumber(x)/100,tonumber(y)/100) end
         if not cont then return nil,"No position here." end
         return {cont=cont,x=cx,y=cy,name=x..", "..y,label="point"}
+    end
+    local zone,zx,zy=text:match("^(.-)%s+(%d+%.?%d*)[%s,]+(%d+%.?%d*)$")
+    if zone and zone~="" then
+        local mapID=self:ZoneNamed(zone)
+        if not mapID then return nil,"No zone \""..zone.."\" (its name or map ID)." end
+        local cont,cx,cy=Routing:OnContinent(mapID,tonumber(zx)/100,tonumber(zy)/100)
+        if not cont then return nil,"That point is on no continent map." end
+        local ok,info=pcall(C_Map.GetMapInfo,mapID)
+        local name=(ok and type(info)=="table" and info.name or ("map "..mapID)).." "..zx..", "..zy
+        return {cont=cont,x=cx,y=cy,name=name,label="point"}
     end
     return self:Find(text)
 end
@@ -1088,6 +1625,10 @@ end
 -- level, name, label}).
 -- again: planned anew by Navigate itself (a level corrected), not by you.
 function N:Start(goal,again)
+    -- A new goal starts in Routing's mode; the same one searched again keeps
+    -- the mode switched in the guide.
+    if goal~=self.lastGoal then self.modeOverride=nil end
+    self.lastGoal=goal
     self:Learn()
     local findMs=self.findMs;self.findMs=nil
     if not again then self.corrections=0 end
@@ -1231,7 +1772,28 @@ function N:Start(goal,again)
         self.levelSet=nil
         local planBegan=debugprofilestop and debugprofilestop()
         local anyKnown
-        steps,seconds,anyKnown=self:Plan(goal)
+        -- The precomputed walks known from the first plan on (Codex
+        -- 2026-10-17: seeded only after it, they never shaped it).
+        self.transitWide=nil;self.noNear=nil;self.nearLimit=nil
+        N.gapNoted=nil;N.wideUsed=0;N.guessedYards=nil
+        local first
+        do
+            local conts,pre={},{}
+            if cont and Routing.Transit and Routing.Transit:Long(cont,px,py,goal) then
+                conts[cont]=true
+                if goal.cont then conts[goal.cont]=true end
+            end
+            if self:SeedTransit(pre,conts)>0 then
+                first={}
+                local i=0
+                for k,v in pairs(pre) do first[k]=v.rank or v.yards;i=i+1;if i%1000==0 then N.Breathe() end end
+            end
+        end
+        steps,seconds,anyKnown=self:Plan(goal,first)
+        if not steps and self.narrowed then
+            N:LeaveNetwork()
+            steps,seconds,anyKnown=self:Plan(goal,first)
+        end
         planMs=planBegan and debugprofilestop()-planBegan
         if not steps then Routing:Print(seconds);return nil end
         -- Which start it was is known once the legs are searched (StartSaid).
@@ -1262,8 +1824,21 @@ function N:Start(goal,again)
         local known,legs
         known,legs,replanned={},self.keptLegs or {},0
         self.legs,self.keptLegs=legs,nil
+        do
+            local here,hx,hy=self:Here()
+            local conts={}
+            if here and Routing.Transit and Routing.Transit:Long(here,hx,hy,goal) then
+                conts[here]=true
+                if goal.cont then conts[goal.cont]=true end
+            end
+            local seeded=self:SeedTransit(legs,conts)
+            if seeded>0 then Routing:Note(string.format("Precomputed walks between zones: %d known.",seeded)) end
+        end
         reused=0
-        for k,v in pairs(legs) do known[k]=v.ok and v.yards or N.NOWAY;reused=reused+1 end
+        for k,v in pairs(legs) do
+            known[k]=v.ok and (v.rank or v.yards) or N.NOWAY;reused=reused+1
+            if reused%1000==0 then N.Breathe() end
+        end
         N.searched=0
         -- Plan, search the walking legs not searched yet, plan again with the
         -- lengths found, until the best plan's legs are all known.
@@ -1276,11 +1851,23 @@ function N:Start(goal,again)
         local sure,sureSeconds
         local function searched(list)
             for _,step in ipairs(list) do
-                if step.kind=="walk" and not legs[key(step.from)..">"..key(step.to)] then return false end
+                local found=step.kind=="walk" and legs[key(step.from)..">"..key(step.to)]
+                -- Searched and found (Codex 2026-10-17: a failed walk counted).
+                if step.kind=="walk" and not (found and found.ok) then return false end
             end
             return true
         end
+        -- A plan's time with its walks as searched.
+        local function measured(list)
+            local t=list[1] and list[1].from.cost or 0
+            for _,step in ipairs(list) do
+                if step.kind=="walk" then t=t+legs[key(step.from)..">"..key(step.to)].yards/self:Speed() else t=t+(step.cost or 0) end
+            end
+            return t
+        end
         for _=1,N.REPLAN do
+            -- Outside the network and its time used up: no further rounds.
+            if N.transitWide and (N.wideUsed or 0)>=N.WIDETOTAL then break end
             local open=false
             for _,step in ipairs(steps) do
                 if step.kind=="walk" and not legs[key(step.from)..">"..key(step.to)] then
@@ -1292,12 +1879,44 @@ function N:Start(goal,again)
                     -- Said with the way (Florian 2026-10-11: the way went round,
                     -- the nearer stairs left out, and nobody could tell why).
                     if not found.ok then
-                        dropped[#dropped+1]=string.format("walk to %s on %s: %s",step.to.name,Routing.Level:Name(step.from.level),found.note or "no way")
+                        dropped[#dropped+1]={status=found.status,text=string.format("walk to %s on %s: %s",step.to.name,Routing.Level:Name(step.from.level),found.note or "no way")}
+                        -- A failed leg on the ground: plan again at once rather
+                        -- than searching the legs after it (Codex 2026-10-16:
+                        -- Winterspring to Feralas 27 -> 12 walks; on city
+                        -- levels this made ways worse, so the ground only).
+                        if not step.from.level and not step.to.level then
+                            -- Only the short-way rule had the network on and its anchor
+                            -- ran out of time: on the ground at once, not anchor after
+                            -- anchor (Codex 2026-10-20, Grugelm: three times 10 s first).
+                            if N.nearOnly and N.narrowed and found.status=="limit" then N.nearLimit=true;N:LeaveNetwork() end
+                            break
+                        end
                     end
                 end
             end
             if not open then break end
-            local again,total=N:Plan(goal,known)
+            -- This plan searched through: kept before planning again (Codex
+            -- 2026-10-17: Crossroads to Silithus found its whole way through
+            -- the precomputed walks six times and lost it to new guesses).
+            -- With those walks that is the way: the rounds end here.
+            if searched(steps) then
+                local t=measured(steps)
+                if not sureSeconds or t<sureSeconds then sure,sureSeconds=steps,t end
+                if N.narrowed then steps,seconds=sure,sureSeconds;break end
+            end
+            -- First measure one alternative normally. A short useful detour
+            -- must get its chance before the complete walk calibrates guesses.
+            local again,total=N:Plan(goal,known,nil,nil,_>=2)
+            -- The narrow plan left with walks known to fail only (Codex
+            -- 2026-10-17: the nearest anchors all ran to the limit): wide.
+            local broken=false
+            for _,step in ipairs(again or {}) do
+                if step.kind=="walk" and known[key(step.from)..">"..key(step.to)]==N.NOWAY then broken=true end
+            end
+            if (not again or broken) and N.narrowed then
+                N:LeaveNetwork()
+                again,total=N:Plan(goal,known,nil,nil,_>=2)
+            end
             if again and searched(again) and (not sureSeconds or total<sureSeconds) then sure,sureSeconds=again,total end
             if again then
                 local changed=#again~=#steps
@@ -1307,6 +1926,12 @@ function N:Start(goal,again)
             end
         end
         if sure and not searched(steps) then steps,seconds=sure,sureSeconds end
+        -- The time said from the walks' real yards (stored walks are weighed
+        -- cheaper on roads, not shorter).
+        if searched(steps) then seconds=measured(steps) end
+        -- Counted before walks in a row are joined (a joined walk counts as
+        -- precomputed when one piece is).
+        N.guessedYards=N.transitWide and N.Guessed(steps,legs) or nil
         -- Walks in a row (through a flight master you do not fly from, or to
         -- a transition's end not taken) are one walk. On one level and map
         -- searched as one way (Codex's repro 2026-10-14, Florian's canal in
@@ -1321,7 +1946,9 @@ function N:Start(goal,again)
                 local joined={from=a.from,to=b.to,kind="walk"}
                 local k=key(a.from)..">"..key(b.to)
                 local direct
-                if a.from.cont==b.to.cont and (a.from.level or false)==(b.to.level or false) and la.ok and lb.ok then
+                -- Not when a piece is precomputed (its whole way searched again
+                -- would cost the minutes it saves).
+                if a.from.cont==b.to.cont and (a.from.level or false)==(b.to.level or false) and la.ok and lb.ok and not (la.transit or lb.transit) then
                     direct=leg(legs,joined)
                     if not (direct.ok and direct.yards<la.yards+lb.yards) then direct=nil end
                     -- The time said: the yards saved at your speed (Codex 2026-10-14).
@@ -1329,9 +1956,22 @@ function N:Start(goal,again)
                 end
                 if not direct then
                     local path={}
-                    for _,p in ipairs(la.path) do path[#path+1]=p end
-                    for j=2,#lb.path do path[#path+1]=lb.path[j] end
-                    legs[k]={path=path,yards=la.yards+lb.yards,note=la.note,seconds=la.seconds+lb.seconds,ok=la.ok and lb.ok}
+                    local pa,pb=la.path,lb.path
+                    local yards=la.yards+lb.yards
+                    -- (Never a precomputed walk: its proven shape stays as it is,
+                    -- Codex 2026-10-17; only two searched walks are trimmed.)
+                    if la.ok and lb.ok and not (la.transit or lb.transit) then
+                        pa,pb=N.Trim(a.from.cont,la.path,lb.path)
+                        if pa~=la.path then
+                            local cut=la.yards+lb.yards-length(a.from.cont,pa)-length(b.from.cont,pb)
+                            if cut>0 then yards=yards-cut;if seconds then seconds=math.max(0,seconds-cut/N:Speed()) end end
+                        end
+                    end
+                    for _,p in ipairs(pa) do path[#path+1]=p end
+                    -- (Cut: the second walk goes on from where they part.)
+                    for j=(pb==lb.path) and 2 or 1,#pb do path[#path+1]=pb[j] end
+                    legs[k]={path=path,yards=yards,note=la.note,seconds=la.seconds+lb.seconds,ok=la.ok and lb.ok,transit=la.transit or lb.transit,
+                        status=(la.ok and lb.ok) and "ok" or (not la.ok and la.status or lb.status)}
                 end
                 steps[i-1]=joined;table.remove(steps,i)
             end
@@ -1340,9 +1980,29 @@ function N:Start(goal,again)
             if step.kind=="walk" then
                 local found=leg(legs,step)
                 step.path,step.yards,step.noway=found.path,found.yards,not found.ok or nil
+                step.status=found.status
+                -- A goal on a city's level beside its given ways: the way ends
+                -- on the last point of a way (fixed), not on a cell's middle
+                -- joined by a guess (Codex 2026-10-17, Freewind Post: the last
+                -- piece to the cell went through the post). The NPC stays
+                -- marked apart when it is further.
+                if found.ok and step.to.kind=="goal" and step.to.level then
+                    local path=found.path
+                    local k=#path
+                    if k>=2 and not path[k].fixed then
+                        local f
+                        for j=k-1,1,-1 do if path[j].fixed then f=j;break end end
+                        if f and N.Yards(step.from.cont,path[f][1],path[f][2],step.to.x,step.to.y)<=N.WAYEND then
+                            local cut={}
+                            for j=1,f do cut[j]=path[j] end
+                            step.path=cut
+                            step.yards=length(step.from.cont,cut)
+                        end
+                    end
+                end
                 -- The goal itself on a blocked spot: you arrive where the way
                 -- ends; the goal (the NPC) stays marked apart (Points).
-                local last=found.ok and step.to.kind=="goal" and found.path[#found.path]
+                local last=found.ok and step.to.kind=="goal" and step.path[#step.path]
                 if last and N.Yards(step.from.cont,last[1],last[2],step.to.x,step.to.y)>N.APART then
                     local to={}
                     for k,v in pairs(step.to) do to[k]=v end
@@ -1367,10 +2027,18 @@ function N:Start(goal,again)
         N.busy,N.run,N.budget=nil,nil,nil
         -- What it cost, in the log (Florian 2026-10-14: ingame numbers).
         if run and run.cpu then
-            Routing:Note(string.format("Cost: name %s ms, goal level %s ms, first plan %s ms; %d walk(s) searched, %d known before; %.0f ms of work in %d frame(s), longest piece %.0f ms, %.1f s in all.",
+            Routing:Note(string.format("Cost: name %s ms, goal level %s ms, first plan %s ms; %d walk(s) searched, %d known before; %.0f ms of work in %d frame(s), longest piece %.0f ms%s, %.1f s in all; budget %s%s.",
                 findMs and string.format("%.0f",findMs) or "-",N.goalMs and string.format("%.0f",N.goalMs) or "-",planMs and string.format("%.0f",planMs) or "-",
-                N.searched or 0,reused or 0,run.cpu,run.frames,run.longest or 0,GetTime()-began))
+                N.searched or 0,reused or 0,run.cpu,run.frames,run.longest or 0,
+                run.longestTo and string.format(" (from %s to %s, %+.0f KB)",tostring(run.longestFrom or "start"),run.longestTo,run.longestKB or 0) or "",GetTime()-began,
+                tostring(Routing:Config().computeBudget),run.paused and string.format(", waited %d frame(s) in combat",run.paused) or ""))
+            -- Spaces made for this way, by part (time from start to end, memory grown).
+            -- Whether the preparation after login was done (it shares the frames while it runs).
+            Routing:Note("    Prepared after login: "..(N.prepareState or (Routing:Config().prepareAtLogin and "not yet" or "off"))..".")
+            local prep=Grid.PrepCostText and Grid.PrepCostText()
+            if prep then Routing:Note("  Spaces prepared: "..prep..".") end
         end
+        if Grid.prepCost then Grid.prepCost={} end
         N.goalMs=nil
         Grid.BUDGET=budget
         -- No way (said while planning): no goal left over.
@@ -1382,8 +2050,15 @@ function N:Start(goal,again)
         local blocked
         for _,step in ipairs(steps) do if step.noway then blocked=step end end
         if blocked then
-            Routing:Print(string.format("No walkable way on \"%s\" to %s: that leg is drawn straight. Route Studio's Check map shows where \"%s\" falls apart.",
-                Routing.Level:Name(blocked.from.level),blocked.to.name,Routing.Level:Name(blocked.from.level)))
+            local on=Routing.Level:Name(blocked.from.level)
+            -- Said as it is: proven, not decided, or unknown (Codex/Florian 2026-10-16).
+            if blocked.status=="limit" then
+                Routing:Print(string.format("The way on \"%s\" to %s was not found within the search's limit: that leg is drawn straight. A way may still exist; searching again nearer to it can find it, or plan with flights.",on,blocked.to.name))
+            elseif blocked.status=="unknown" then
+                Routing:Print(string.format("Routing cannot tell whether \"%s\" leads to %s (start or goal where no walkable ground is known): that leg is drawn straight.",on,blocked.to.name))
+            else
+                Routing:Print(string.format("No walkable way on \"%s\" to %s: that leg is drawn straight. Route Studio's Check map shows where \"%s\" falls apart.",on,blocked.to.name,on))
+            end
         end
         -- The cost of starting on another level than Routing had you on is
         -- for choosing, not time (Florian 2026-10-11: "about 15:38").
@@ -1392,11 +2067,18 @@ function N:Start(goal,again)
         -- In the chat one line; the steps in the log (/bv route log).
         N.seconds=seconds
         Routing:Print(string.format("Way to %s (%s): about %s. Details: /bv route log.",goal.name,goal.label or "goal",blocked and "?" or N.Clock(seconds)))
+        N:ZoneWarning(steps)
         if replanned>0 then Routing:Note(string.format("Planned again %d time(s) with the walked lengths.",replanned)) end
         for _,step in ipairs(steps) do Routing:Note(step.report) end
         -- Legs that had no way and were left out (another way taken).
-        for _,text in ipairs(dropped or {}) do Routing:Note("Left out, no way: "..text) end
+        for _,d in ipairs(dropped or {}) do Routing:Note("Left out, "..(N.STATUSWORD[d.status] or "no way")..": "..d.text) end
         Routing:Note(string.format("All legs searched in %.1f s. /bv route stop ends it.",GetTime()-began))
+        if N.gapNoted then Routing:Print("Part of this way is not in the precomputed walks yet (a gap such as the Timbermaw tunnel): it was searched only so long and may be straight there. Flights or a nearer goal help.") end
+        -- Found, but past the precomputed walks (Codex 2026-10-18: Gadgetzan
+        -- to Marshal's Refuge took a terrain walk down Un'Goro's cliffs that
+        -- the full ground check fails): said, never passed off as proven.
+        local guessed=not N.gapNoted and N.guessedYards
+        if guessed then Routing:Print(string.format("%d yd of this way are not in the precomputed walks: found on the terrain only, they may lead down a cliff or through water.",guessed)) end
         local probe=Routing.Probe
         if probe and probe.on then probe:Plan(goal,steps) end
         N:Show()
@@ -1440,6 +2122,15 @@ function N:Restart()
     Routing:Print("Searching the way anew from where you are.")
     return self:Start(goal)
 end
+-- Safe or normal for this way (Florian 2026-10-16: a switch in the guide,
+-- the setting only the default): the way searched again in the other mode.
+function N:ToggleSafe()
+    if self.busy then Routing:Print("Still calculating.");return false end
+    if not self.goal then return false end
+    self.modeOverride=Routing:RouteMode()=="safe" and "normal" or "safe"
+    Routing:Print(self.modeOverride=="safe" and "This way: safe (keeps to roads, goes round zones above your level)." or "This way: normal.")
+    return self:Restart()
+end
 -- The whole way as text for a bug report (Florian 2026-10-14): versions,
 -- where it started and the goal, the settings that change ways, the maps
 -- on it with their data sets, every step with its points (map 0..1, six
@@ -1470,9 +2161,17 @@ function N:ExportText()
     end
     local g=self.goal
     if g then add("goal","name="..tostring(g.name),"label="..tostring(g.label or ""),"cont="..tostring(g.cont),"cx="..f6(g.x),"cy="..f6(g.y),"level="..lv(g.level)) end
+    -- Zone levels (Florian 2026-10-16: no warning seen): the goal's zone, its range, your level.
+    if g and g.cont and Routing.ZoneAt then
+        local zone,zname=Routing:ZoneAt(g.cont,g.x,g.y)
+        local range=zone and Routing.ZONE_LEVELS[zone]
+        local okLevel,you=pcall(UnitLevel,"player")
+        add("zones","goal="..tostring(zone),"name="..tostring(zname),"range="..(range and (range[1].."-"..range[2]) or "none"),"you="..tostring(okLevel and you),"mode="..tostring(Routing:ZoneMode()),"routeMode="..tostring(Routing:RouteMode()),"default="..tostring(Routing:Config().routeMode))
+    end
     local cfg=Routing:Config()
-    add("settings","routeTerrain="..tostring(cfg.routeTerrain),"avoidWater="..tostring(cfg.avoidWater),"preferRoads="..tostring(cfg.preferRoads),
-        "risk="..tostring(cfg.risk),"enemy="..tostring(cfg.enemy),"cliffs="..tostring(cfg.cliffs))
+    add("settings","routeTerrain="..tostring(cfg.routeTerrain),"avoidWater="..tostring(cfg.avoidWater),"preferRoads="..tostring(cfg.preferRoads),"useFlights="..tostring(cfg.useFlights),
+        "risk="..tostring(cfg.risk),"enemy="..tostring(cfg.enemy),"cliffs="..tostring(cfg.cliffs),
+        "roadPercent="..tostring(cfg.roadPercent),"walkedPercent="..tostring(cfg.walkedPercent))
     -- The maps on the way (start, goal, every step's ends): cell size,
     -- clearance, source, and their data sets.
     local maps,seen={},{}
@@ -1519,7 +2218,10 @@ function N:Stamp()
     local cfg=Routing:Config()
     local db=Routing:Store()
     local data=Routing:Data()
-    local parts={tostring(Routing.offVersion),tostring(db.source),tostring(cfg.routeTerrain),tostring(cfg.avoidWater),tostring(cfg.preferRoads),
+    local roads=rawget(_G,"BVRoutingRoads")
+    local parts={tostring(Routing.offVersion),tostring(db.source),tostring(cfg.routeTerrain),tostring(cfg.avoidWater),tostring(cfg.preferRoads),tostring(cfg.useFlights),
+        tostring(cfg.roadPercent),tostring(cfg.walkedPercent),tostring(Routing:RouteMode()),tostring(Routing:ZoneMode()),Routing:ZoneMode()=="avoid" and tostring(UnitLevel and UnitLevel("player")) or "",
+        tostring(type(roads)=="table" and roads.revision),tostring(type(rawget(_G,"BVRoutingTransit"))=="table" and rawget(_G,"BVRoutingTransit").revision),
         tostring(cfg.risk),tostring(cfg.enemy),tostring(self.enemyOff),tostring(cfg.cliffs),tostring(Routing.Grid.PreferWalked and Routing.Grid.PreferWalked())}
     for _,kind in ipairs(Routing.KINDS) do
         local ids={}
@@ -1581,6 +2283,10 @@ function N:Ahead()
     local line=c.aheadOpacity/100
     return line,1-(1-line)*N.PINSHARE,c.aheadSteps
 end
+-- The points of each leg kept while nothing about it changes (Claude 2026-10-20:
+-- the minimap repaints ten times a second while you walk; new tables for every
+-- point of a long way each time also missed Core's memo of where each point lies,
+-- two client calls per point, and walking a way made the game slow).
 function N:Points()
     local out={}
     if not self.steps then return out end
@@ -1588,50 +2294,63 @@ function N:Points()
     local now=self.steps[self.current]
     local here=now and now.from.level
     local aheadLine,aheadPin,aheadSteps=self:Ahead()
+    if self.pointSteps~=self.steps then self.pointSteps,self.pointCache=self.steps,{} end
+    local cache=self.pointCache
+    local cfg=Routing:Config()
+    local colors=table.concat({tostring(cfg.colorWalk),tostring(cfg.colorFlight),tostring(cfg.colorTransport),tostring(cfg.colorTransition),tostring(cfg.colorGoal)},":")
     for i,step in ipairs(self.steps) do
         if i>=self.current then
-            local color=N:Color(step.kind)
-            local from,to=step.from,step.to
-            local dim=(from.level or 0)~=(here or 0) or nil
-            local later=i>self.current
-            local la,pa=N.Fade(i-self.current,aheadLine,aheadSteps),N.Fade(i-self.current,aheadPin,aheadSteps)
-            -- The walk you are on: from the next point ahead of you, the line
-            -- from you leading to it (Florian 2026-10-11: it led back to the
-            -- leg's start behind you). self.ahead: Tick, the path point after
-            -- the piece you are nearest to.
             local ahead=(i==self.current and step.kind=="walk" and step.path) and (self.ahead or 1) or 1
-            local lead=i==self.current and step.kind=="walk"
-            if ahead<=1 then
-                out[#out+1]={mapID=from.cont,x=from.x,y=from.y,noPin=from.kind=="start" or nil,dot=true,size=10,hollow=true,color=color,alpha=pa,lineAlpha=la,dim=dim,
+            local id=string.format("%d:%d:%s:%s:%s:%s:%s:%s",i-self.current,ahead,tostring(step.path),tostring(here),tostring(aheadLine),tostring(aheadPin),tostring(aheadSteps),colors)
+            local c=cache[i]
+            if not (c and c.id==id) then c={id=id,list=self:StepPoints(i,step,here,aheadLine,aheadPin,aheadSteps,ahead)};cache[i]=c end
+            for _,point in ipairs(c.list) do out[#out+1]=point end
+        end
+    end
+    return out
+end
+-- One leg's points for the maps (N:Points).
+function N:StepPoints(i,step,here,aheadLine,aheadPin,aheadSteps,ahead)
+    local out={}
+    local color=N:Color(step.kind)
+    local from,to=step.from,step.to
+    local dim=(from.level or 0)~=(here or 0) or nil
+    local later=i>self.current
+    local la,pa=N.Fade(i-self.current,aheadLine,aheadSteps),N.Fade(i-self.current,aheadPin,aheadSteps)
+    -- The walk you are on: from the next point ahead of you, the line
+    -- from you leading to it (Florian 2026-10-11: it led back to the
+    -- leg's start behind you). self.ahead: Tick, the path point after
+    -- the piece you are nearest to.
+    local lead=i==self.current and step.kind=="walk"
+    if ahead<=1 then
+        out[#out+1]={mapID=from.cont,x=from.x,y=from.y,noPin=from.kind=="start" or nil,dot=true,size=10,hollow=true,color=color,alpha=pa,lineAlpha=la,dim=dim,
+            lead=lead or nil,leadColor=color}
+        lead=false
+    end
+    if step.path then
+        -- Points DRAWSTEP yards apart at least (Florian 2026-10-14:
+        -- the Slaughtered Lamb's spiral, 338 points on 62 yards, was
+        -- not drawn at all: pieces of a fraction of a pixel); the
+        -- way itself keeps every point.
+        local lx,ly=step.path[math.max(1,ahead-1)][1],step.path[math.max(1,ahead-1)][2]
+        for j=math.max(2,ahead),#step.path-1 do
+            local px,py=step.path[j][1],step.path[j][2]
+            if lead or N.Yards(from.cont,lx,ly,px,py)>=N.DRAWSTEP then
+                out[#out+1]={mapID=from.cont,x=px,y=py,noPin=true,lineColor=color,lineAlpha=la,dim=dim,
                     lead=lead or nil,leadColor=color}
                 lead=false
-            end
-            if step.path then
-                -- Points DRAWSTEP yards apart at least (Florian 2026-10-14:
-                -- the Slaughtered Lamb's spiral, 338 points on 62 yards, was
-                -- not drawn at all: pieces of a fraction of a pixel); the
-                -- way itself keeps every point.
-                local lx,ly=step.path[math.max(1,ahead-1)][1],step.path[math.max(1,ahead-1)][2]
-                for j=math.max(2,ahead),#step.path-1 do
-                    local px,py=step.path[j][1],step.path[j][2]
-                    if lead or N.Yards(from.cont,lx,ly,px,py)>=N.DRAWSTEP then
-                        out[#out+1]={mapID=from.cont,x=px,y=py,noPin=true,lineColor=color,lineAlpha=la,dim=dim,
-                            lead=lead or nil,leadColor=color}
-                        lead=false
-                        lx,ly=px,py
-                    end
-                end
-            end
-            -- A teleport: no line between its ends (none to walk).
-            local jump=N.Teleport(step)
-            out[#out+1]={mapID=to.cont,x=to.x,y=to.y,dot=true,size=to.kind=="goal" and 14 or 10,hollow=true,dim=(to.level or 0)~=(here or 0) or nil,
-                color=to.kind=="goal" and N:Color("goal") or color,alpha=(later and to.kind~="goal") and pa or 1,lineColor=color,lineAlpha=jump and 0 or la,noLine=jump or nil,lead=lead or nil,leadColor=color}
-            -- The goal where the way cannot reach it (its NPC on no-go): a
-            -- small mark of its own, no line to it.
-            if to.npc then
-                out[#out+1]={mapID=to.cont,x=to.npc.x,y=to.npc.y,dot=true,size=9,color=N:Color("goal"),alpha=.8,lineAlpha=0,noLine=true,dim=(to.level or 0)~=(here or 0) or nil}
+                lx,ly=px,py
             end
         end
+    end
+    -- A teleport: no line between its ends (none to walk).
+    local jump=N.Teleport(step)
+    out[#out+1]={mapID=to.cont,x=to.x,y=to.y,dot=true,size=to.kind=="goal" and 14 or 10,hollow=true,dim=(to.level or 0)~=(here or 0) or nil,
+        color=to.kind=="goal" and N:Color("goal") or color,alpha=(later and to.kind~="goal") and pa or 1,lineColor=color,lineAlpha=jump and 0 or la,noLine=jump or nil,lead=lead or nil,leadColor=color}
+    -- The goal where the way cannot reach it (its NPC on no-go): a
+    -- small mark of its own, no line to it.
+    if to.npc then
+        out[#out+1]={mapID=to.cont,x=to.npc.x,y=to.npc.y,dot=true,size=9,color=N:Color("goal"),alpha=.8,lineAlpha=0,noLine=true,dim=(to.level or 0)~=(here or 0) or nil}
     end
     return out
 end
@@ -2038,10 +2757,20 @@ function N:Tick()
         if tp==i then return end
     end
     -- After a flight or a ride: the step whose end you are near (got off early or late).
+    -- Not while still on the flight; and that end's level must fit your height (Florian
+    -- 2026-10-19: landed on Orgrimmar's tower, the gate's bottom right below counted as
+    -- near, steps 3-8 were skipped and the way planned anew twice).
     if step.kind=="flight" or step.kind=="transport" then
-        for j=#self.steps,i,-1 do
+        if step.kind=="flight" and UnitOnTaxi and UnitOnTaxi("player") then return end
+        local H=Routing.Height
+        -- Landed where the ride ends: on with the next step (before any later end that only
+        -- lies near on the map, a level below).
+        if near(step.to,step.to.kind=="goal" and N.ARRIVE or N.REACH) then return self:Advance(i+1,"at the end of the ride") end
+        for j=#self.steps,i+1,-1 do
             local t=self.steps[j].to
-            if near(t,t.kind=="goal" and N.ARRIVE or N.REACH) then return self:Advance(j+1,"near the end of step "..j.." after the ride") end
+            if near(t,t.kind=="goal" and N.ARRIVE or N.REACH) and not (H and t.level and H:FitsLevel(t.level,cont,px,py)==false) then
+                return self:Advance(j+1,"near the end of step "..j.." after the ride")
+            end
         end
         return
     end
@@ -2101,3 +2830,37 @@ function N:Learn()
     end
 end
 if type(rawget(_G,"TaxiFrame"))=="table" then N:Learn() end
+
+-- After login (prepareAtLogin, Florian 2026-10-20): the precomputed network of both
+-- continents with its shared walks and your map data made in the background, quietly
+-- and in slices, PREPAREDELAY seconds after login. Once a session.
+N.PREPAREDELAY=5
+function N:Prepare()
+    if self.prepared or not Routing:Config().prepareAtLogin then return end
+    self.prepared=true;self.prepareState="running"
+    local T=Routing.Transit
+    if not (T and Routing.Grid and Routing.Grid.Run) then return end
+    local conts={}
+    for _,c in ipairs({1414,1415}) do if T:Usable(c) then conts[c]=true end end
+    Routing.Grid.Run(function()
+        local began=GetTime()
+        local n=N:SeedTransit({},conts)
+        Routing:Data()
+        N.preparedIn=GetTime()-began
+        return n
+    end,function(n) N.preparedWalks=n;N.prepareState=string.format("done in %.1f s",N.preparedIn or 0) end,false)
+end
+-- After login, as Core itself: the subscription goes when it fired (Core's checks count
+-- open subscriptions and timers); a one-shot timer where the client has one.
+local function prepareLater()
+    local after=C_Timer and C_Timer.After
+    if after then after(N.PREPAREDELAY,function() N:Prepare() end) end
+end
+if IsLoggedIn and IsLoggedIn() then prepareLater()
+elseif ns.Events then
+    local stop
+    stop=ns.Events:Subscribe(N,"PLAYER_LOGIN",function()
+        if stop then stop();stop=nil end
+        prepareLater()
+    end)
+end

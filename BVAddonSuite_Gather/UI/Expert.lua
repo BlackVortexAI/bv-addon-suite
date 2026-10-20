@@ -17,7 +17,7 @@ X.VALUES={
     {"trim","Plan","TRIM",10,0,20,1,"%d yd","Side trip shortened by","A stop off the main way is reached and left by one way; its tip is shortened by this much (following counts a point reached at 20 yd). 0: to the stop itself."},
     {"worthRun","Plan","WORTHRUN",8,1,15,1,"%d","Stops checked together","\"Way per node\" looks at runs of up to this many neighbouring stops."},
     {"known","Plan","KNOWN",.5,0,1,.05,"x%.2f","Known spawn weight","How much a known spawn you never found counts for \"Way per node\" (1 = like your own find)."},
-    {"road","Grid","ROAD",.6,.3,1,.05,"x%.2f","Road and walked way cost","Ground cost on roads and often walked ways (1 = like any other ground)."},
+    -- Roads and walked ways: Routing's own sliders since Routing 0.1.5 (Florian 2026-10-16).
     {"steep","Grid","STEEP",8,2,20,.5,"x%.1f","Steep slope cost","Cost of a steep slope you can still walk."},
     {"swim","Grid","SWIM",6,1,20,.5,"x%.1f","Swimming cost","Cost of swimming water with \"Avoid water\" on."},
     {"clear","Grid","CLEAR",1.25,1,3,.05,"x%.2f","Straight line up to","A leg goes straight when no cell on the line costs more than this; otherwise the way round is searched."},

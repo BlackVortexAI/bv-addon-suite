@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.2.5","0.8.96",1) then return end
+if not ns:RequireCore(package,"0.2.7","0.8.96",1) then return end
 -- Map package (docs/map-quest-concept.md, own package by Florian's choice on
 -- 2026-10-08): coordinates, transparency while moving, map size and position,
 -- waypoints. Blizzard's map is never replaced; other map addons keep working.
@@ -39,6 +39,11 @@ P.DEFAULTS={enabled=false,
     -- Travel path (phase 2b): pins and lines for the queue, Alt+click adds,
     -- shared paths from others (always with a preview).
     pathPins=true,altClick=true,shareReceive=true,
+    -- Ctrl+Shift+click: Routing's way there, when BV Routing is loaded; and
+    -- the clicks the map knows, written small at its bottom (Florian 2026-10-16).
+    routeClick=true,legend=true,
+    -- Small arrows at the map's edges to the next zone (Florian 2026-10-16).
+    neighbors=true,
     -- Path colours (hex RRGGBB): empty = the style's accent; the next target.
     pathColor="",nextColor="5FD16B",
     -- The leg from you to the next target as its own line (with arrows).
@@ -78,7 +83,7 @@ function P:Config()
     end
     for key,value in pairs(self.DEFAULTS) do if cfg[key]==nil then cfg[key]=type(value)=="table" and {} or value end end
     for key,valid in pairs(CHOICES) do if not valid[cfg[key]] then cfg[key]=self.DEFAULTS[key] end end
-    for _,key in ipairs({"coords","coordsPlayer","coordsCursor","fade","fadeMouseover","movable","corpse","arrow","rememberZoom","search","forceMove","forceScale","forceCoords","zoneQuests","zoneDiscovered","pathPins","altClick","shareReceive","unexplored","forceReveal","ownFlights","pathLead","learnFlights"}) do cfg[key]=cfg[key]==true end
+    for _,key in ipairs({"coords","coordsPlayer","coordsCursor","fade","fadeMouseover","movable","corpse","arrow","rememberZoom","search","forceMove","forceScale","forceCoords","zoneQuests","zoneDiscovered","pathPins","altClick","routeClick","legend","neighbors","shareReceive","unexplored","forceReveal","ownFlights","pathLead","learnFlights"}) do cfg[key]=cfg[key]==true end
     cfg.coordsDecimals=num(cfg.coordsDecimals,1,0,2);cfg.fadeOpacity=num(cfg.fadeOpacity,45,10,100)
     -- Fade time in tenths of a second (0.1 .. 1.0 s).
     cfg.terrainAlpha=num(cfg.terrainAlpha,100,20,100)
@@ -114,6 +119,8 @@ function P:Locate()
 end
 function P:MapButton(parent,icon,callback)
     local button=ns.UI:IconButton(parent,icon,callback)
+    local strata=self:MapStrata()
+    if strata then button:SetFrameStrata(strata) end
     button:SetFrameLevel(self.BUTTONLEVEL)
     button.bvMapButton=true
     ns.DesignSystem.Metrics.Size(button,34,34)
@@ -132,6 +139,27 @@ end
 function P:Family() return ns.Styles:Family(self.ID) end
 function P:Print(text) ns:Print(text,"Map") end
 function P:WorldMap() return rawget(_G,"WorldMapFrame") end
+-- Our things on the map above the map's own pins (Florian 2026-10-16: a
+-- neighbour zone's highlight lay over the arrow; the canvas gives its pins
+-- high frame levels): this far above the map's scroll frame, kept so.
+P.ABOVEPINS=2000
+-- The map window's frame (BorderFrame and its NineSlice edges) lies in a
+-- higher strata than the canvas (Florian's /fstack 2026-10-16: HIGH, level
+-- 500, over the arrows and buttons): ours go into that strata too.
+function P:MapStrata()
+    local map=self:WorldMap()
+    local border=map and map.BorderFrame
+    local strata=border and border.GetFrameStrata and border:GetFrameStrata()
+    local level=border and border.GetFrameLevel and border:GetFrameLevel() or 0
+    local nine=border and border.NineSlice
+    if nine and nine.GetFrameLevel then level=math.max(level,nine:GetFrameLevel()) end
+    return strata,level
+end
+function P:AbovePins(frame,parent)
+    local strata,level=self:MapStrata()
+    if strata then frame:SetFrameStrata(strata) end
+    frame:SetFrameLevel(math.min(9000,math.max((parent or frame:GetParent()):GetFrameLevel()+self.ABOVEPINS,level+10)))
+end
 -- Client calls through one place so tests and missing APIs never fault.
 function P.Call(path,...)
     local f=_G
@@ -166,6 +194,7 @@ ns.Modules:Register({id=P.ID,OnEnable=function(context)
     context:Defer(function() P.context=nil end)
     P:Config()
     P.Coords:Enable(context)
+    P.Neighbors:Enable(context)
     P.Fade:Enable(context)
     P.Window:Enable(context)
     P.Waypoints:Enable(context)
