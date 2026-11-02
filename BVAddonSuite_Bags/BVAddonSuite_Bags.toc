@@ -1,9 +1,16 @@
 ## Interface: 16001
 ## Title: BV Addon Suite - Bags
-## Notes: Skinned, movable bag bar with an optional one-button mode. Requires BV Core.
+## Notes: Custom inventory with item categories, labels and stock counters, plus a movable bag bar. Requires BV Core.
 ## Author: BV
-## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.8.92
+## IconTexture: Interface\AddOns\BVAddonSuite_Bags\Media\Brand\module-icon
+## Version: 0.8.116
 ## Dependencies: BVAddonSuite
 
 Bags.lua
+InventoryRules.lua
+Inventory.lua
+UI\InventoryEditor.lua
+UI\InventoryLabels.lua
+UI\InventorySplit.lua
+UI\InventoryView.lua
+UI\InventoryRelief.lua

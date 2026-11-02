@@ -4,7 +4,11 @@ local _,ns=...
 local UI,N,D=ns.UI,ns.NativeButtons,ns.DesignSystem.Metrics
 function UI:NativeBarPage(parent,bar,extra)
     local def=bar.def
-    local page=UI:Panel(parent,880,600,"surface");UI:HideSurface(page)
+    -- Interface opt-in (2026-10-26, Config interfaceSettings): the page is built
+    -- in the captured Interface context like Gather and BarConfig. Hidden hosts
+    -- are neutral frames; controls keep the explicit/ambient captured style.
+    local pageStyle=UI:GetStyle();local interface=pageStyle.materialProfile=="interface"
+    local page=UI:Container(parent,880,600,pageStyle)
     local grid=UI:SettingsGrid(page);page.grid=grid
     local function changed() bar:Changed() end
     local function cfg() return bar:Config() end
@@ -13,6 +17,31 @@ function UI:NativeBarPage(parent,bar,extra)
     function page:Row(title,control,note,opts)
         opts=opts or {};opts.help=opts.help or note
         return grid:Row(title,control,opts)
+    end
+    -- A neutral container for package rows (a group of controls in one row):
+    -- never a painted surface, in either context. Interface families differ in
+    -- control height (22 to 30) and switch width; their hosts are fitted to the
+    -- real children on every Arrange. Legacy keeps the caller's fixed geometry.
+    local hosts={}
+    function page:Host(width,height)
+        local host=UI:Container(grid,width,height,pageStyle)
+        if interface then host.bvMinWidth=width;hosts[#hosts+1]=host end
+        return host
+    end
+    local function fit(host)
+        local children={host:GetChildren()};local height=0
+        for _,child in ipairs(children) do height=math.max(height,D.GetHeight(child)) end
+        if height<=0 then return end
+        -- Left to right in the caller's order and spacing; a wider control
+        -- pushes the next one instead of overlapping it.
+        table.sort(children,function(a,b) return D.ToDesign(select(4,a:GetPoint()) or 0)<D.ToDesign(select(4,b:GetPoint()) or 0) end)
+        local right=0
+        for index,child in ipairs(children) do
+            local x=D.ToDesign(select(4,child:GetPoint()) or 0)
+            if index>1 and x<right+6 then x=right+6 end
+            UI:Place(child,host,x,(height-D.GetHeight(child))/2);right=x+D.GetWidth(child)
+        end
+        D.Size(host,math.max(host.bvMinWidth,right),height)
     end
     page:Section("module","Module")
     page.enabled=page:Row("Enabled",UI:Switch(grid,false,function(value)
@@ -36,6 +65,8 @@ function UI:NativeBarPage(parent,bar,extra)
         "Solid background behind the whole bar, instead of Blizzard's bar art.")
     page.barColor=page:Row("Bar background color",UI:ColorInput(grid,150,function(value) cfg().barColor=value;changed() end),
         "Color and opacity of the bar background.",{width=150})
+    -- The picker opens later from an ambient context: bind this page's context (RGBA kept).
+    if interface then page.barColor.bvColorOptions={style=pageStyle} end
     page.blizzardFrame=page:Row("Show Blizzard bar frame",UI:Switch(grid,false,function(value) cfg().blizzardFrame=value;changed() end),
         "Blizzard's frame and dividers of the original bar. Hidden while this module runs unless switched on.")
     page.spacing=page:Row("Spacing",UI:InlineSlider(grid,190,0,12,1,"%d px",function(value) cfg().spacing=value;changed() end),
@@ -52,7 +83,9 @@ function UI:NativeBarPage(parent,bar,extra)
     if extra then extra(page,cfg,changed) end
     function page:Arrange(width)
         UI:Place(grid,self,0,0)
-        local height=grid:Arrange(width)+8
+        for _,host in ipairs(hosts) do fit(host) end
+        -- Interface pages keep the approved 10-unit scroll reserve (as Gather).
+        local height=grid:Arrange(interface and math.max(1,width-10) or width)+8
         D.Height(self,height);return height
     end
     function page:Refresh()
@@ -64,6 +97,23 @@ function UI:NativeBarPage(parent,bar,extra)
         self.background:SetValue(c.background);self.border:SetValue(c.border);self.blizzardFrame:SetValue(c.blizzardFrame)
         self.barBackground:SetValue(c.barBackground);self.barColor:SetValue(c.barColor)
         if self.RefreshExtra then self:RefreshExtra(c) end
+    end
+    if interface then
+        -- Profile change or hide closes only this page's own menus and picker.
+        local function owned(owner)
+            if not owner then return false end
+            for _,item in ipairs(grid.items)do if item.control==owner then return true end end
+            return false
+        end
+        local function cancelOwnedMenu()
+            if UI.dropdown and owned(UI.dropdown.owner) then UI:CloseDropdown() end
+            if UI.colorPopup and owned(UI.colorPopup.owner) then UI.colorPopup:Hide() end
+        end
+        local dispose
+        local function watch() if not dispose then dispose=ns.Settings:BeforeProfileChange(page,cancelOwnedMenu) end end
+        page:HookScript("OnShow",watch)
+        page:HookScript("OnHide",function() cancelOwnedMenu();if dispose then dispose();dispose=nil end end)
+        if page:IsVisible() then watch() end
     end
     page:Arrange(880);page:Refresh()
     return page

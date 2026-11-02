@@ -123,8 +123,16 @@ end
 local MODULE_FONT,CATEGORY_FONT="Style family font","Same as Combat Text"
 local page
 local function build(parent)
-    page=UI:Panel(parent,880,600,"surface");UI:HideSurface(page)
+    local pageStyle=UI:GetStyle();local interface=pageStyle.materialProfile=="interface"
+    -- A page host owns layout/context only; it allocates no hidden material.
+    page=UI:Container(parent,880,600,pageStyle)
     local g=UI:SettingsGrid(page);page.grid=g
+    -- These modules persist RGBA, including alpha; only the popup style is captured.
+    local function colorInput(callback)
+        local field=UI:ColorInput(g,150,callback)
+        if interface then field.bvColorOptions={style=pageStyle}end
+        return field
+    end
     local controls,styleControls={},{}
     local function cfg() return L:Config() end
     local function set(key) return function(value) cfg()[key]=value;L:Changed() end end
@@ -166,21 +174,22 @@ local function build(parent)
     local scopeControls={}
     for _,kind in ipairs(L.CONTENT_TYPES) do
         local text=SCOPE_TEXT[kind]
-        scopeControls[kind]=g:Row(text[1],UI:Dropdown(g,190,SCOPES,function(value) cfg().whose[kind]=value end),{help=text[2]..SCOPE_NOTE})
+        scopeControls[kind]=g:Row(text[1],UI:Dropdown(g,190,SCOPES,function(value) cfg().whose[kind]=value end),{help=text[2]..SCOPE_NOTE,width=interface and 180 or nil})
     end
     row("pet","Your pet",UI:Dropdown(g,190,PETS,set("pet")),
         "Hits Combat Text knows as your pet's: a spell your pet just cast whose damage type matches the hit (e.g. the imp's Firebolt), with that spell's icon. As mine: like your hits. Dimmed: in the color and opacity of others. Hidden: not shown. Your pet's melee is not told apart yet.")
     row("foreignTint","Others in own color",UI:Switch(g,true,set("foreignTint")),
         "With \"Mine, others dimmed\": hits of others use the color below instead of their damage type color.")
-    row("foreignColor","Color of others",UI:ColorInput(g,150,set("foreignColor")),"Used when \"Others in own color\" is on.",{width=150})
+    row("foreignColor","Color of others",colorInput(set("foreignColor")),"Used when \"Others in own color\" is on.",{width=150})
     row("foreignAlpha","Opacity of others",UI:InlineSlider(g,190,.1,1,.05,"x%.2f",set("foreignAlpha")),
         "With \"Mine, others dimmed\": hits of others are drawn with this opacity (1 = solid).")
     -- Combat Log signal (Log.lua): status and the two setup steps, checked live.
-    g:Section("combatlog","Your hits from the Combat Log")
+    g:Section("combatlog","Your hits from the Combat Log",interface and {wide=true}or nil)
     local logRows={}
     page.logRows=logRows
     local function info(title,help)
         local label=UI:Label(g,"",13,"text",false)
+        if interface then label:SetWordWrap(true)end
         g:Row(title,label,{width=440,help=help})
         return label
     end
@@ -222,14 +231,14 @@ local function build(parent)
     g:Section("schools","Damage types")
     local schoolControls={}
     for _,bit in ipairs({1,2,4,8,16,32,64}) do
-        schoolControls[bit]=g:Row(L.Format.SchoolName(bit),UI:ColorInput(g,150,function(value) cfg().schoolColors[bit]=value end),
+        schoolControls[bit]=g:Row(L.Format.SchoolName(bit),colorInput(function(value) cfg().schoolColors[bit]=value end),
             {help="Color of this damage type for \"School colors\" and the damage type text.",width=150})
     end
     row("bleed","Bleed color",UI:Switch(g,false,set("bleed")),
         "Your bleed ticks (Rake, Rip, Rend, Garrote, Rupture) in their own color. The game reports bleeds as physical damage, so Combat Text recognises them from your own casts and their tick rhythm, as the spell guess does (works without turning it on). Only ticks it can pin on one bleed are colored; Rake's ticks need the Combat Log set up, because its first hit is physical too. Bleeds of others, Pounce and Deep Wounds keep the normal color.")
-    row("bleedColor","Bleed",UI:ColorInput(g,150,set("bleedColor")),"Color of your bleed ticks.",{width=150})
+    row("bleedColor","Bleed",colorInput(set("bleedColor")),"Color of your bleed ticks.",{width=150})
     -- Custom animation editor: one animation and one point at a time.
-    g:Section("custom","Custom animations")
+    g:Section("custom","Custom animations",interface and {wide=true}or nil)
     local edit={index=1,point=1}
     page.edit=edit
     local ec={}
@@ -307,7 +316,7 @@ local function build(parent)
         list.font:SetOptionsProvider(function() return fonts(CATEGORY_FONT) end)
         srow("size","Font size",UI:InlineSlider(g,190,8,64,1,"%d",sset("size")),"Size of normal hits.")
         if L.CRIT_CATEGORIES[name] then srow("crit","Crit size",UI:InlineSlider(g,190,1,3,.1,"x%.1f",sset("crit")),"Crits are this much larger.") end
-        srow("color","Color",UI:ColorInput(g,150,sset("color")),"Text color.",{width=150})
+        srow("color","Color",colorInput(sset("color")),"Text color.",{width=150})
         if name=="outgoing" then srow("school","School colors",UI:Switch(g,true,sset("school")),"Fire orange, frost blue and so on instead of the color above.") end
         -- 0.7.12 (a CurseForge wish): damage you take by its school too.
         if name=="incoming" then srow("school","School colors",UI:Switch(g,true,sset("school")),"Fire orange, frost blue, nature green (poisons), shadow purple (most curses) and so on; physical damage keeps the color above.") end
@@ -317,15 +326,30 @@ local function build(parent)
         end
         if name=="kill" then
             -- Core's sound picker, as the minimap scanner's: the game's sounds or SharedMedia's, with a preview.
-            local button
+            local button,ownedPicker
             button=UI:Button(g,"",190,function()
                 local s=L.CleanSound(style().sound) or L.KILL_SOUND
                 if L.soundPicker then L.soundPicker:Hide() end
-                L.soundPicker=UI:SoundPicker(page,{source=s.source,soundKit=s.soundKit or L.KILL_SOUND.soundKit,sound=s.sound,channel="Master",volume=100},function(value,source)
-                    style().sound=source=="sharedmedia" and {source="sharedmedia",sound=value} or {source="soundkit",soundKit=value}
-                    L:Changed();button:SetValue(style().sound);L.PlayKillSound(style().sound)
-                end,{sources=true})
+                local lease={active=true};local category=style()
+                local function open()
+                    return UI:SoundPicker(page,{source=s.source,soundKit=s.soundKit or L.KILL_SOUND.soundKit,sound=s.sound,channel="Master",volume=100},function(value,source)
+                        if interface and (not lease.active or not button:IsVisible() or style()~=category)then return end
+                        style().sound=source=="sharedmedia" and {source="sharedmedia",sound=value} or {source="soundkit",soundKit=value}
+                        L:Changed();button:SetValue(style().sound);L.PlayKillSound(style().sound)
+                    end,{sources=true,escapeScope=interface or nil})
+                end
+                L.soundPicker=interface and UI:WithStyle(pageStyle,open)or open()
+                if interface then
+                    ownedPicker=L.soundPicker
+                    local dialog=ownedPicker
+                    local dispose=ns.Settings:BeforeProfileChange(dialog,function()dialog:Hide()end)
+                    dialog:HookScript("OnHide",function()
+                        lease.active=false;dispose()
+                        if ownedPicker==dialog then ownedPicker=nil end
+                    end)
+                end
             end)
+            if interface then button:HookScript("OnHide",function()if ownedPicker then ownedPicker:Hide()end end)end
             function button:SetValue(value) self:SetText(L.SoundLabel(value)) end
             srow("sound","Sound",button,"The killing blow sound: the game's own or one from SharedMedia (other addons bring them). Choose one with a preview.")
             g:Row("",UI:Button(g,"Play the sound",190,function() L.PlayKillSound(style().sound) end),{help="Plays the killing blow sound once."})
@@ -377,7 +401,24 @@ local function build(parent)
     function page:Arrange(width)
         self.width=width
         UI:Place(g,self,0,0)
-        local height=g:Arrange(width)+8
+        local inner=interface and math.max(1,width-10)or width
+        if interface then
+            for _,label in pairs(logRows)do
+                local row=label.bvGridRow
+                local titleWidth=math.ceil(D.ToDesign(row.label:GetUnboundedStringWidth()))+2
+                row.width=math.min(440,math.max(100,inner-2*UI.InterfaceSettingsMetrics.PAD-12-titleWidth))
+            end
+        end
+        local height=g:Arrange(inner)+8
+        if interface then
+            -- Status messages are live text, not fixed-height inputs. Reflow after
+            -- the card establishes their available width, including narrow windows.
+            for _,label in pairs(logRows)do
+                local h=math.max(18,D.ToDesign(label:GetStringHeight()))
+                D.Height(label,h);label.bvGridRow.height=h+10
+            end
+            height=g:Arrange(inner)+8
+        end
         D.Height(self,height);return height
     end
     function page:Refresh()
@@ -395,7 +436,7 @@ local function build(parent)
     select("general");page:Refresh()
     return page
 end
-ns.Config:RegisterPage("combattext",{title="Combat Text",description="Floating damage, heal and avoidance numbers with animations.",
+ns.Config:RegisterPage("combattext",{interfaceSettings=true,title="Combat Text",description="Floating damage, heal and avoidance numbers with animations.",
     build=function(parent) return page or build(parent) end,
     refresh=function() if page then page:Refresh() end end})
 

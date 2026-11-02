@@ -14,6 +14,7 @@ local function at(w,p,x,y) M.Point(w,"TOPLEFT",p,"TOPLEFT",x,-y); return w end
 function UI:TransferText(parent,width,height,maxLetters,changed)
     local style=self:GetStyle()
     local form=CreateFrame("Frame",nil,parent); M.Size(form,width-22,height)
+    form.interfaceInputSurface=true
     style:Skin(form,"bg",4,.85); form.surfacePaintOwned=true
     local scroll=CreateFrame("ScrollFrame",nil,form); form.scroll=scroll
     local visible=height-4

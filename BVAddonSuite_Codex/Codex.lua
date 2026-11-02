@@ -1,11 +1,11 @@
 local package,C=...
 local ns=BVAddonSuiteCore
 if not ns or not ns.RequireCore then
-    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.101 or newer. Update Core; saved data is preserved.") end
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.113 or newer. Update Core; saved data is preserved.") end
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.1.2","0.8.101",1) then return end
+if not ns:RequireCore(package,"0.1.5","0.8.113",1) then return end
 -- Codex (Florian 2026-10-11, docs/codex-concept.md): find anything, like
 -- Spotlight or EasyFind, and put several places into a tour that BV Routing
 -- leads you through the shortest way. Files fill C: Codex (this: the places
@@ -74,7 +74,7 @@ local function rows(d,key,cont)
     end
 end
 local function shares(a,b) return (a%2==1 and b%2==1) or (math.floor(a/2)%2==1 and math.floor(b/2)%2==1) end
-C.CONTINENTS={1414,1415}
+C.CONTINENTS={1414,1415,2665}
 -- The capitals: Stormwind, Ironforge, Darnassus, Orgrimmar, Thunder Bluff, Undercity.
 C.CITY={[1453]=true,[1455]=true,[1457]=true,[1454]=true,[1456]=true,[1458]=true}
 -- Whose capital (C.Faction: 1 Horde, 2 Alliance).

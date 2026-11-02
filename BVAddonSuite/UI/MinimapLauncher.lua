@@ -66,18 +66,23 @@ local function symbol(texture,name)
 end
 function Launcher:Menu(button)
     local menu=self.menu
+    local style=menu and menu.bvStyle or (ns.Config and ns.Config:EnsureShellStyle()) or UI:GetStyle()
+    local function make(method,...)
+        local args,n={...},select("#",...)
+        return UI:WithStyle(style,function()return UI[method](UI,unpack(args,1,n))end)
+    end
     if not menu then
-        menu=UI:Panel(UIParent,WIDTH,40,"surface");menu:SetFrameStrata("TOOLTIP");menu:EnableMouse(true);menu:Hide()
+        menu=make("Panel",UIParent,WIDTH,40,style.materialProfile=="interface" and "bg" or "surface",nil,style.materialProfile=="interface" and .98 or nil);menu.bvStyle=style;menu:SetFrameStrata("TOOLTIP");menu:EnableMouse(true);menu:Hide()
         -- The soft shadow of the windows (Florian 2026-10-11, finer).
         local DS=ns.DesignSystem
         if DS.Slice and DS.SHADOW then DS.Slice(menu,DS.SHADOW,DS.SHADOWCORNER*.6,"BACKGROUND",-2,DS.SHADOWEXPAND*.6) end
+        ns.InterfaceSurfaces:AttachMenu(style,menu)
         menu.rows,menu.heads={},{}
         menu:SetScript("OnLeave",function() Launcher:Leave() end)
         menu:SetScript("OnEnter",function() Launcher:Stay() end)
         menu:HookScript("OnHide",function() Launcher:Stay();Launcher.held=nil end)
         self.menu=menu
     end
-    local style=UI:GetStyle()
     local y,rows,heads,count=-6,0,0,0
     for _,part in ipairs(self:Grouped()) do
         if part.group.label then
@@ -85,8 +90,8 @@ function Launcher:Menu(button)
             local head=menu.heads[heads]
             if not head then
                 head=CreateFrame("Frame",nil,menu);M.Size(head,WIDTH-16,HEAD)
-                head.text=UI:Label(head,"",9,"muted",true);M.Point(head.text,"LEFT",head,"LEFT",4,0)
-                head.rule=head:CreateTexture(nil,"ARTWORK");head.rule:SetColorTexture(style:Color("text",.08))
+                head.text=make("Label",head,"",9,"muted",true);M.Point(head.text,"LEFT",head,"LEFT",4,0)
+                head.rule=head:CreateTexture(nil,"ARTWORK");style:Bind(function()head.rule:SetColorTexture(style:Color("text",.08))end,head)
                 M.Point(head.rule,"LEFT",head.text,"RIGHT",6,0);M.Point(head.rule,"RIGHT",head,"RIGHT",0,0);M.Height(head.rule,1)
                 menu.heads[heads]=head
             end
@@ -98,14 +103,17 @@ function Launcher:Menu(button)
             rows=rows+1;count=count+1
             local row=menu.rows[rows]
             if not row then
-                row=UI:Button(menu,"",WIDTH-8,function(own) Launcher:Choose(own.entry) end,"ghost")
-                row:SetLabelInsets(30,48,"LEFT");M.Height(row,ROW)
+                row=make("Button",menu,"",WIDTH-8,function(own) Launcher:Choose(own.entry) end,style.materialProfile=="interface" and "menu" or "ghost")
+                row:SetLabelInsets(30,48,"LEFT")
                 row.glyph=row:CreateTexture(nil,"OVERLAY");M.Size(row.glyph,14,14);M.Point(row.glyph,"LEFT",row,"LEFT",10,0)
-                row.switch=UI:Switch(row,false);row.switch:EnableMouse(false);M.Point(row.switch,"RIGHT",row,"RIGHT",-8,0)
+                row.switch=make("Switch",row,false);row.switch:EnableMouse(false);M.Point(row.switch,"RIGHT",row,"RIGHT",-8,0)
                 row:HookScript("OnLeave",function() Launcher:Leave() end)
                 row:HookScript("OnEnter",function() Launcher:Stay() end)
+                style:Bind(function()row.glyph:SetVertexColor(style:Color("muted"))end,row)
                 menu.rows[rows]=row
             end
+            local rowHeight=math.max(ROW,M.GetHeight(row.switch)+4)
+            M.Height(row,rowHeight)
             row.entry=entry
             row:SetLabelText(entry.label)
             symbol(row.glyph,entry.icon)
@@ -114,13 +122,13 @@ function Launcher:Menu(button)
             row.switch:SetShown(state~=nil)
             if state~=nil and row.switch.SetValue then row.switch:SetValue(state==true) end
             row:ClearAllPoints();M.Point(row,"TOPLEFT",menu,"TOPLEFT",4,y);row:Show()
-            y=y-ROW
+            y=y-rowHeight
         end
     end
     for i=rows+1,#menu.rows do menu.rows[i]:Hide() end
     for i=heads+1,#menu.heads do menu.heads[i]:Hide() end
     if not menu.hint then
-        menu.hint=UI:Label(menu,"Click: settings  ·  Right-click: AuraStudio  ·  Drag: move",9,"muted")
+        menu.hint=make("Label",menu,"Click: settings  ·  Right-click: AuraStudio  ·  Drag: move",9,"muted")
         M.Point(menu.hint,"BOTTOMLEFT",menu,"BOTTOMLEFT",10,4);M.Size(menu.hint,WIDTH-16,24);menu.hint:SetWordWrap(true)
     end
     -- The hints are the minimap button's (another button opening it: none).
@@ -189,6 +197,7 @@ function Launcher:Initialize()
     self.object.iconR,self.object.iconG,self.object.iconB=1,1,1
     self.object.OnClick=function(_,button) ns:Call("minimap",function() self:Click(button) end) end
     self.object.OnEnter=function(button)
+        button.bvTooltipStyle=button.bvTooltipStyle or ns.Config:EnsureShellStyle() or UI:ToolStyle()
         local studio=ns.AuraStudio
         local standalone=studio and Launcher:StudioOnly()
         UI:ShowTooltip(button,"BV Addon Suite",(standalone and "Left-click: AuraStudio" or "Left-click: Addon Suite")..
@@ -204,6 +213,14 @@ function Launcher:Initialize()
     end
     if not self.library:IsRegistered(self.name) then self.library:Register(self.name,self.object,self:Store()) end
     local button=self.library:GetMinimapButton(self.name)
+    local style=UI:InterfaceStyle()
+    if style then
+        style:Bind(function()
+            local r,g,b=style:Color("accent")
+            self.object.iconR,self.object.iconG,self.object.iconB=r,g,b
+            button.icon:SetVertexColor(r,g,b,1)
+        end,button.icon)
+    end
     button:HookScript("OnHide",function() self:StopDrag(); UI:HideTooltip() end)
     ns.Settings:BeforeProfileChange(self,function() self:StopDrag(); UI:HideTooltip() end)
     ns.Settings:AfterProfileChange(self,function() self:Refresh() end)

@@ -6,6 +6,23 @@ ns.LayoutEditor=Editor
 local function at(w,p,x,y) return UI:Place(w,p,x,y) end
 local function opts(values) local out={}; for _,v in ipairs(values) do out[#out+1]={value=v,label=v} end; return out end
 local INSPECTOR_TOP,INSPECTOR_HEIGHT=76,680
+local function container(style,parent,width,height)
+    if style and style.materialProfile=="interface" then local host=CreateFrame("Frame",nil,parent);D.Size(host,width,height);return host end
+    local host=UI:Panel(parent,width,height,"surface");UI:HideSurface(host);return host
+end
+local function flat(line)
+    if line.SetSnapToPixelGrid then line:SetSnapToPixelGrid(false)end
+    if line.SetTexelSnappingBias then line:SetTexelSnappingBias(0)end
+    return line
+end
+function Editor:PaintMover(mover,id)
+    local style=self.style
+    if self.presentation then ns.LayoutEditorMaterials.Mover(self,mover,id)
+    elseif style and style.materialProfile=="interface" then
+        mover:PaintSurface({style:Color("bg")},{style:Color(id==self.selected and "accentText" or "controlEdge")},1)
+        mover.fill:SetShown(self.overlays)
+    else for _,line in ipairs(mover.edges)do line:SetColorTexture(ns.Theme:Color(id==self.selected and "accent" or "edge"))end end
+end
 function Editor:Message(text) self.message:SetText(text or "") end
 function Editor:SetGridSize(value)
     self:StopDrag(); ns.Settings:Set("gridSize",value); self.gridSize=value; self:Grid()
@@ -43,6 +60,7 @@ function Editor:SetView(mode)
     self.inspectorSelection=nil;for _,id in ipairs(L.order) do L.elements[id].preview(self:InView(id),self.overlays) end;self:Refresh()
 end
 function Editor:PositionInspector(rects)
+    if self.presentation then return end
     local drag=self.drag and self.drag.id==self.selected and self.drag
     if self.inspectorSelection==self.selected and not drag then return end
     self.inspectorSelection=self.selected
@@ -362,7 +380,7 @@ function Editor:Refresh()
         mover:SetShown(self:InView(id))
         local minimum=L.elements[id].anchorPoint and 32 or 16
         mover:ClearAllPoints(); mover:SetPoint("CENTER",UIParent,"CENTER",r.x,r.y); mover:SetSize(math.max(minimum,r.width),math.max(minimum,r.height))
-        for _,line in ipairs(mover.edges) do line:SetColorTexture(ns.Theme:Color(id==self.selected and "accent" or "edge")) end
+        self:PaintMover(mover,id)
         mover.title:SetText(L.elements[id].label..(L.elements[id].enabled() and "" or "  /  disabled preview"))
         mover.fill:SetShown(self.overlays)
         -- Display captions follow the selected grip; ordinary bars keep centered labels.
@@ -390,7 +408,7 @@ function Editor:Refresh()
         if target and not warnings[id] and self:InView(id) and (not L.elements[link.target] or self:InView(link.target)) then
             local connector=self.connectors[id]
             if not connector then
-                connector=UI:AnchorConnector(self.root); connector:SetFrameLevel(self.root:GetFrameLevel()+6)
+                connector=UI:WithStyle(self.style,function()return UI:AnchorConnector(self.root)end); connector:SetFrameLevel(self.root:GetFrameLevel()+6)
                 self.connectors[id]=connector
             end
             connector:SetGeometry(rects[id],target,link.side,id==self.selected or link.target==self.selected)
@@ -401,7 +419,7 @@ function Editor:Refresh()
     local elements={}
     for _,id in ipairs(L.order) do if self:InView(id) then elements[#elements+1]={value=id,label=L.elements[id].label} end end
     self.elementSelect:SetOptions(elements); self.elementSelect:SetValue(self.selected)
-    if not self.selected then return end
+    if not self.selected then if self.presentation then self.presentation:Refresh(rects)end;return end
     local n=L:Get(self.selected); local rect=rects[self.selected]
     local fullTitle=L.elements[self.selected].label
     UI:FitCaption(self.title,fullTitle,D.ToNative(288))
@@ -483,22 +501,28 @@ function Editor:Refresh()
     end
     if warnings[self.selected] then self:Message(warnings[self.selected]) end
     D.Height(self.inspector,self.inspectorHeight); UI:FitWindow(self.inspector,320,self.inspectorHeight,ns.Settings:Get("scale"))
-    UI:FitWindow(self.toolbar,1180,70,ns.Settings:Get("scale"))
+    UI:FitWindow(self.toolbar,1180,self.toolbarHeight or 70,ns.Settings:Get("scale"))
     UI:FitWindow(self.confirm,420,130,ns.Settings:Get("scale"))
     UI:FitWindow(self.deleteDialog,520,350,ns.Settings:Get("scale"))
-    self:PositionInspector(rects)
+    if self.presentation then self.presentation:Refresh(rects)else self:PositionInspector(rects)end
 end
 function Editor:Build()
     if self.root then return end
+    local captured=UI:InterfaceStyle();if not captured then return end
+    self.style=captured
+    local style=self.style;local interface=style.materialProfile=="interface"
+    return UI:WithStyle(style,function()
     local root=CreateFrame("Frame","BVAddonSuiteLayoutEditor",UIParent); root:Hide(); root:SetAllPoints(UIParent)
     root:SetFrameStrata("FULLSCREEN_DIALOG"); root:EnableMouse(true); root:EnableKeyboard(true)
     root:SetScript("OnKeyDown",function(self,key)
         self:SetPropagateKeyboardInput(key~="ESCAPE")
         if key=="ESCAPE" then
-            if Editor.cleanupTarget then Editor:CancelCleanup()
+            if Editor.presentation and Editor.confirm:IsShown()then Editor.confirm:Hide()
+            elseif Editor.cleanupTarget then Editor:CancelCleanup()
             elseif Editor.deleteTarget then Editor:CancelAnchorDelete()
             elseif UI.dropdown and UI.dropdown:IsShown() then UI:CloseDropdown()
             elseif Editor.picking then Editor.picking=nil; Editor:Message(""); Editor:Refresh()
+            elseif Editor.presentation and Editor.presentation:CloseTools()then
             else Editor:RequestClose() end
         end
     end)
@@ -518,15 +542,17 @@ function Editor:Build()
             for pos=-math.floor(length/2/self.gridSize)*self.gridSize,length/2,self.gridSize do
                 count=count+1; local line=self.grid[count]
                 if not line then line=root:CreateTexture(nil,"BACKGROUND"); self.grid[count]=line end
-                line:ClearAllPoints(); line:SetColorTexture(.4,.8,.65,pos==0 and .32 or .10)
+                line:ClearAllPoints();if interface then line:SetColorTexture(style:Color("text",pos==0 and .14 or .055));flat(line) else line:SetColorTexture(.4,.8,.65,pos==0 and .32 or .10)end
                 if axis==1 then line:SetSize(1,UIParent:GetHeight()); line:SetPoint("CENTER",root,"CENTER",pos,0)
                 else line:SetSize(UIParent:GetWidth(),1); line:SetPoint("CENTER",root,"CENTER",0,pos) end
                 line:SetShown(self.overlays)
             end
         end
         self.gridCount=count
+        if self.presentation then ns.LayoutEditorMaterials.Grid(self);self.presentation:PaintControls()end
     end
-    local toolbar=UI:Panel(root,1180,70,"canvas"); D.Point(toolbar,"TOP",0,-16); self.toolbar=toolbar
+    self.toolbarHeight=interface and 82 or 70
+    local toolbar=UI:Panel(root,1180,self.toolbarHeight,interface and "dialog" or "canvas"); D.Point(toolbar,"TOP",0,-16); self.toolbar=toolbar
     toolbar:EnableMouse(true); toolbar:SetFrameLevel(root:GetFrameLevel()+30)
     toolbar:SetMovable(true);toolbar:SetClampedToScreen(true)
     local drag=CreateFrame("Button",nil,toolbar);D.Size(drag,196,32);at(drag,toolbar,10,5)
@@ -541,8 +567,13 @@ function Editor:Build()
     drag:SetScript("OnClick",function()ns.Settings:Profile().layoutToolbar=nil;toolbar:ClearAllPoints();D.Point(toolbar,"TOP",root,"TOP",0,-16)end)
     local saved=ns.Settings:Profile().layoutToolbar
     if saved then toolbar:ClearAllPoints();toolbar:SetPoint("CENTER",UIParent,"CENTER",saved.x/toolbar:GetScale(),saved.y/toolbar:GetScale())end
-    self.brand=at(UI:Logo(toolbar,24),toolbar,16,10)
-    self.brandTitle=at(UI:Label(toolbar,"LAYOUT EDITOR",13,"accent",true),toolbar,58,15)
+    if interface then
+        self.brand=CreateFrame("Frame",nil,toolbar);D.Size(self.brand,24,24);at(self.brand,toolbar,16,10)
+        self.brand.neutral=self.brand:CreateTexture(nil,"ARTWORK");self.brand.neutral:SetTexture(style.materialMediaRoot.."Brand\\LogoNeutral");self.brand.neutral:SetAllPoints();self.brand.neutral:SetDesaturated(true)
+        self.brand.pigment=self.brand:CreateTexture(nil,"OVERLAY");self.brand.pigment:SetTexture(style.materialMediaRoot.."Brand\\LogoPigment");self.brand.pigment:SetAllPoints()
+        style:Bind(function()self.brand.pigment:SetVertexColor(style:Color("accent"))end,self.brand)
+    else self.brand=at(UI:Logo(toolbar,24),toolbar,16,10)end
+    self.brandTitle=at(UI:Label(toolbar,"LAYOUT EDITOR",13,interface and "accentText" or "accent",true),toolbar,58,15)
     self.elementSelect=at(UI:Dropdown(toolbar,220,{},function(id) self:Select(id) end),toolbar,216,8)
     self.newAnchor=at(UI:Button(toolbar,"New anchor",190,function()
         if self.suspended or not self:CommitAnchorName() then return end
@@ -550,11 +581,11 @@ function Editor:Build()
         local ok,id=pcall(ns.DisplayAnchors.NewAnchor,ns.DisplayAnchors)
         if not ok then self:Message(tostring(id)); return end
         L.elements[id].preview(true); self:Select(id)
-    end),toolbar,16,38)
-    at(UI:Label(toolbar,"Focus",12,"muted"),toolbar,216,46)
-    self.focusToggle=at(UI:Switch(toolbar,false,function(v) self:SetFocus(v) end),toolbar,268,43)
+    end),toolbar,16,interface and 46 or 38)
+    at(UI:Label(toolbar,"Focus",12,"muted"),toolbar,216,interface and 54 or 46)
+    self.focusToggle=at(UI:Switch(toolbar,false,function(v) self:SetFocus(v) end),toolbar,268,interface and 51 or 43)
     UI:AttachTooltip(self.focusToggle,"Focus selected element","Only the selected element can be moved or resized. Change focus with the element list; Pick can still choose any permitted anchor target.")
-    self.cleanupButton=at(UI:Button(toolbar,"Clean up...",116,function() self:RequestCleanup() end),toolbar,320,38)
+    self.cleanupButton=at(UI:Button(toolbar,"Clean up...",116,function() self:RequestCleanup() end),toolbar,320,interface and 46 or 38)
     at(UI:Label(toolbar,"Grid snap",12,"muted"),toolbar,448,16)
     self.snapToggle=at(UI:Switch(toolbar,true,function(v) self:StopDrag(); self.snap=v; ns.Settings:Set("snapToGrid",v) end),toolbar,515,13)
     UI:AttachTooltip(self.snapToggle,"Snap to grid","Snap to the visible grid. Hold Shift while dragging for free movement.")
@@ -562,18 +593,18 @@ function Editor:Build()
     local sizes={}; for _,size in ipairs({8,16,24,32,48,64}) do sizes[#sizes+1]={value=size,label=tostring(size)} end
     self.gridSelect=at(UI:Dropdown(toolbar,76,sizes,function(v) self:SetGridSize(v) end),toolbar,592,8)
     UI:AttachTooltip(self.gridSelect,"Grid size","Spacing in UI units. Movement snaps edges and centers; free resizing snaps the dragged edge. Saved per profile.")
-    at(UI:Label(toolbar,"Element snap",12,"muted"),toolbar,448,46)
-    self.elementSnapToggle=at(UI:Switch(toolbar,true,function(v) self:StopDrag(); self.elementSnap=v; ns.Settings:Set("snapToElements",v) end),toolbar,541,43)
+    at(UI:Label(toolbar,"Element snap",12,"muted"),toolbar,448,interface and 54 or 46)
+    self.elementSnapToggle=at(UI:Switch(toolbar,true,function(v) self:StopDrag(); self.elementSnap=v; ns.Settings:Set("snapToElements",v) end),toolbar,541,interface and 51 or 43)
     UI:AttachTooltip(self.elementSnapToggle,"Align to elements","Snap edges and centers to other BV elements. Captures within 6 screen pixels, releases beyond 10. Takes priority over grid snapping; does not create anchors.")
-    self.viewSelect=at(UI:Dropdown(toolbar,174,{{value="normal",label="Normal anchors"},{value="nameplates",label="Nameplates"}},function(v)self:SetView(v)end),toolbar,592,38)
+    self.viewSelect=at(UI:Dropdown(toolbar,174,{{value="normal",label="Normal anchors"},{value="nameplates",label="Nameplates"}},function(v)self:SetView(v)end),toolbar,592,interface and 46 or 38)
     self.viewSelect:SetValue(self.viewMode or "normal")
-    at(UI:Label(toolbar,"Inspector gap (px)",11,"muted"),toolbar,790,46)
-    self.inspectorGap=at(UI:NumberInput(toolbar,90,20,400,function(v)ns.Settings:Set("inspectorGap",v);self.inspectorSelection=nil;self:Refresh()end),toolbar,930,38)
+    at(UI:Label(toolbar,"Inspector gap (px)",11,"muted"),toolbar,790,interface and 54 or 46)
+    self.inspectorGap=at(UI:NumberInput(toolbar,90,20,400,function(v)ns.Settings:Set("inspectorGap",v);self.inspectorSelection=nil;self:Refresh()end),toolbar,930,interface and 46 or 38)
     self.inspectorGap:SetValue(ns.Settings:Get("inspectorGap"))
     at(UI:Label(toolbar,"Overlays",12,"muted"),toolbar,685,16)
     self.overlayToggle=at(UI:Switch(toolbar,true,function(v) self:SetOverlays(v) end),toolbar,752,13)
-    at(UI:Label(toolbar,"Show hidden",12,"muted"),toolbar,1034,46)
-    self.hiddenToggle=at(UI:Switch(toolbar,false,function(v) self:SetShowHidden(v) end),toolbar,1124,43)
+    at(UI:Label(toolbar,"Show hidden",12,"muted"),toolbar,1034,interface and 54 or 46)
+    self.hiddenToggle=at(UI:Switch(toolbar,false,function(v) self:SetShowHidden(v) end),toolbar,1124,interface and 51 or 43)
     UI:AttachTooltip(self.hiddenToggle,"Show hidden elements","Temporarily show elements whose node has Hide in Layout Editor enabled. Resets when the editor closes.")
     UI:AttachTooltip(self.overlayToggle,"Editor overlays","Temporarily hide the grid, shading and labels to see the elements underneath. Outlines and arrows remain; arrows point to the anchor target.")
     at(UI:Button(toolbar,"Discard",94,function() self:Close(false) end),toolbar,836,8)
@@ -582,11 +613,18 @@ function Editor:Build()
     -- Compact toolbar (0.8.72): 26-unit controls in two rows.
     for _,child in ipairs({toolbar:GetChildren()}) do
         local kind=child.GetObjectType and child:GetObjectType()
-        if (kind=="Button" and not child.isSwitch and child~=drag) or kind=="EditBox" then D.Height(child,26) end
+        if (kind=="Button" and not child.isSwitch and child~=drag) or kind=="EditBox" then D.Height(child,interface and 28 or 26) end
+    end
+    if interface then
+        local line=style:Gradient(toolbar,"HORIZONTAL","accentText",.55,"accentText",0,0);line:ClearAllPoints();D.Point(line,"BOTTOMLEFT",toolbar,"BOTTOMLEFT",14,1);D.Size(line,1148,1);flat(line)
+        for _,item in ipairs({{self.snapToggle,515,22},{self.overlayToggle,752,22},{self.focusToggle,268,60},{self.elementSnapToggle,541,60},{self.hiddenToggle,1124,60}})do
+            local control,x,center=item[1],item[2],item[3]
+            style:Bind(function()at(control,toolbar,x,center-D.GetHeight(control)/2)end,control)
+        end
     end
     -- Compact inspector (0.8.72): tabs under a slim title, then SettingsGrid rows
     -- (label left, control right); explanations are tooltips.
-    local panel=UI:Panel(root,320,INSPECTOR_HEIGHT,"canvas"); self.inspector=panel
+    local panel=UI:Panel(root,320,INSPECTOR_HEIGHT,interface and "dialog" or "canvas"); self.inspector=panel
     D.Point(panel,"TOPRIGHT",UIParent,"TOPRIGHT",-24,-116); panel:EnableMouse(true)
     panel:SetFrameLevel(root:GetFrameLevel()+30); panel:SetMovable(true); panel:SetClampedToScreen(true)
     local handle=CreateFrame("Button",nil,panel); D.Size(handle,300,36); D.Point(handle,"TOPLEFT",10,-2)
@@ -599,14 +637,14 @@ function Editor:Build()
     at(UI:Rule(panel,288),panel,16,36)
     local content=CreateFrame("Frame",nil,panel);D.Point(content,"TOPLEFT",0,-INSPECTOR_TOP);D.Size(content,320,INSPECTOR_HEIGHT-INSPECTOR_TOP)
     self.inspectorContent=content
-    local grid=UI:SettingsGrid(content); self.inspectorGrid=grid
+    local grid=UI:SettingsGrid(content,{compact=true}); self.inspectorGrid=grid
     local function row(key,label,control,help,width)
         self.controls[key]=grid:Row(label,control,{help=help,width=width})
         self.controls[key].fieldLabel=self.controls[key].bvGridRow.label
         return self.controls[key]
     end
-    local function number(key,label,low,high,callback,help)
-        return row(key,label,UI:NumberInput(grid,90,low,high,callback),help,90)
+    local function number(key,label,low,high,callback,help,options)
+        return row(key,label,UI:NumberInput(grid,90,low,high,callback,options),help,90)
     end
     grid:Section("geometry","Size & position")
     number("width","Width",0,5000,function(v)
@@ -618,16 +656,16 @@ function Editor:Build()
         self:Change({height=v})
     end,"Height of the element. Content-sized elements (\"Height (content)\") take it from their content.")
     number("x","Position X",-10000,10000,function(v) local r=L:Resolve(); L:Move(self.selected,v,r[self.selected].y) end,
-        "Horizontal position of the element's center, relative to the screen center.")
+        "Horizontal position of the element's center, relative to the screen center.",{displayDecimals=2})
     number("y","Position Y",-10000,10000,function(v) local r=L:Resolve(); L:Move(self.selected,r[self.selected].x,v) end,
-        "Vertical position of the element's center, relative to the screen center.")
+        "Vertical position of the element's center, relative to the screen center.",{displayDecimals=2})
     grid:Section("links","Links")
     self.targetButtons={}
     for index,axis in ipairs({"width","height","position"}) do
         local a=axis
         local label=axis=="position" and "Anchor to" or "Match "..axis
         -- Dropdown and Pick share one row; the dropdown stays the control.
-        local host=UI:Panel(grid,170,26,"surface"); UI:HideSurface(host)
+        local host=container(style,grid,170,26)
         local dropdown=at(UI:Dropdown(host,140,{},function(id) self:ChooseTarget(a,id) end),host,0,0); D.Height(dropdown,26)
         local pick=UI:IconButton(host,"fit",function() self:StopDrag(); self.picking=a; self:Message("Click the target element. Escape cancels."); self:Refresh() end)
         self.targetButtons[index]=at(pick,host,144,0); D.Size(pick,26,26)
@@ -650,9 +688,9 @@ function Editor:Build()
     number("zIndex","Z index",-1000,1000,function(v)self:Change({zIndex=math.floor(v)})end,"Higher values appear in front.")
     UI:AttachTooltip(self.controls.zIndex,"Draw order","Higher values appear in front. A template root orders the entire stack; child slots order only inside it. Equal values use stable layout IDs. Position anchors do not change.")
     self.zHint=grid:Block(UI:Label(grid,"",11,"muted"),16)
-    self.message=grid:Block(UI:Label(grid,"",12,"accent"),30)
+    self.message=grid:Block(UI:Label(grid,"",12,interface and "accentText" or "accent"),30)
     UI:Place(grid,content,16,0); self.inspectorGridHeight=grid:Arrange(288)
-    self.preferencesPanel=at(UI:Panel(content,288,306,"surface"),content,16,0); UI:HideSurface(self.preferencesPanel)
+    self.preferencesPanel=at(container(style,content,288,306),content,16,0)
     local gp=self.preferencesPanel
     self.anchorName=UI:Field(gp,"Anchor name",UI:Input(gp,288,function() self:CommitAnchorName() end),0,0)
     self.anchorName:SetMaxLetters(80)
@@ -676,7 +714,7 @@ function Editor:Build()
     self.preferencesButton=at(UI:Button(panel,"Preferences",136,function() self.preferencesOpen=true;self.stackOpen=false; self:Refresh() end,"tab"),panel,168,40)
     self.stackButton=at(UI:Button(panel,"Stack",90,function()if not self:CommitAnchorName()then return end;self.stackOpen=true;self.preferencesOpen=false;self:Refresh()end,"tab"),panel,214,40)
     for _,b in ipairs({self.layoutButton,self.preferencesButton,self.stackButton}) do D.Height(b,28) end
-    self.stackPanel=at(UI:Panel(gp,288,306,"surface"),gp,0,0);UI:HideSurface(self.stackPanel)
+    self.stackPanel=at(container(style,gp,288,306),gp,0,0)
     local sp=self.stackPanel;self.stackControls={}
     self.stackEnabled=at(UI:Switch(sp,false,function(v)self:ChangeStack("enabled",v)end),sp,0,0)
     at(UI:Label(sp,"Stack layout",12,"text"),sp,52,3)
@@ -694,13 +732,13 @@ function Editor:Build()
     self.stackPanel:Hide()
     self.inspectorHeight=INSPECTOR_TOP+math.max(self.inspectorGridHeight,306)+12
     D.Height(panel,self.inspectorHeight); D.Height(content,self.inspectorHeight-INSPECTOR_TOP)
-    local confirm=UI:Panel(root,420,130,"raised"); confirm:SetPoint("CENTER"); confirm:SetFrameLevel(root:GetFrameLevel()+60); confirm:EnableMouse(true); confirm:Hide()
+    local confirm=UI:Panel(root,420,130,interface and "dialog" or "raised"); confirm:SetPoint("CENTER"); confirm:SetFrameLevel(root:GetFrameLevel()+60); confirm:EnableMouse(true); confirm:Hide()
     self.confirm=confirm
     at(UI:Label(confirm,"Keep your layout changes?",18,"text",true),confirm,18,18)
     at(UI:Button(confirm,"Keep editing",116,function() confirm:Hide() end),confirm,18,76)
     at(UI:Button(confirm,"Discard",116,function() self:Close(false) end),confirm,150,76)
     at(UI:Button(confirm,"Save & exit",116,function() self:Close(true) end,true),confirm,282,76)
-    local dialog=UI:Panel(root,520,350,"raised"); dialog:SetPoint("CENTER"); dialog:SetFrameLevel(root:GetFrameLevel()+70); dialog:EnableMouse(true); dialog:Hide()
+    local dialog=UI:Panel(root,520,350,interface and "dialog" or "raised"); dialog:SetPoint("CENTER"); dialog:SetFrameLevel(root:GetFrameLevel()+70); dialog:EnableMouse(true); dialog:Hide()
     self.deleteDialog=dialog
     self.deleteTitle=at(UI:Label(dialog,"",18,"text",true),dialog,18,16); D.Size(self.deleteTitle,484,26)
     self.deleteInfo=at(UI:Label(dialog,"",12,"muted"),dialog,18,50); D.Size(self.deleteInfo,484,48)
@@ -711,17 +749,23 @@ function Editor:Build()
     at(UI:Button(dialog,"Cancel",140,function() self:CancelAnchorDelete() end),dialog,18,298)
     self.deleteAccept=at(UI:Button(dialog,"Delete anchor",160,function() self:ConfirmAnchorDelete() end),dialog,342,298)
     self:BuildCleanup()
+    if interface then ns.LayoutEditorPresentation.Build(self)end
+    if interface then style:Bind(function()if self.active and not self.suspended then self:Grid();self:Refresh()end end,root)end
+    end)
 end
 -- World-space movers, snap distances and saved layout coordinates intentionally
 -- remain in native UIParent units; only the editor controls use design metrics.
 function Editor:EnsureMovers()
+    if not self.root or not self.style then return end
+    return UI:WithStyle(self.style,function()
     for id,mover in pairs(self.movers) do if not L.elements[id] then mover:Hide() end end
     for _,id in ipairs(L.order) do
         if not self.movers[id] then
             local key=id
             local mover=UI:Panel(self.root,100,24,"canvas"); mover.fill:SetAlpha(.92)
             mover:SetFrameLevel(self.root:GetFrameLevel()+5); mover:EnableMouse(true); mover:RegisterForDrag("LeftButton")
-            mover.title=UI:Label(mover,"",12,"accent",true); mover.title:SetPoint("CENTER")
+            mover.bvStyle=self.style
+            mover.title=UI:Label(mover,"",12,self.style.materialProfile=="interface" and "accentText" or "accent",true); mover.title:SetPoint("CENTER")
             mover:SetScript("OnMouseDown",function(_,button) self:Press(key,button) end)
             mover:SetScript("OnDragStart",function()
                 if self.press and self.press.id==key then self:BeginDrag(key,false) end
@@ -733,12 +777,15 @@ function Editor:EnsureMovers()
             UI:AttachTooltip(grip,"Resize","Drag the diagonal handle to resize. Drag the element itself to move it.")
             grip:SetScript("OnMouseDown",function(_,button) if button=="LeftButton" then self:BeginDrag(key,true) end end)
             grip:SetScript("OnMouseUp",function() self:EndDrag() end)
+            if self.style.materialProfile=="interface" then self.style:Bind(function()self:PaintMover(mover,key)end,mover)end
             self.movers[key]=mover
         end
         self.movers[id]:Show()
     end
+    end)
 end
 function Editor:Open(id,returnTo)
+    if not self.root and not UI:InterfaceStyle()then return end
     L:Store() -- Restore persistent anchors before deciding whether the editor is empty.
     if InCombatLockdown() then ns:Print("Open the Layout Editor after combat."); return end
     if self.active then if id then self:Select(id) end; return end
@@ -754,6 +801,7 @@ function Editor:Open(id,returnTo)
     self.elementSnap=ns.Settings:Get("snapToElements"); self.elementSnapToggle:SetValue(self.elementSnap)
     self.gridSelect:SetValue(self.gridSize); self.snapToggle:SetValue(self.snap)
     self.showHidden=false; self.hiddenToggle:SetValue(false)
+    if self.presentation then self.presentation:Open()end
     self.overlays=true; self:EnsureMovers(); self:Grid(); self:SetOverlays(true)
     self.root:Show(); self.confirm:Hide(); self:CancelAnchorDelete(); self:Message(""); self:Refresh()
     ns.Events:Subscribe(self,"PLAYER_REGEN_DISABLED",function()

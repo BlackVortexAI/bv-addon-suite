@@ -15,11 +15,14 @@ function S:Build()
     local map=P:WorldMap()
     if self.button or not map then return end
     local parent=map.ScrollContainer or map
-    UI:WithStyle(P:Style(),function()
-        self.button=P:MapButton(parent,"search",function() S:Toggle() end)
+    local style=ns.Config and ns.Config:EnsureShellStyle()
+    if not style or style.materialProfile~="interface" then return end
+    self.style=style
+    UI:WithStyle(style,function()
+        self.button=P:MapButton(parent,"search",function() S:Toggle() end,style)
         M.Point(self.button,"TOPLEFT",parent,"TOPLEFT",6,-6)
         UI:AttachTooltip(self.button,"Search the map","Zones, points of interest, flight points and your quests.")
-        self.box=UI:GamePanel(P.ID,parent,280,36,"bg",4,function() return .92 end)
+        self.box=UI:Panel(parent,280,36,"bg")
         local strata=P:MapStrata();if strata then self.box:SetFrameStrata(strata) end
         self.box:SetFrameLevel(P.BUTTONLEVEL+5);self.box:EnableMouse(true);self.box:Hide()
         M.Point(self.box,"TOPLEFT",self.button,"TOPRIGHT",4,0)
@@ -90,8 +93,7 @@ end
 function S:Update()
     if not (self.box and self.box:IsShown()) then return end
     self.results=self:Results(self.input:GetText())
-    local s=P:Style()
-    local ar,ag,ab=s:Color("accent")
+    local ar,ag,ab=self.style:Color("accentText")
     for i,row in ipairs(self.rows) do
         local result=self.results[i]
         if result then

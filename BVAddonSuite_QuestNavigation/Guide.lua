@@ -216,22 +216,25 @@ G.BARW,G.BARH=320,58
 function G:BarFrame()
     if self.bar then return self.bar end
     local UI,M=ns.UI,ns.DesignSystem.Metrics
-    UI:WithStyle(UI:GameStyle(nil),function()
+    local captured=UI:InterfaceStyle();if not captured then return nil end
+    self.style=captured
+    UI:WithStyle(self.style,function()
         local f=UI:Panel(UIParent,G.BARW,G.BARH,"panel",12,.95)
+        f.bvStyle=self.style;f.bvTooltipStyle=self.style
         f:Hide();f:SetFrameStrata("DIALOG");f:SetClampedToScreen(true)
         if ns.ExternalFrames then ns.ExternalFrames:MarkOwned(f) end
         f.title=UI:Label(f,"",10,"muted",true);M.Point(f.title,"TOPLEFT",f,"TOPLEFT",14,-10);M.Size(f.title,G.BARW-120,14)
         f.label=UI:Label(f,"",13,"text");M.Point(f.label,"TOPLEFT",f,"TOPLEFT",14,-27);M.Size(f.label,G.BARW-120,18)
-        f.stop=UI:IconButton(f,"x",function() G:Stop() end,"ghost")
+        f.stop=UI:IconButton(f,"x",function() G:Stop() end,self.style.materialProfile=="interface" and "icon-only" or "ghost")
         M.Size(f.stop,20,20);M.Point(f.stop,"TOPRIGHT",f,"TOPRIGHT",-10,-10)
         UI:AttachTooltip(f.stop,"End the walk","Ends the way to this objective and takes its spots off the maps.")
-        f.next=UI:IconButton(f,"chevron-right",function() G:Step(1) end,"ghost")
+        f.next=UI:IconButton(f,"chevron-right",function() G:Step(1) end,self.style.materialProfile=="interface" and "icon-only" or "ghost")
         M.Size(f.next,20,20);M.Point(f.next,"TOPRIGHT",f,"TOPRIGHT",-10,-32)
         UI:AttachTooltip(f.next,"Next spot","On to the next spot of the round.")
         f.spot=UI:Label(f,"",11,"muted");M.Point(f.spot,"RIGHT",f.next,"LEFT",-4,0);f.spot:SetJustifyH("CENTER");M.Size(f.spot,44,14)
         -- Back: the "chevron-right" symbol mirrored (the suite's symbol pages
         -- hold no "chevron-left"; their selection stays at two pages).
-        f.prev=UI:IconButton(f,"chevron-right",function() G:Step(-1) end,"ghost")
+        f.prev=UI:IconButton(f,"chevron-right",function() G:Step(-1) end,self.style.materialProfile=="interface" and "icon-only" or "ghost")
         local glyph=f.prev.icon and f.prev.icon.glyph
         if glyph and glyph.GetTexCoord then
             local ul,ut,ll,lb,ur,urt,lr,lrb=glyph:GetTexCoord()
@@ -240,13 +243,14 @@ function G:BarFrame()
         M.Size(f.prev,20,20);M.Point(f.prev,"RIGHT",f.spot,"LEFT",-4,0)
         UI:AttachTooltip(f.prev,"Previous spot","Back to the spot before.")
         self.bar=f
+        if ns.InterfaceSurfaces and ns.InterfaceSurfaces.AttachHUD then ns.InterfaceSurfaces:AttachHUD(self.style,f) end
     end)
     return self.bar
 end
 function G:Bar()
     local a=self:Leading()
     if not a then if self.bar then self.bar:Hide() end;return end
-    local f=self:BarFrame()
+    local f=self:BarFrame();if not f then return nil end
     local walk=QB.walks[a.walkKey]
     local count=walk and #walk.spots or 0
     f.title:SetText(a.title or "")
@@ -338,7 +342,14 @@ end
 local page
 local function build(parent)
     local UI,M=ns.UI,ns.DesignSystem.Metrics
-    page=UI:Panel(parent,880,600,"surface");UI:HideSurface(page)
+    -- Interface opt-in (2026-10-26, Config interfaceSettings): the page is built
+    -- in the captured Interface context like Gather. The page host stays a plain
+    -- ToolStyle container that never paints; without opt-in all is as before.
+    local pageStyle=UI:GetStyle();local interface=pageStyle.materialProfile=="interface"
+    if interface then
+        page=UI:WithStyle(UI:ToolStyle(),function() local host=UI:Panel(parent,880,600,"surface");UI:HideSurface(host);return host end)
+        page.bvStyle=pageStyle
+    else page=UI:Panel(parent,880,600,"surface");UI:HideSurface(page) end
     local g=UI:SettingsGrid(page);page.grid=g
     local controls={}
     page.controls=controls
@@ -353,7 +364,8 @@ local function build(parent)
     switch("announce","Tell me","A notification when you reach a spot, finish an objective or the quest.")
     function page:Arrange(width)
         UI:Place(g,self,0,0)
-        local height=g:Arrange(width)+8
+        -- Interface pages keep the approved 10-unit scroll reserve (as Gather).
+        local height=g:Arrange(interface and math.max(1,width-10) or width)+8
         M.Height(self,height);return height
     end
     function page:Refresh()
@@ -362,9 +374,27 @@ local function build(parent)
         local missing=QB:Missing()
         if self.status.SetText then self.status:SetText(missing or "Ready: Questie's database and BV Routing are there.") end
     end
+    if interface then
+        -- Profile change or hide closes only this page's own menus and picker.
+        local function owned(owner)
+            if not owner then return false end
+            for _,item in ipairs(g.items) do if item.control==owner then return true end end
+            return false
+        end
+        local function cancelOwnedMenu()
+            if UI.dropdown and owned(UI.dropdown.owner) then UI:CloseDropdown() end
+            if UI.colorPopup and owned(UI.colorPopup.owner) then UI.colorPopup:Hide() end
+        end
+        local dispose
+        local function watch() if not dispose then dispose=ns.Settings:BeforeProfileChange(page,cancelOwnedMenu) end end
+        page:HookScript("OnShow",watch)
+        page:HookScript("OnHide",function() cancelOwnedMenu();if dispose then dispose();dispose=nil end end)
+        if page:IsVisible() then watch() end
+    end
     page:Refresh()
     return page
 end
 ns.Config:RegisterPage("questnav",{title="Quest Navigation",category="questmap",description="Leading to quest objectives: on to the next step, spots on the maps and notifications.",
+    interfaceSettings=true,
     build=function(parent) return page or build(parent) end,
     refresh=function() if page then page:Refresh() end end})

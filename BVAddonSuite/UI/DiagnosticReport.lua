@@ -8,17 +8,23 @@ function UI:DiagnosticReport(title,text)
     assert(not ns.GraphValues.IsSecret(text) and type(text)=="string","Sanitized report text required")
     local dialog=self.diagnosticReport
     if not dialog then
-        dialog=self:Dialog("BVAddonSuiteDiagnosticReport",620,520); self.diagnosticReport=dialog
+        local style=UI:InterfaceStyle();if not style then return end
+        local function make(method,...)
+            local args,n={...},select('#',...)
+            return UI:WithStyle(style,function()return UI[method](UI,unpack(args,1,n))end)
+        end
+        dialog=make("Dialog","BVAddonSuiteDiagnosticReport",620,520,nil,{escapeScope=style.materialProfile=="interface"}); self.diagnosticReport=dialog
+        dialog.bvStyle=style
         local p=dialog.content
-        dialog.hint=at(self:Label(p,"Snapshot text. Select a page, then Ctrl+C to copy.",12,"muted"),p,20,12); M.Size(dialog.hint,580,36)
-        dialog.text=at(self:TransferText(p,580,314,PAGE_BYTES,function()
+        dialog.hint=at(make("Label",p,"Snapshot text. Select a page, then Ctrl+C to copy.",12,"muted"),p,20,12); M.Size(dialog.hint,580,36)
+        dialog.text=at(make("TransferText",p,580,314,PAGE_BYTES,function()
             if not dialog.loading then dialog:ShowPage(dialog.page) end
         end),p,20,52)
-        dialog.pageLabel=at(self:Label(p,"",11,"muted"),p,20,380); M.Size(dialog.pageLabel,580,32)
-        dialog.previous=at(self:Button(p,"Previous",102,function() dialog:ShowPage(dialog.page-1) end),p,20,420)
-        dialog.next=at(self:Button(p,"Next",86,function() dialog:ShowPage(dialog.page+1) end),p,130,420)
-        dialog.select=at(self:Button(p,"Select page",128,function() dialog.text.input:SetFocus(); dialog.text.input:HighlightText() end),p,224,420)
-        dialog.close=at(self:Button(p,"Close",100,function() dialog:Hide() end,"ghost"),p,500,420)
+        dialog.pageLabel=at(make("Label",p,"",11,"muted"),p,20,380); M.Size(dialog.pageLabel,580,32)
+        dialog.previous=at(make("Button",p,"Previous",102,function() dialog:ShowPage(dialog.page-1) end),p,20,420)
+        dialog.next=at(make("Button",p,"Next",86,function() dialog:ShowPage(dialog.page+1) end),p,130,420)
+        dialog.select=at(make("Button",p,"Select page",128,function() dialog.text.input:SetFocus(); dialog.text.input:HighlightText() end),p,224,420)
+        dialog.close=at(make("Button",p,"Close",100,function() dialog:Hide() end,"ghost"),p,500,420)
         function dialog:ShowPage(page)
             if not self.pages or #self.pages==0 then return end
             self.page=math.max(1,math.min(#self.pages,page)); self.loading=true
@@ -27,6 +33,7 @@ function UI:DiagnosticReport(title,text)
             if self.page>1 then self.previous:Enable() else self.previous:Disable() end
             if self.page<#self.pages then self.next:Enable() else self.next:Disable() end
         end
+        if dialog.TrackEscapeInput then dialog:TrackEscapeInput(dialog.text.input)end
         dialog:HookScript("OnHide",function()
             dialog.text.input:ClearFocus(); dialog.pages=nil; dialog.page=nil; dialog.loading=true; dialog.text:SetText(""); dialog.loading=false
         end)

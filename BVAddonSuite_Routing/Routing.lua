@@ -1,23 +1,22 @@
 local package,R=...
 local ns=BVAddonSuiteCore
 if not ns or not ns.RequireCore then
-    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.101 or newer. Update Core; saved data is preserved.") end
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.113 or newer. Update Core; saved data is preserved.") end
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.1.7","0.8.101",1) then return end
+if not ns:RequireCore(package,"0.1.11","0.8.113",1) then return end
 -- BV Routing (Florian 2026-10-10, docs/module-structure-routing.md): ways
 -- you can really walk, round slopes, water, cliffs, enemy bases, painted
 -- areas and walls, through cities and between their levels, by flight,
 -- ship and zeppelin, instead of a straight line. Gather's route editor plans
 -- with it; Map's way to a waypoint, Route Studio and Codex use it. No module
 -- to switch on: it works for the packages that use it.
--- Files fill R: the terrain data (Terrain\Data_<map>.lua, from the client's
--- map files, about 9 MB, loaded at login like Gather's before; decoded tile
--- by tile when a way needs it), Grid (raster, terrain costs, walls, A*,
--- string pulling), Data\Transports (stops and round trips), Level (on which
--- level you are), Navigate (the travel plan and leading you along it),
--- Commands.
+-- Files fill R: Geo (points between maps), the shipped maps (Data\Maps,
+-- Data\Towns), the navmesh planner (Hpa, Data\Nav*: the graph, the ground
+-- heights, the cities' levels), Data\Transports (stops and round trips),
+-- Level (on which level you are), Navigate (the travel plan and leading you
+-- along it), Commands.
 R.ns=ns
 ns.Routing=R
 R.ready=true
@@ -448,17 +447,7 @@ function R:Position()
     if not ok or type(x)~="number" or type(y)~="number" or self.Secret(x) or (x==0 and y==0) then return nil end
     return mapID,x,y
 end
--- The continent a map lies on and a point of it there.
-function R:OnContinent(mapID,x,y)
-    local cont=ns.MapPins and ns.MapPins:Continent(mapID)
-    if not cont then return nil end
-    local cx,cy=self.Grid.Convert(mapID,cont,x,y)
-    if not cx then return nil end
-    return cont,cx,cy
-end
-
--- The terrain data ships with Routing (Florian 2026-10-10: one package).
-function R:Terrain() return type(rawget(_G,"BVTerrainData"))=="table" end
+-- (The continent a map lies on: Routing:OnContinent, Geo.lua.)
 
 -- The log of the way (Florian 2026-10-14: the details in a window rather
 -- than the chat): every message of Routing, said ones (Print) and quiet
@@ -476,6 +465,11 @@ function R:Print(text) self:Log(text,true);ns:Print(text,"Routing") end
 function R:Note(text) self:Log(text,false) end
 function R:LogText() return #self.log>0 and table.concat(self.log,"\n") or "Nothing logged yet." end
 function R.Call(path,...)
+    local T=ns.MapTerrain
+    if T and T.RoutingMapCall then
+        local handled,a,b,c,d=T:RoutingMapCall(path,...)
+        if handled then return a,b,c,d end
+    end
     local f=_G
     for part in path:gmatch("[^%.]+") do if type(f)~="table" then return nil end;f=f[part] end
     if type(f)~="function" then return nil end

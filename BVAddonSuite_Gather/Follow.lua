@@ -196,15 +196,18 @@ function F:Build(s,c)
     local out={}
     for i,point in ipairs(s.points) do
         local isNext=i==s.next
+        local endGap=(point.stop or isNext) and ((isNext and 14 or 10)/2+1) or 0
         out[#out+1]={mapID=point.mapID,x=point.x,y=point.y,index=i,dot=true,noPin=not point.stop and not isNext or nil,
-            -- The next point as a ring, not to be taken for a tracking dot.
-            size=isNext and 14 or 7,hollow=isNext or nil,color=isNext and nextColor or route,alpha=dotAlpha,
+            -- Every gather stop stays hollow over native tracking dots.
+            size=isNext and 14 or 10,hollow=true,color=isNext and nextColor or route,alpha=dotAlpha,
+            lineEndGap=endGap,
             lineColor=(point.gap and F.GAP) or (point.drop and F.DROP) or (isNext and nextColor or route),lineAlpha=lineAlpha,
             lead=isNext or nil,leadColor=nextColor}
     end
     if s.loop then
         local first=s.points[1]
-        out[#out+1]={mapID=first.mapID,x=first.x,y=first.y,index=1,noPin=true,lineColor=(first.gap and F.GAP) or (first.drop and F.DROP) or (s.next==1 and nextColor or route),lineAlpha=lineAlpha}
+        out[#out+1]={mapID=first.mapID,x=first.x,y=first.y,index=1,noPin=true,lineColor=(first.gap and F.GAP) or (first.drop and F.DROP) or (s.next==1 and nextColor or route),lineAlpha=lineAlpha,
+            lineEndGap=(first.stop or s.next==1) and ((s.next==1 and 14 or 10)/2+1) or 0}
     end
     return out
 end

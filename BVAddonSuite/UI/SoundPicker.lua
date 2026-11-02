@@ -7,7 +7,7 @@ local UI,D=ns.UI,ns.DesignSystem.Metrics
 function UI:SoundPicker(owner,config,choose,opts)
     -- The source tabs take a row of their own under the title.
     local top=opts and opts.sources and 40 or 0
-    local w=self:Dialog(nil,560,470+top,owner);local selected
+    local w=self:Dialog(nil,560,470+top,owner,{escapeScope=opts and opts.escapeScope});local selected
     local options={};local page,query=1,""
     local source=config.source=="sharedmedia" and "sharedmedia" or "soundkit"
     local function load()
@@ -42,6 +42,7 @@ function UI:SoundPicker(owner,config,choose,opts)
         status:SetText(#filtered.." sounds / page "..page.." of "..math.max(1,math.ceil(#filtered/7)))
     end
     local search=UI:Place(UI:Input(w,528),w,16,84+top);search:SetAutoFocus(false)
+    if w.TrackEscapeInput then w:TrackEscapeInput(search)end
     search:SetScript("OnTextChanged",function()query=search:GetText():lower();page=1;refresh()end)
     for i=1,7 do
         local row={};rows[i]=row

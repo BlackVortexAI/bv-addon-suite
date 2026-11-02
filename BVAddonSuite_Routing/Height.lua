@@ -18,6 +18,27 @@ if not Routing.ready then return end
 -- the band narrow, its middle is kept per level (Learn; Level:Height).
 local H={}
 Routing.Height=H
+-- The unit and item calls of a measurement without the table and pattern
+-- iterator Routing.Call makes on each (Claude 2026-10-25: among name plates
+-- a measurement a second made about 35 KB of garbage). Map calls (Zephras'
+-- own domain) are none of them.
+local parts={}
+local function results(ok,...)
+    if not ok then return nil end
+    return ...
+end
+local function call(path,...)
+    local list=parts[path]
+    if not list then
+        list={}
+        for part in path:gmatch("[^%.]+") do list[#list+1]=part end
+        parts[path]=list
+    end
+    local f=_G
+    for i=1,#list do if type(f)~="table" then return nil end;f=f[list[i]] end
+    if type(f)~="function" then return nil end
+    return results(pcall(f,...))
+end
 -- Range steps (Florian 2026-10-11: "Aura Studio measured with more items"):
 -- the friend item lists of LibRangeCheck-3.0 (037851f8, Era branch, MIT; as
 -- in Aura Studio's RangeCheck, docs/research/2026-09-26-unit-range-sources.md),
@@ -39,7 +60,7 @@ H.RACEINTERACT={Tauren={[3]=6,[4]=25},Scourge={[3]=7,[4]=27}}
 function H:Steps()
     if self.steps then return self.steps end
     local out={}
-    local _,race=Routing.Call("UnitRace","player")
+    local _,race=call("UnitRace","player")
     for index,yards in pairs(H.RACEINTERACT[race] or H.INTERACT) do out[#out+1]={r=yards,check=index} end
     for yards,items in pairs(H.ITEMS) do out[#out+1]={r=yards,items=items} end
     table.sort(out,function(a,b) if a.r~=b.r then return a.r<b.r end return (a.check or 0)<(b.check or 0) end)
@@ -54,8 +75,8 @@ function H:Item(step)
     if step.lookedAt and now-step.lookedAt<5 then return nil end
     step.lookedAt=now
     for _,id in ipairs(step.items) do
-        local cached=Routing.Call("C_Item.IsItemDataCachedByID",id)
-        if cached==nil then cached=Routing.Call("GetItemInfo",id)~=nil end
+        local cached=call("C_Item.IsItemDataCachedByID",id)
+        if cached==nil then cached=call("GetItemInfo",id)~=nil end
         if cached==true and not Routing.Secret(cached) then step.item=id;return id end
     end
     return nil
@@ -110,22 +131,22 @@ function H:Posts(cont)
     self.posts[cont]=out
     return out
 end
--- The units to look at: name plates, target, mouseover (no players).
+-- Visible or interactable NPCs; friendly name plates need not be enabled.
 function H:Units()
     local out,seen={},{}
     local function add(unit)
-        if not Routing.Call("UnitExists",unit) or Routing.Call("UnitIsPlayer",unit) then return end
-        local guid=Routing.Call("UnitGUID",unit)
+        if not call("UnitExists",unit) or call("UnitIsPlayer",unit) then return end
+        local guid=call("UnitGUID",unit)
         if type(guid)~="string" or Routing.Secret(guid) or seen[guid] then return end
         seen[guid]=true
         out[#out+1]={unit=unit,guid=guid}
     end
-    local plates=Routing.Call("C_NamePlate.GetNamePlates")
+    local plates=call("C_NamePlate.GetNamePlates")
     for _,plate in ipairs(type(plates)=="table" and plates or {}) do
         local unit=type(plate)=="table" and (plate.namePlateUnitToken or (plate.UnitFrame and plate.UnitFrame.unit))
         if type(unit)=="string" then add(unit) end
     end
-    add("target");add("mouseover")
+    add("target");add("mouseover");add("softinteract")
     return out,type(plates)=="table" and #plates or 0
 end
 -- In range of each step: true, false or nil (unknown).
@@ -133,12 +154,12 @@ function H:Ranges(unit)
     local out={}
     for i,step in ipairs(self:Steps()) do
         local v
-        if step.check then v=Routing.Call("CheckInteractDistance",unit,step.check)
+        if step.check then v=call("CheckInteractDistance",unit,step.check)
         else
             local item=self:Item(step)
             if item then
-                v=Routing.Call("C_Item.IsItemInRange",item,unit)
-                if v==nil then v=Routing.Call("IsItemInRange",item,unit) end
+                v=call("C_Item.IsItemInRange",item,unit)
+                if v==nil then v=call("IsItemInRange",item,unit) end
             end
         end
         if Routing.Secret(v) then v=nil end
@@ -152,7 +173,7 @@ function H:Prepare()
     if self.prepared then return end
     self.prepared=true
     for _,step in ipairs(self:Steps()) do
-        for i,id in ipairs(step.items or {}) do if i<=3 then Routing.Call("C_Item.RequestLoadItemDataByID",id) end end
+        for i,id in ipairs(step.items or {}) do if i<=3 then call("C_Item.RequestLoadItemDataByID",id) end end
     end
 end
 -- Interval lists {{a, b}, ...} intersected.
@@ -185,6 +206,10 @@ H.CHOICES=6       -- posts of one name at most looked at (the nearest)
 -- them a measurement; the memory of NPCs seen kept small.
 H.UNITS=12
 H.REMEMBER=300
+-- (One buffer for an NPC's range signature, one order for its posts: no
+-- table or function made per NPC.)
+local SIG={}
+local function byDistance(a,b) return a[2]<b[2] end
 function H:Measure(cont,cx,cy)
     self:Prepare()
     local N=Routing.Navigate
@@ -199,7 +224,7 @@ function H:Measure(cont,cx,cy)
     if self.seenCount>H.REMEMBER then self.seen,self.moving,self.seenCount={},{},0 end
     local asked=0
     for _,u in ipairs(units) do
-        local name=Routing.Call("UnitName",u.unit)
+        local name=call("UnitName",u.unit)
         if Routing.Secret(name) then name=nil end
         -- Only NPCs Map Data knows near here are asked (the cheap test first).
         local known=false
@@ -211,10 +236,9 @@ function H:Measure(cont,cx,cy)
         if known and asked>=H.UNITS then known=nil end
         if known then asked=asked+1 end
         local ranges=known and self:Ranges(u.unit) or {}
-        local sig={}
         local steps=self:Steps()
-        for i=1,#steps do sig[i]=ranges[i]==true and "y" or ranges[i]==false and "n" or "?" end
-        sig=table.concat(sig)
+        for i=1,#steps do SIG[i]=ranges[i]==true and "y" or ranges[i]==false and "n" or "?" end
+        local sig=table.concat(SIG,"",1,#steps)
         -- Its range changed while you stood still: it may walk.
         local last=self.seen[u.guid]
         if known and last and last.sig~=sig and last.cont==cont and now-last.t>=H.STILLFOR and N.Yards(cont,cx,cy,last.x,last.y)<=H.STILL then
@@ -230,7 +254,7 @@ function H:Measure(cont,cx,cy)
             local d=N.Yards(cont,cx,cy,e.x,e.y)
             if d<=H.NEAR then near[#near+1]={e,d} end
         end
-        table.sort(near,function(a,b) return a[2]<b[2] end)
+        table.sort(near,byDistance)
         while #near>H.CHOICES do table.remove(near) end
         -- The bounds of its distance: out of range of lo, in range of hi.
         local lo,hi=0,nil
@@ -272,8 +296,9 @@ function H:Measure(cont,cx,cy)
     return out
 end
 -- Interval parts sorted and touching ones joined.
+local function byLow(a,b) return a[1]<b[1] end
 function H.Join(set)
-    table.sort(set,function(a,b) return a[1]<b[1] end)
+    table.sort(set,byLow)
     local out={}
     for _,p in ipairs(set) do
         local last=out[#out]
@@ -330,10 +355,50 @@ function H:Now()
 end
 -- Does your height fit a level (its height: Level:Height; nil the ground,
 -- its height from the terrain where you are)? nil: nothing to tell.
+-- A generated level can cover a slope and several buildings. Its broad
+-- sample span must not admit the floor below the player (Zayus, native
+-- 2026-10-28: measured 51..71, local floor 44.5, level span reaching 61).
+-- Prefer the nearest labelled navmesh layer within six yards. Keep tied
+-- layers as separate alternatives, never fill the height gap between them.
+H.LOCALREACH=6
+function H:LocalLayers(cont,cx,cy)
+    local N=Routing.Navigate
+    if not (N and N.LevelsNear and cont and cx and cy) then return nil end
+    local nav,labels=rawget(_G,"BVRoutingNav"),rawget(_G,"BVRoutingNavLevels")
+    local data,index=nav and nav[cont],labels and labels[cont]
+    local cache=self.localLayers
+    if cache and cache.cont==cont and cache.x==cx and cache.y==cy and cache.data==data and cache.index==index
+        and cache.query==N.LevelsNear then return cache.levels end
+    local near,source=N.LevelsNear(cont,cx,cy,H.LOCALREACH)
+    local levels={}
+    for _,entry in ipairs(near) do
+        local ref=source and source.refs and source.refs[entry[1]]
+        local id=ref and ref[2]
+        local d,z=entry[2],entry[5]
+        if id and type(z)=="number" then
+            local found=levels[id]
+            if not found or d<found.d-.01 then levels[id]={d=d,zs={z}}
+            elseif math.abs(d-found.d)<=.01 then found.zs[#found.zs+1]=z end
+        end
+    end
+    self.localLayers={cont=cont,x=cx,y=cy,data=data,index=index,query=N.LevelsNear,levels=levels}
+    return levels
+end
 function H:FitsLevel(id,cont,cx,cy)
     local m=self:Now()
     if not m.set then return nil end
     if id==nil then return H.Fits(m.set,cont and Routing.Navigate.GroundHeight(cont,cx,cy)) end
+    local layers=self:LocalLayers(cont,cx,cy)
+    local localLevel=layers and layers[id]
+    if localLevel then
+        local result
+        for _,z in ipairs(localLevel.zs) do
+            local fits=H.Fits(m.set,z)
+            if fits==true then return true end
+            if fits==false then result=false end
+        end
+        return result
+    end
     local lo,hi
     if cont then lo,hi=Routing.Level:SpanAt(id,cont,cx,cy) else lo,hi=Routing.Level:Span(id) end
     return H.Fits(m.set,lo,hi)

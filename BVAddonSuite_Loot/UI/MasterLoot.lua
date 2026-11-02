@@ -216,21 +216,27 @@ function Master:AwardClick()
 end
 
 -- Window ----------------------------------------------------------------------------
--- In the module's in-game style since the form kit (Loot 0.8.91):
--- built inside UI:WithStyle, so controls, the window and its lists follow the
--- style family live. Own lines: white in BV and Clean, the gold edge in WoW.
-local function style() return UI:GameStyle(L.ID) end
+-- This management window captures its Interface factory on first successful build.
+-- Gameplay palettes and loot controllers remain independent.
+local function style() return Master.window and Master.window.bvStyle or UI:InterfaceStyle() end
+local function semantic(label)
+    if style().materialProfile=="interface" then
+        style():Bind(function() if label.bvLootRole then label:SetTextColor(style():Color(label.bvLootRole)) elseif label.bvLootColor then label:SetTextColor(unpack(label.bvLootColor)) end end,label)
+        Master.semanticLabels=Master.semanticLabels or {};Master.semanticLabels[#Master.semanticLabels+1]=label
+    end
+    return label
+end
 local function color(key,alpha) return style():Color(key,alpha) end
 local function line(texture,alpha)
     style():Bind(function()
-        if select(2,L:Family()).border=="gold" then local r,g,b=color("edge");texture:SetColorTexture(r,g,b,.6)
+        if style().materialProfile=="interface" or select(2,L:Family()).border=="gold" then local r,g,b=color("edge");texture:SetColorTexture(r,g,b,.6)
         else texture:SetColorTexture(1,1,1,alpha) end
     end,texture)
     return texture
 end
 function Master:Status(text) self.statusText=text;if self.window then self.window.status:SetText(text or "") end end
 local function heading(parent,text,x,y,width)
-    local label=UI:Label(parent,text,11,"accent",true);UI:Place(label,parent,x,y)
+    local label=UI:Label(parent,text,11,style().materialProfile=="interface" and "accentText" or "accent",true);UI:Place(label,parent,x,y)
     local rule=line(parent:CreateTexture(nil,"ARTWORK"),.08)
     UI:Place(rule,parent,x-2,y+18);D.Size(rule,width,1)
     return label,rule
@@ -238,12 +244,14 @@ end
 local function control(widget,height) D.Height(widget,height or CONTROL);return widget end
 function Master:Build()
     if self.window then return self.window end
-    return UI:WithStyle(style(),self.BuildWindow,self)
+    local captured=style();if not captured then return nil end
+    return UI:WithStyle(captured,self.BuildWindow,self,captured)
 end
-function Master:BuildWindow()
-    local w=W.Owned(UI:Dialog("BVLootMasterWindow",WIDTH,HEIGHT))
+function Master:BuildWindow(captured)
+    captured=captured or style();if not captured then return nil end
+    local w=W.Owned(UI:Dialog("BVLootMasterWindow",WIDTH,HEIGHT,nil,{escapeScope=captured.materialProfile=="interface"}))
     w.title:SetText("Master Loot")
-    self.window=w
+    w.bvStyle=captured;self.window=w
     local c=w.content
     -- Sidebar: items on top, custom roll at the bottom.
     w.side=c:CreateTexture(nil,"BACKGROUND",nil,1);w.side:SetColorTexture(0,0,0,.18)
@@ -256,6 +264,7 @@ function Master:BuildWindow()
     heading(c,"CUSTOM ROLL",14,CUSTOM_Y,SIDE-24)
     w.customText=control(UI:GetStyle():Input(c,SIDE-24,false,L:Config().customText,function(text) L:Config().customText=L.CleanCustom(text,"star");Master:Refresh() end))
     UI:TextFieldMenu(w.customText);w.customText:SetMaxLetters(48)
+    if w.TrackEscapeInput then w:TrackEscapeInput(w.customText) end
     UI:AttachTooltip(w.customText,"Roll reason","Label of the custom option on the players' roll bar, e.g. \"Tank set\" or \"Transmog\".")
     UI:Place(w.customText,c,12,CUSTOM_Y+28)
     w.customIcon=c:CreateTexture(nil,"ARTWORK");UI:Place(w.customIcon,c,14,CUSTOM_Y+64);D.Size(w.customIcon,22,22)
@@ -271,13 +280,14 @@ function Master:BuildWindow()
     w.customLabel=UI:Label(c,"Add to request",12,"text");UI:Place(w.customLabel,c,14,CUSTOM_Y+130);D.Size(w.customLabel,150,CONTROL)
     UI:AttachTooltip(w.customLabel,"Add to request","Offers the custom roll together with the preset options.")
     w.customSwitch=UI:Switch(c,false,function(value) L:Config().customEnabled=value;Master:Refresh() end)
-    UI:Place(w.customSwitch,c,SIDE-48,CUSTOM_Y+133)
+    UI:Place(w.customSwitch,c,SIDE-48,CUSTOM_Y+130)
     -- Header: selected item, award (and integration buttons) on the right.
-    w.header=W:ItemIcon(c,40,true);UI:Place(w.header,c,MAIN_X,12)
+    w.header=W:ItemIcon(c,40,style().materialProfile~="interface",style());UI:Place(w.header,c,MAIN_X,12)
     w.header:SetScript("OnEnter",function(owner) local item=Master.selected;if item then W:ItemTooltip(owner,{link=item.link,itemID=L.ItemID(item.link),slot=item.slot,roll=item.roll,source="master"}) end end)
     w.header:SetScript("OnLeave",function(owner) W:HideTooltip(owner) end)
     w.bvName=UI:Label(c,"",15,false,true);UI:Place(w.bvName,c,MAIN_X+50,10);D.Size(w.bvName,MAIN_W-216,20);w.bvName:SetWordWrap(false)
     w.info=UI:Label(c,"",11,"muted");UI:Place(w.info,c,MAIN_X+50,31);D.Size(w.info,MAIN_W-216,15);w.info:SetWordWrap(false)
+    semantic(w.bvName)
     w.rollState=UI:Label(c,"",11,"text");UI:Place(w.rollState,c,MAIN_X+50,47);D.Size(w.rollState,MAIN_W-216,15);w.rollState:SetWordWrap(false)
     w.award=control(UI:Button(c,"Award",156,function() Master:AwardClick() end))
     UI:Place(w.award,c,MAIN_X+MAIN_W-156,12)
@@ -331,9 +341,11 @@ function Master:NewItemButton(index)
     local c=self.window.content
     b=CreateFrame("Button",nil,c);D.Size(b,SIDE-24,ITEM_PITCH-2)
     b.band=b:CreateTexture(nil,"BACKGROUND");b.band:SetAllPoints(b)
-    b.item=W:ItemIcon(b,28,true);UI:Place(b.item,b,3,3);b.item:EnableMouse(false)
+    b.item=W:ItemIcon(b,28,style().materialProfile~="interface",style());UI:Place(b.item,b,3,3);b.item:EnableMouse(false)
     b.bvName=UI:Label(b,"",12,false,true);UI:Place(b.bvName,b,38,3);D.Size(b.bvName,SIDE-66,15);b.bvName:SetWordWrap(false)
     b.state=UI:Label(b,"",10,"muted");UI:Place(b.state,b,38,18);D.Size(b.state,SIDE-66,13);b.state:SetWordWrap(false)
+    style():Bind(function() local r,g,bcolor=color("accent");if b.data and b.data==Master.selected then b.band:SetColorTexture(r,g,bcolor,.16) else b.band:SetColorTexture(1,1,1,.03) end end,b.band)
+    semantic(b.bvName)
     b:SetScript("OnClick",function() Master.selected=b.data;Master.confirm=nil;Master:Refresh() end)
     b:SetScript("OnEnter",function(owner) if b.data then W:ItemTooltip(owner,{link=b.data.link,itemID=L.ItemID(b.data.link),slot=b.data.slot,source="master"}) end end)
     b:SetScript("OnLeave",function(owner) W:HideTooltip(owner) end)
@@ -354,6 +366,13 @@ function Master:NewRow(index)
     row.bvName=UI:Label(row,"",12,false,true);D.Point(row.bvName,"LEFT",row,"LEFT",22,0);D.Size(row.bvName,COLUMN-160,ROW);row.bvName:SetWordWrap(false)
     row.choice=UI:Label(row,"",11,false);D.Point(row.choice,"RIGHT",row,"RIGHT",-38,0);D.Size(row.choice,96,ROW);row.choice:SetJustifyH("RIGHT");row.choice:SetWordWrap(false)
     row.bvValue=UI:Label(row,"",12,false,true);D.Point(row.bvValue,"RIGHT",row,"RIGHT",-4,0);D.Size(row.bvValue,30,ROW);row.bvValue:SetJustifyH("RIGHT")
+    style():Bind(function()
+        if not row.paintState then return end
+        local on,winner,stripe=unpack(row.paintState);local r,g,b=color("accent")
+        row.box:SetColorTexture(on and r or .25,on and g or .25,on and b or .28,on and 1 or .9)
+        row.band:SetColorTexture(winner and r or 1,winner and g or 1,winner and b or 1,winner and .16 or (stripe and .025 or 0))
+    end,row.band)
+    semantic(row.choice);semantic(row.bvValue)
     row:SetScript("OnClick",function(_,button)
         if not row.data then return end
         if button=="RightButton" then Master:CandidateMenu(row) else Master:Toggle(row.data.name) end
@@ -391,6 +410,7 @@ function Master:CandidateMenu(row)
     end)
 end
 function Master:ExtraButtons()
+    if UI:GetStyle()~=style() then return UI:WithStyle(style(),self.ExtraButtons,self) end
     local w,defs=self.window,L.Integrations:Buttons("master")
     for index,def in ipairs(defs) do
         local b=w.extra[index]
@@ -498,7 +518,8 @@ function Master:Refresh()
                 row.choice:SetText("waiting");row.choice:SetTextColor(.6,.6,.6);row.bvValue:SetText("")
             else row.choice:SetText("");row.bvValue:SetText("") end
             local winner=item and item.roll and item.roll.winner==c.name
-            if winner then row.bvValue:SetTextColor(ar,ag,ab) else row.bvValue:SetTextColor(1,1,1) end
+            row.paintState={on,winner,line%2==0};row.bvValue.bvLootRole=winner and (style().materialProfile=="interface" and "accentText" or "accent") or nil
+            if winner then row.bvValue:SetTextColor(color(row.bvValue.bvLootRole)) else row.bvValue:SetTextColor(1,1,1) end
             row.band:SetColorTexture(winner and ar or 1,winner and ag or 1,winner and ab or 1,winner and .16 or (line%2==0 and .025 or 0))
             row:Show()
         elseif row then row.data=nil;row:Hide() end
@@ -519,6 +540,7 @@ function Master:Refresh()
     if path then w.customIcon:SetTexture(path);w.customIcon:SetTexCoord(l,r,t,b);w.customIcon:SetVertexColor(unpack(L.OPTIONS.custom.color)) end
     w.selected:SetText(string.format("%d of %d selected · %s",selected,#list,eligible and "eligible for this loot" or "group (open the loot for eligibility)"))
     if self.statusText then w.status:SetText(self.statusText) end
+    for _,label in ipairs(self.semanticLabels or {}) do label.bvLootColor={label:GetTextColor()} end
 end
 -- Scroll the candidate list by delta (design units); 0 re-clamps.
 function Master:Scroll(delta)
@@ -544,7 +566,8 @@ function Master:Clock(run)
 end
 function Master:Open()
     if not L:Active() then L:Print("Turn the loot module on first (/bv loot on).");return end
-    self:Build():Show()
+    local w=self:Build();if not w then return nil end
+    w:Show()
     self:Refresh()
 end
 function Master:ToggleWindow() if self.window and self.window:IsShown() then self.window:Hide() else self:Open() end end

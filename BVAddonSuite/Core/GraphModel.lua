@@ -87,8 +87,8 @@ end
 function G.Ports(def)
     if def.resolve then def=assert(G.Definition(def)) end
     local inputs={}; for k,v in pairs(def.inputs or {}) do inputs[k]=v end
-    if not def.source and not def.annotation then inputs.mute={type="boolean",default=false,label="Mute",control=true} end
-    if def.bypass then inputs.bypass={type="boolean",default=false,label="Bypass",control=true} end
+    if not def.source and not def.annotation then inputs.mute={type="boolean",default=false,label="Mute",control=true,advanced=true} end
+    if def.bypass then inputs.bypass={type="boolean",default=false,label="Bypass",control=true,advanced=true} end
     return inputs
 end
 function G.Ordered(ports)
@@ -230,7 +230,9 @@ function G.Compile(graph,catalog,structureOnly,tolerant)
         end
     end
     local repeated={}
-    for _,id in ipairs(execution) do
+    -- Cardinality also describes unfinished editor paths. Computing it for
+    -- all topologically ordered nodes does not activate them for execution.
+    for _,id in ipairs(order) do
         if definitions[id].collectionSource then repeated[id]=true end
         for _,edge in pairs(incoming[id]) do if repeated[edge.from] then repeated[id]=true end end
         if repeated[id] and definitions[id].sink and not definitions[id].displayStack and not definitions[id].debugPreview and not definitions[id].memoryOperation then

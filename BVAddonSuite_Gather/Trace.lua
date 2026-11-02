@@ -44,6 +44,8 @@ function H:Add(instance,X,Y)
     if self.last==instance*1000000+tile*10000+cell then return false end
     self.last=instance*1000000+tile*10000+cell
     cells[cell]=(cells[cell] or 0)+1
+    -- (BV Routing's overlay changes only when a cell is walked first or often enough)
+    if cells[cell]==1 or cells[cell]==H.WALKED then H.rev=H.rev+1 end
     return true
 end
 function H:Count(instance,X,Y)
@@ -77,11 +79,32 @@ function H:Sample()
     end
     return self:Add(instance,X,Y) or added
 end
-function H:Forget() self:Store();G.Data.db.heat={} end
--- BV Routing's grid asks us: how often a terrain cell was walked (cities'
--- streets, "Prefer walked ways").
-G.Grid.WalkCount=function(instance,X,Y) return H:Count(instance,X,Y) end
-G.Grid.PreferWalked=function() return G:Config().preferWalked end
+H.rev=0
+function H:Forget() self:Store();G.Data.db.heat={};H.rev=H.rev+1 end
+-- BV Routing's navmesh planner (HpaOverlay.lua): the walked cells of a continent in its map coordinates, for Navigate
+-- and Gather's routes alike (Claude 2026-10-26).
+local Hpa=G.Routing and G.Routing.Hpa
+if Hpa then
+    Hpa.PreferWalked=function() return G:Config().preferWalked end
+    Hpa.walked={
+        rev=function() return H.rev end,
+        points=function(cont,add)
+            local MT=ns.MapTerrain
+            local frame=MT and MT.Frame and MT:Frame(cont)
+            if not frame then return end
+            local ADT=MT.ADT
+            for tile,list in pairs(H:Store()[frame.instance] or {}) do
+                local col,row=math.floor(tile/100),tile%100
+                for c,n in pairs(list) do
+                    if n>0 then
+                        local X,Y=(32-(row+(math.floor(c/64)+.5)/64))*ADT,(32-(col+(c%64+.5)/64))*ADT
+                        add((Y-frame.a[frame.ix])/frame.dx,(X-frame.a[frame.iy])/frame.dy,n)
+                    end
+                end
+            end
+        end,
+    }
+end
 function H:Enable(context)
     self.ticker=C_Timer.NewTicker(H.EVERY,function() H:Sample() end)
     context:Defer(function() if H.ticker then H.ticker:Cancel();H.ticker=nil end end)

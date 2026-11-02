@@ -30,8 +30,11 @@ function C:Text()
     local function hex(key) local r,g,b=s:Color(key);return string.format("|cff%02x%02x%02x",r*255,g*255,b*255) end
     local muted,text=hex("muted"),hex("text")
     local mapID=map and map.GetMapID and map:GetMapID()
+    local info=P.Call("C_Map.GetMapInfo",mapID)
+    local continent=type(info)=="table" and info.mapType==2
     if c.coordsPlayer then
-        local x,y=P:PlayerPosition(mapID)
+        -- A continent shown (the seamless map): your position in your zone.
+        local x,y=P:PlayerPosition(not continent and mapID or nil)
         parts[#parts+1]=muted.."Player|r "..text..P:Format(x,y).."|r"
     end
     if c.coordsCursor then
@@ -39,7 +42,10 @@ function C:Text()
         local x,y
         if container and container.GetNormalizedCursorPosition and container:IsMouseOver() then
             local ok,cx,cy=pcall(container.GetNormalizedCursorPosition,container)
-            if ok and type(cx)=="number" and cx>=0 and cx<=1 and cy>=0 and cy<=1 then x,y=cx,cy end
+            if ok and type(cx)=="number" and cx>=0 and cx<=1 and cy>=0 and cy<=1 then
+                x,y=cx,cy
+                if continent then local _;_,x,y=P:ZoneAt(mapID,cx,cy) end
+            end
         end
         parts[#parts+1]=muted.."Cursor|r "..text..P:Format(x,y).."|r"
     end
@@ -60,6 +66,7 @@ function C:Update()
         strip.text:ClearAllPoints();M.Point(strip.text,"LEFT",strip,"LEFT",8,0);M.Size(strip.text,width-12,18)
         strip:Show()
     elseif self.strip then self.strip:Hide() end
+    if P.WindowSkin then P.WindowSkin:ControlVisibility() end
     self:Legend(P:Active() and c.legend and map and map:IsShown() or false)
     self:Tick(show and "map" or nil)
 end
@@ -82,8 +89,13 @@ end
 -- quiet above the coordinates; only those that work now.
 function C:LegendText()
     local c=P:Config()
-    local parts={"Ctrl+click: waypoint"}
-    if c.routeClick and P.Path and P.Path.Routing and P.Path:Routing() then parts[#parts+1]="Ctrl+Shift+click: route there" end
+    local routes=c.routeClick and P.Path and P.Path.Routing and P.Path:Routing()
+    local parts
+    if routes and P.Path:CtrlRoutes() then parts={"Ctrl+click: route there","Ctrl+Shift+click: waypoint"}
+    else
+        parts={"Ctrl+click: waypoint"}
+        if routes then parts[#parts+1]="Ctrl+Shift+click: route there" end
+    end
     if c.altClick then parts[#parts+1]="Alt+click: add to path" end
     return table.concat(parts,"  \194\183  ")
 end

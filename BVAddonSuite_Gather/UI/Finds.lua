@@ -14,12 +14,14 @@ local WIDTH,ROW=290,18
 function W:Build()
     if self.window then return self.window end
     local rows=G.Scanner.RECENT
-    local height=82+rows*ROW
-    UI:WithStyle(G:Style(),function()
-        local w=UI:Window("BVGatherFinds",WIDTH,height,{title="Minimap finds",minWidth=WIDTH,minHeight=height,compact=true})
+    local height=70+rows*ROW
+    local style=UI:InterfaceStyle()
+    if not style then return nil end
+    UI:WithStyle(style,function()
+        local w=UI:Window("BVGatherFinds",WIDTH,height,{title="Minimap finds",minWidth=WIDTH,minHeight=height,compact=true,hudIcon="search",gameplaySurface=true})
         for i=#UISpecialFrames,1,-1 do if UISpecialFrames[i]=="BVGatherFinds" then table.remove(UISpecialFrames,i) end end
         w:SetResizable(false);if w.resizeGrip then w.resizeGrip:Hide() end;if w.maximize then w.maximize:Hide() end
-        self.window=w
+        self.window=w;w.bvStyle=style
         local c=w.content
         self.status=UI:Label(c,"",11,"muted");M.Point(self.status,"TOPLEFT",c,"TOPLEFT",12,-8);M.Size(self.status,WIDTH-104,18);self.status:SetWordWrap(false)
         self.clear=UI:Button(c,"Clear",72,function() G.Scanner:Clear() end,"ghost");M.Point(self.clear,"TOPRIGHT",c,"TOPRIGHT",-12,-4)
@@ -30,8 +32,14 @@ function W:Build()
             row:SetScript("OnEnter",function(self) self.hover:Show() end)
             row:SetScript("OnLeave",function(self) self.hover:Hide() end)
             row:SetScript("OnClick",function(self) if self.find then G.Scanner:Target(self.find) end end)
-            ns.UI:AttachTooltip(row,"Go there","Click: a purple line from you to this find on the minimap and the map. Click again to clear; it ends when you get there or gather it, when it is gone, or when you walk far away.")
-            row.name=UI:Label(row,"",11,"text");M.Point(row.name,"LEFT",row,"LEFT",0,0);M.Size(row.name,WIDTH-130,ROW);row.name:SetWordWrap(false)
+            ns.UI:AttachTooltip(row,"Go there","S: surface. U: underground. ?: missing or ambiguous spawn data; nearby deposits on different levels cannot be distinguished on the minimap. Click: a purple line to this find; click again to clear.")
+            row.layer=UI:Label(row,"?",11,"muted",true);M.Point(row.layer,"LEFT",row,"LEFT",0,0);M.Size(row.layer,16,ROW)
+            row.name=UI:Label(row,"",11,"text");M.Point(row.name,"LEFT",row,"LEFT",18,0);M.Size(row.name,WIDTH-148,ROW);row.name:SetWordWrap(false)
+            function row:PaintName()
+                local role=self.find and self.find.watched and (style.materialProfile=="interface" and "accentText" or "accent") or "text"
+                self.name:SetTextColor(style:Color(role))
+            end
+            style:Bind(function() row:PaintName() end,row.name)
             row.info=UI:Label(row,"",11,"muted");M.Point(row.info,"RIGHT",row,"RIGHT",0,0);M.Size(row.info,104,ROW);row.info:SetJustifyH("RIGHT")
             self.rows[i]=row
         end
@@ -52,6 +60,7 @@ end
 -- the switch and the menu disagreed).
 function W:Show(on)
     local w=self:Build()
+    if not w then return nil end
     if on==nil then on=not w:IsShown() end
     local c=G:Config()
     c.findsWindow=on and true or false
@@ -61,11 +70,14 @@ function W:Show(on)
 end
 -- With the gather mode: shown when it is wanted, the wish kept.
 function W:Follow(on)
+    if not self.window and not UI:InterfaceStyle() then return nil end
     local c=G:Config()
     local show=on and c.modeFinds==true
     if not show and not self.window then return end
+    local w=self:Build()
+    if not w then return nil end
     c.findsWindow=show
-    self:Build():SetShown(show)
+    w:SetShown(show)
     G:WindowsChanged()
 end
 -- Distance, direction and "how long ago" tick once a second while open.
@@ -95,19 +107,26 @@ function W:Refresh()
         row.mark:SetShown(find~=nil and find.node~=nil and find.node==S.target)
         if find then
             row.name:SetText(find.name)
-            if find.watched then row.name:SetTextColor(G:Style():Color("accent")) else row.name:SetTextColor(G:Style():Color("text")) end
+            local layer=find.node and find.node.layer or "unknown"
+            row.layer:SetText(layer=="surface" and "S" or layer=="underground" and "U" or "?")
+            row:PaintName()
             local yards,direction=S:Relative(find)
             row.info:SetText(string.format("%s  ·  %d yd %s",ago(now-find.time),yards,direction))
         end
     end
     self.empty:SetShown(#S.recent==0)
-    self.empty:SetText("Herbs and ore the scanner sees on the HUD's minimap show here, newest first (Find Herbs or Find Minerals must be on).")
+    self.empty:SetText("Herbs and ore the scanner sees on the HUD's minimap show here, newest first (Find Herbs or Find Minerals must be on). S: surface, U: underground, ?: unknown or ambiguous.")
 end
 function W:Enable(context)
+    if not self.window and not UI:InterfaceStyle() then return nil end
     -- Open after a reload when it was, or when the gather mode is on and
     -- brings it (Florian 2026-10-14: the mode was on, its switch set, the
     -- window missing until the switch was flipped).
     local c=G:Config()
-    if c.findsWindow or (c.modeFinds and G.Mode:On()) then self:Build():Show();c.findsWindow=true end
+    if c.findsWindow or (c.modeFinds and G.Mode:On()) then
+        local w=self:Build()
+        if not w then return nil end
+        w:Show();c.findsWindow=true
+    end
     context:Defer(function() if W.window then W.window:Hide() end;W:Watch(false) end)
 end

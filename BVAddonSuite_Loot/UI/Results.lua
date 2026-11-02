@@ -11,46 +11,61 @@ L.Results=S
 local HEADER,ROW=28,17
 
 -- parent: anchor cards come from the pool; history cards live in their window.
-function S.Label(c,...) if c.game then return UI:GameLabel(L.ID,...) end;return UI:Label(...) end
-function S.Color(c,key) if c.game then return UI:GameStyle(L.ID):Color(key) end;return Theme:Color(key) end
-function S:Card(parent)
+function S.Label(c,...)
+    if c.bvStyle then
+        local label=UI:WithStyle(c.bvStyle,UI.Label,UI,...)
+        c.bvStyle:Bind(function() if label.bvLootRole then label:SetTextColor(c.bvStyle:Color(label.bvLootRole)) elseif label.bvLootColor then label:SetTextColor(unpack(label.bvLootColor)) end end,label)
+        c.semanticLabels=c.semanticLabels or {};c.semanticLabels[#c.semanticLabels+1]=label
+        return label
+    end
+    if c.game then return UI:GameLabel(L.ID,...) end;return UI:Label(...)
+end
+function S.Color(c,key) if c.bvStyle then return c.bvStyle:Color(key) end;if c.game then return UI:GameStyle(L.ID):Color(key) end;return Theme:Color(key) end
+function S:Card(parent,capturedStyle)
+    if not capturedStyle then capturedStyle=W:Style() end
     local c=not parent and table.remove(self.pool)
     if c then return c end
-    -- Cards take the module's in-game style (0.8.91): on screen and, since
-    -- the form kit (Loot 0.8.91), in the history window too. Built
-    -- inside UI:WithStyle, so the close button follows as well.
-    if UI.styleOverride~=UI:GameStyle(L.ID) then return UI:WithStyle(UI:GameStyle(L.ID),self.Card,self,parent) end
-    c={rows={},game=true}
+    -- History opts into its captured window style. Game cards and parented game
+    -- tooltips keep the module style unless that explicit argument is supplied.
+    local cardStyle=capturedStyle or UI:GameStyle(L.ID)
+    if UI.styleOverride~=cardStyle then return UI:WithStyle(cardStyle,self.Card,self,parent,capturedStyle) end
+    c={rows={},game=not capturedStyle,bvStyle=capturedStyle}
     local f
-    if parent then f=UI:GamePanel(L.ID,parent,290,60,"canvas")
+    if capturedStyle then
+        if not parent or parent==UIParent then f=W:Surface(parent or self.anchor.frame,290,60,parent==UIParent and "tooltip" or "panel",capturedStyle)
+        else f=UI:Panel(parent,290,60,"canvas");f.bvStyle=capturedStyle end
+    elseif parent then f=UI:GamePanel(L.ID,parent,290,60,"canvas")
     else f=UI:GamePanel(L.ID,self.anchor.frame,290,60,"canvas",nil,function() return L:Config().panelOpacity/100 end) end
-    W.Owned(f);c.frame=f;f:Hide();f:EnableMouse(true)
-    c.item=W:ItemIcon(f,22,c.game);UI:Place(c.item,f,6,3)
-    c.name=S.Label(c,f,"",13,false,true);c.name:SetWordWrap(false)
-    c.tag=S.Label(c,f,"",10,false);c.tag:SetJustifyH("RIGHT")
-    c.close=UI:IconButton(f,"close",function() if c.history then S:HideHistoryCard(c) else S:Release(c) end end,"window")
+    W.Owned(f);c.frame=f;c.content=f.content or f;f:Hide();f:EnableMouse(true)
+    c.item=W:ItemIcon(c.content,22,c.game,capturedStyle);UI:Place(c.item,f,6,3)
+    c.name=S.Label(c,c.content,"",13,false,true);c.name:SetWordWrap(false)
+    c.tag=S.Label(c,c.content,"",10,false);c.tag:SetJustifyH("RIGHT")
+    c.close=UI:IconButton(c.content,"close",function() if c.history then S:HideHistoryCard(c) else S:Release(c) end end,f.materialCarrier and "icon-only" or "window")
     D.Size(c.close,18,18)
-    c.rule=f:CreateTexture(nil,"ARTWORK");c.rule:SetColorTexture(1,1,1,.08)
+    c.rule=c.content:CreateTexture(nil,"ARTWORK");c.rule:SetColorTexture(1,1,1,.08)
     c.fader=W:Fader(f)
     c.item:SetScript("OnEnter",function(owner) if c.roll then W:ItemTooltip(owner,{link=c.roll.link,itemID=c.roll.itemID,roll=c.roll,source="results"}) end end)
     c.item:SetScript("OnLeave",function(owner) W:HideTooltip(owner) end)
-    f:SetScript("OnEnter",function() S:Pause(c,true) end)
-    f:SetScript("OnLeave",function() S:Pause(c,false) end)
+    f:SetScript("OnEnter",function(owner) S:Pause(c,true);if f.materialCarrier and c.roll then W:ItemTooltip(owner,{link=c.roll.link,itemID=c.roll.itemID,roll=c.roll,name=c.roll.name,source="results"})end end)
+    f:SetScript("OnLeave",function(owner) S:Pause(c,false);if f.materialCarrier then W:HideTooltip(owner)end end)
+    if f.materialCarrier then f:HookScript("OnHide",function(owner)W:HideTooltip(owner)end)end
     return c
 end
 function S:Row(c,index)
     local row=c.rows[index]
     if row then return row end
     row={}
-    row.band=c.frame:CreateTexture(nil,"BACKGROUND",nil,2)
-    row.rank=S.Label(c,c.frame,"",11,"muted");row.rank:SetJustifyH("RIGHT")
+    row.band=c.content:CreateTexture(nil,"BACKGROUND",nil,2)
+    row.rank=S.Label(c,c.content,"",11,"muted");row.rank:SetJustifyH("RIGHT")
     row.crown=c.frame:CreateTexture(nil,"OVERLAY")
     local path,l,r,t,b=ns.Symbols:Coords("crown",32)
     if path then row.crown:SetTexture(path);row.crown:SetTexCoord(l,r,t,b) end
     row.crown:SetVertexColor(1,.82,.2)
-    row.name=S.Label(c,c.frame,"",12,false,true);row.name:SetWordWrap(false)
-    row.choice=S.Label(c,c.frame,"",11,false)
-    row.value=S.Label(c,c.frame,"",12,false,true);row.value:SetJustifyH("RIGHT")
+    row.name=S.Label(c,c.content,"",12,false,true);row.name:SetWordWrap(false)
+    row.choice=S.Label(c,c.content,"",11,false)
+    row.value=S.Label(c,c.content,"",12,false,true);row.value:SetJustifyH("RIGHT")
+    row.rank.bvLootRole="muted"
+    if c.bvStyle then c.bvStyle:Bind(function() local r,g,b=c.bvStyle:Color("accent");row.band:SetColorTexture(r,g,b,.14) end,row.band) end
     c.rows[index]=row
     return row
 end
@@ -60,20 +75,20 @@ function S:Paint(c)
     local info=roll.link and L.Item(roll.link) or {}
     local r,g,b=L.QualityColor(roll.quality or info.quality or 1)
     c.item:SetItem(roll.icon or info.icon,roll.quality or info.quality)
-    UI:Place(c.name,c.frame,34,5);D.Size(c.name,w-110,18)
-    c.name:SetText(roll.name or info.name or "?");c.name:SetTextColor(r,g,b)
+    UI:Place(c.name,c.frame,34,5);D.Size(c.name,math.max(20,w-(c.frame.materialCarrier and 136 or 110)),18)
+    W:Caption(c.frame.materialCarrier and c.bvStyle or nil,c.name,roll.name or info.name or "?");c.name:SetTextColor(r,g,b)
     c.tag:ClearAllPoints();D.Point(c.tag,"TOPRIGHT",c.frame,"TOPRIGHT",-28,-7);D.Size(c.tag,70,14)
     -- Live card while the roll runs: "Rolling", answers so far, no winner yet.
     if not roll.done then
         local answered=#roll.names
         local total=roll.targetList and #roll.targetList>0 and #roll.targetList or nil
         c.tag:SetText(total and string.format("Rolling %d/%d",answered,total) or "Rolling…")
-        c.tag:SetTextColor(S.Color(c,"warning"))
+        c.tag.bvLootRole="warning";c.tag:SetTextColor(S.Color(c,"warning"))
     else
         local source=roll.kind=="bv" and ("ML "..(roll.owner or "")) or (LOOT_ROLL or "Roll")
         if c.history and roll.at and date then source=date("%H:%M",roll.at).."  "..source end
         c.tag:SetText(source)
-        c.tag:SetTextColor(S.Color(c,"muted"))
+        c.tag.bvLootRole="muted";c.tag:SetTextColor(S.Color(c,"muted"))
     end
     c.close:ClearAllPoints();D.Point(c.close,"TOPRIGHT",c.frame,"TOPRIGHT",-5,-5)
     -- WoW draws the header rule in its gold edge colour.
@@ -90,7 +105,7 @@ function S:Paint(c)
         if entry then
             local winner=roll.done==true and roll.winner==entry.name
             row.rank:ClearAllPoints();UI:Place(row.rank,c.frame,6,y);D.Size(row.rank,14,ROW);row.rank:SetText(index..".");row.rank:Show()
-            row.name:ClearAllPoints();UI:Place(row.name,c.frame,24,y);D.Size(row.name,w-130,ROW)
+            row.name:ClearAllPoints();UI:Place(row.name,c.frame,24,y);D.Size(row.name,math.max(20,w-(c.frame.materialCarrier and 170 or 130)),ROW)
             local cr,cg,cb=L.ClassColor(entry.class)
             row.name:SetText(entry.name..(entry.manual and " *" or ""));row.name:SetTextColor(cr,cg,cb);row.name:Show()
             local def=entry.choice and L.OptionDef(roll,entry.choice)
@@ -98,7 +113,8 @@ function S:Paint(c)
             row.choice:SetText(def and def.label or "");row.choice:SetTextColor(unpack(def and def.color or {.8,.8,.8}));row.choice:Show()
             row.value:ClearAllPoints();D.Point(row.value,"TOPRIGHT",c.frame,"TOPRIGHT",-8,-y);D.Size(row.value,34,ROW)
             row.value:SetText(entry.value and tostring(entry.value) or (roll.done and "–" or "…"))
-            if winner then row.value:SetTextColor(S.Color(c,"accent")) else row.value:SetTextColor(1,1,1) end
+            row.value.bvLootRole=winner and (c.bvStyle and "accentText" or "accent") or nil
+            if winner then row.value:SetTextColor(S.Color(c,row.value.bvLootRole)) else row.value:SetTextColor(1,1,1) end
             row.value:Show()
             if winner then
                 row.band:ClearAllPoints();D.Point(row.band,"TOPLEFT",c.frame,"TOPLEFT",3,-y);D.Point(row.band,"TOPRIGHT",c.frame,"TOPRIGHT",-3,-y);D.Height(row.band,ROW)
@@ -120,7 +136,11 @@ function S:Paint(c)
         y=y+ROW
     end
     D.Size(c.frame,w,y+6)
+    W:Quality(c.frame,r,g,b)
+    c.rule:SetAlpha(c.frame.materialCarrier and c.frame.materialCarrier:GetAlpha() or 1)
+    for _,label in ipairs(c.semanticLabels or {}) do label.bvLootColor={label:GetTextColor()} end
 end
+
 function S:Frames()
     local out={}
     for i,c in ipairs(self.cards) do out[i]=c.frame end
@@ -254,11 +274,13 @@ end
 local HISTORY_W,HISTORY_H=340,640
 function S:HistoryWindow()
     if self.history then return self.history end
-    return UI:WithStyle(UI:GameStyle(L.ID),self.BuildHistory,self)
+    local style=UI:InterfaceStyle();if not style then return nil end
+    return UI:WithStyle(style,self.BuildHistory,self,style)
 end
-function S:BuildHistory()
-    local w=W.Owned(UI:Dialog("BVLootHistoryWindow",HISTORY_W,HISTORY_H))
-    self.history=w;w.cards={}
+function S:BuildHistory(style)
+    style=style or UI:InterfaceStyle();if not style then return nil end
+    local w=W.Owned(UI:Dialog("BVLootHistoryWindow",HISTORY_W,HISTORY_H,nil,{escapeScope=style.materialProfile=="interface"}))
+    self.history=w;w.bvStyle=style;w.cards={}
     w.list=CreateFrame("ScrollFrame",nil,w.content);UI:Place(w.list,w.content,8,8);D.Size(w.list,HISTORY_W-16,HISTORY_H-36-16)
     w.list:SetClipsChildren(true);w.list:EnableMouseWheel(true)
     w.child=CreateFrame("Frame",nil,w.list);D.Size(w.child,HISTORY_W-24,10);w.list:SetScrollChild(w.child)
@@ -286,14 +308,14 @@ function S:HideHistoryCard(c) c.frame:Hide();c.roll=nil;self:LayoutHistory() end
 -- Shows the last count results (default 10) in their own window.
 function S:ShowHistory(count)
     count=math.max(1,math.min(KEEP,math.floor(tonumber(count) or 10)))
-    local w=self:HistoryWindow()
+    local w=self:HistoryWindow();if not w then return nil end
     local store=self:Store()
     local shown=math.min(count,#store)
     w.title:SetText(string.format("Roll results · last %d",shown))
     for index=1,math.max(shown,#w.cards) do
         local c=w.cards[index]
         if index<=shown then
-            if not c then c=self:Card(w.child);c.history=true;c.bvWidth=HISTORY_W-28;w.cards[index]=c end
+            if not c then c=self:Card(w.child,w.bvStyle.materialProfile=="interface" and w.bvStyle or nil);c.history=true;c.bvWidth=HISTORY_W-28;w.cards[index]=c end
             c.roll=S.Rehydrate(store[index]);self:Paint(c);c.frame:SetAlpha(1);c.frame:Show()
         elseif c then c.roll=nil;c.frame:Hide() end
     end

@@ -1,11 +1,11 @@
 local package,L=...
 local ns=BVAddonSuiteCore
 if not ns or not ns.RequireCore then
-    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.89 or newer. Update Core; saved data is preserved.") end
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.113 or newer. Update Core; saved data is preserved.") end
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.8.92","0.8.96",1) then return end
+if not ns:RequireCore(package,"0.8.97","0.8.113",1) then return end
 -- Shared state of the loot package. Files below fill L (package-private table):
 -- Rolls (data), RollFrame/Monitor/Results (views), Master (window), Sim.
 L.ns=ns
@@ -33,7 +33,7 @@ L.DEFAULTS={enabled=false,
     customEnabled=false,customText="",customSymbol="star",customAfter="",
     -- In-game style (0.8.91, Core 0.8.95 style families): own family or the
     -- suite's, optional roll bar background, opacity of toasts and cards (%).
-    styleFamily="inherit",rollBackground=false,rollBgOpacity=75,rollBgOwnColor=false,rollBgColor="141414FF",panelOpacity=100}
+    styleFamily="inherit",rollBackground=false,rollBgOpacity=75,rollBgOwnColor=false,rollBgColor="141414FF",panelOpacity=100,panelBackground=true,panelBgOwnColor=false,panelBgColor="141414FF"}
 local GROW={UP=true,DOWN=true}
 -- tooltip (0.8.90): no cards; the overview shows on hovering a roll bar.
 local MODES={toast=true,sticky=true,tooltip=true}
@@ -48,7 +48,7 @@ function L:Config()
     if cfg.rollKind==nil and cfg.rollInfo~=nil then cfg.rollKind,cfg.rollStats=cfg.rollInfo==true,cfg.rollInfo==true end
     for key,value in pairs(self.DEFAULTS) do if cfg[key]==nil then cfg[key]=value end end
     for _,key in ipairs({"rolls","rollKind","rollStats","rollKeep","rollQualityBar","hideBlizzard","monitor","monitorSelf","monitorGroup",
-        "monitorMoney","results","master","masterAutoOpen","masterAnnounce","acceptRequests","customEnabled","rollBackground","rollBgOwnColor"}) do cfg[key]=cfg[key]==true end
+        "monitorMoney","results","master","masterAutoOpen","masterAnnounce","acceptRequests","customEnabled","rollBackground","rollBgOwnColor","panelBackground","panelBgOwnColor"}) do cfg[key]=cfg[key]==true end
     if L.CleanCustom then cfg.customText,cfg.customSymbol=L.CleanCustom(cfg.customText,cfg.customSymbol) end
     if type(cfg.customAfter)~="string" or not (cfg.customAfter=="" or L.OPTIONS[cfg.customAfter]) or cfg.customAfter=="pass" then cfg.customAfter="" end
     cfg.rollWidth=num(cfg.rollWidth,330,200,600,true);cfg.rollHeight=num(cfg.rollHeight,30,20,48,true)
@@ -60,9 +60,10 @@ function L:Config()
     cfg.resultsRows=num(cfg.resultsRows,5,1,10,true);cfg.resultsWidth=num(cfg.resultsWidth,290,200,500,true)
     cfg.resultsLinger=num(cfg.resultsLinger,20,3,120,true)
     cfg.masterRollTime=num(cfg.masterRollTime,30,10,120,true)
-    cfg.rollBgOpacity=num(cfg.rollBgOpacity,75,0,100,true);cfg.panelOpacity=num(cfg.panelOpacity,100,20,100,true)
+    cfg.rollBgOpacity=num(cfg.rollBgOpacity,75,0,100,true);cfg.panelOpacity=num(cfg.panelOpacity,100,0,100,true)
     if cfg.styleFamily~="inherit" and not ns.Styles.families[cfg.styleFamily] then cfg.styleFamily="inherit" end
     if type(cfg.rollBgColor)~="string" or not cfg.rollBgColor:match("^%x%x%x%x%x%x%x%x$") then cfg.rollBgColor="141414FF" end
+    if type(cfg.panelBgColor)~="string" or not cfg.panelBgColor:match("^%x%x%x%x%x%x%x%x$") then cfg.panelBgColor="141414FF" end
     for _,key in ipairs({"rollGrow","monitorGrow","resultsGrow"}) do if not GROW[cfg[key]] then cfg[key]=self.DEFAULTS[key] end end
     if not MODES[cfg.resultsMode] then cfg.resultsMode="toast" end
     if type(cfg.rollBarColor)~="string" or not cfg.rollBarColor:match("^%x%x%x%x%x%x%x%x$") then cfg.rollBarColor="3D7BD9FF" end
@@ -76,6 +77,7 @@ function L:Family() return ns.Styles:Family(self.ID) end
 -- The WoW gold frame (2 + inner line) needs more room than the thin borders.
 function L.RollPad(cfg)
     if not cfg.rollBackground then return 0 end
+    if ns.Config and ns.Config.shellStyle and ns.Config.shellStyle.materialProfile=="interface" then return 4 end
     return select(2,L:Family()).border=="gold" and 6 or 4
 end
 

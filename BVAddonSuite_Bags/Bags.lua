@@ -1,11 +1,11 @@
 local package=...
 local ns=BVAddonSuiteCore
 if not ns or not ns.RequireCore then
-    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.101 or newer. Update Core; saved data is preserved.") end
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.117 or newer. Update Core; saved data is preserved.") end
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.8.92","0.8.101",1) then return end
+if not ns:RequireCore(package,"0.8.116","0.8.117",1) then return end
 local N=ns.NativeButtons
 
 -- Blizzard's bag buttons, backpack last (it sits at the right end natively).
@@ -97,6 +97,7 @@ Bags=N:Bar({
     main={symbol="backpack",label="Bags",hint="Left-click: open or close all bags\nRight-click: keep the bag slots open\nHover: bag slots",
         text=freeSlots,
         click=function()
+            if Bags.Inventory and Bags:Config().replaceInventory~=false and not (InCombatLockdown and InCombatLockdown()) then Bags.Inventory:Toggle();return end
             if ToggleAllBags then ToggleAllBags() elseif OpenAllBags then OpenAllBags() end
         end},
     events={"BAG_UPDATE_DELAYED"},
@@ -128,11 +129,14 @@ local function expandNative(context)
 end
 ns.Modules:Register({id="bag_bar",OnEnable=function(context)
     expandNative(context);Bags:Enable(context)
+    if Bags.Inventory then Bags.Inventory:Refresh() end
+    context:Defer(function() if Bags.Inventory then Bags.Inventory:Refresh() end end)
     context:Defer(blizzardCount)
     C_Timer.NewTimer(0,backpackCount)
 end})
 local page
-ns.Config:RegisterPage("bags",{title="Bag Bar",description="Skinned bag slots anywhere on screen, or a single bag button.",
+ns.Config:RegisterPage("bags",{title="Bags",description="Customize your inventory, item categories, labels, stock counters and bag bar.",
+    interfaceSettings=true,
     build=function(parent)
         if not page then
             page=ns.UI:NativeBarPage(parent,Bags,function(p,cfg,changed)
@@ -145,7 +149,34 @@ ns.Config:RegisterPage("bags",{title="Bag Bar",description="Skinned bag slots an
                     "Direction in which the bag slots open from the single button.")
                 p.count=p:Row("Show free slots",ns.UI:Switch(g,true,function(value) cfg().showCount=value;changed();backpackCount() end),
                     "Number of free bag slots on the backpack and on the single button.")
-                function p:RefreshExtra(c) self.collapsed:SetValue(c.collapsed);self.flyout:SetValue(c.flyout);self.count:SetValue(c.showCount) end
+                p.enabled.bvGridRow.label:SetText("Replace Blizzard bag bar")
+                p:Section("inventory","Inventory window")
+                p.inventory=p:Row("Open inventory",ns.UI:Button(g,"Open inventory",145,function() if Bags.Inventory then Bags.Inventory:Toggle() end end),
+                    "Browse carried items and create categories. Also available with /bv inventory.")
+                p.invButton=p:Row("Replace Blizzard inventory",ns.UI:Switch(g,true,function(value)
+                    cfg().replaceInventory=value;if not value and Bags.Inventory.window then Bags.Inventory.window:Hide() end
+                end),"Your bag key opens BV Inventory even when the Blizzard bag bar is kept.")
+                local function inv() return Bags.Inventory:Config() end
+                local function redraw() Bags.Inventory:Refresh() end
+                p.relief=p:Row("Help when loot will not fit",ns.UI:Switch(g,true,function(value)
+                    inv().lootRelief=value;if not value and Bags.Inventory.Relief then Bags.Inventory.Relief:Close() end
+                end),"Compare the cost of freeing one slot. You choose and confirm each deletion.")
+                p:Section("stock","Stock counters")
+                p.dock=p:Row("Counter position",ns.UI:Dropdown(g,170,{
+                    {value="above",label="Above the bag bar"},{value="below",label="Below the bag bar"},
+                    {value="left",label="Left of the bag bar"},{value="right",label="Right of the bag bar"},
+                    {value="free",label="Layout Editor"}},function(value) inv().badgeDock=value;redraw() end),
+                    "Attach pinned item counts to either bag bar, or position them independently.")
+                p:Row("Free position",ns.UI:Button(g,"Open Layout Editor",170,function()
+                    inv().badgeDock="free";p.dock:SetValue("free");Bags.Inventory:UpdateBadge();ns.LayoutEditor:Open("bv:bagstock")
+                end),"Move the stock counters or link them to another suite element.")
+                p:Section("labels","Item labels")
+                p:Row("Icon text",ns.UI:Button(g,"Edit icon labels",170,function() Bags.Inventory:OpenIconLabels() end),
+                    "Preview text styles and choose which labels appear in each corner.")
+                function p:RefreshExtra(c)
+                    self.collapsed:SetValue(c.collapsed);self.flyout:SetValue(c.flyout);self.count:SetValue(c.showCount);self.invButton:SetValue(c.replaceInventory~=false)
+                    local i=inv();self.relief:SetValue(i.lootRelief~=false);self.dock:SetValue(i.badgeDock or "above")
+                end
             end)
         end
         return page

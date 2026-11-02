@@ -2,12 +2,13 @@
 ## Title: BV Addon Suite - Map
 ## Notes: Coordinates, transparency while moving, map size and waypoints (TomTom-compatible). Requires BV Core.
 ## Author: BV
-## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.2.7
+## IconTexture: Interface\AddOns\BVAddonSuite_Map\Media\Brand\module-icon
+## Version: 0.2.10
 ## Dependencies: BVAddonSuite
 ## OptionalDeps: TomTom
 
 Map.lua
+Data\Overviews.lua
 Zones.lua
 Navigation.lua
 Guard.lua
@@ -20,10 +21,13 @@ UI\Reveal.lua
 UI\Terrain.lua
 UI\Flights.lua
 UI\Zoom.lua
+UI\Seamless.lua
+UI\Islands.lua
 Probe.lua
 ZoneBanner.lua
 UI\Coords.lua
 UI\Neighbors.lua
+UI\WindowSkin.lua
 UI\Window.lua
 UI\Arrow.lua
 UI\WaypointList.lua

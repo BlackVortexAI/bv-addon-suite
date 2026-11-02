@@ -16,7 +16,60 @@ end
 -- The line between a map and the world: the map's corners in the world.
 -- The vector part that changes along the map's x is world Y (west), the
 -- one along its y is world X (north).
+-- Routing domains can exist without a client continent map. These projections
+-- come from the bound local UiMapAssignment records, not the live parent chain.
+-- Keep client C_Map untouched: only Routing's consumers use this definition.
+T.ROUTING_DOMAINS={
+    [2665]={instance=2991,zones={2521},maps={
+        [2521]={name="Zephras Isle",mapType=3,frame={4956.25,4231.25,5562.5,3708.3330078125}},
+        [2665]={name="Zephras Isle",mapType=2,frame={4956.25,4231.25,5562.5,3708.3299560547002}},
+    }},
+}
+function T:RoutingDomain(mapID)
+    for cont,d in pairs(self.ROUTING_DOMAINS) do
+        if d.maps[mapID] then return cont,d,d.maps[mapID] end
+    end
+end
+function T:RoutingPosition(from,to,x,y)
+    local ac,ad,a=self:RoutingDomain(from)
+    local bc,bd,b=self:RoutingDomain(to)
+    if ac and ac==bc then
+        a,b=a.frame,b.frame
+        return true,(b[2]-(a[2]-x*a[3]))/b[3],(b[1]-(a[1]-y*a[4]))/b[4]
+    end
+    return false
+end
+function T:RoutingMapCall(path,mapID,x,y)
+    local cont,d,m=self:RoutingDomain(mapID)
+    if not d then return false end
+    if path=="C_Map.GetMapWorldSize" then return true,m.frame[3],m.frame[4] end
+    local function info(id)
+        local z=d.maps[id]
+        return {mapID=id,name=z.name,mapType=z.mapType,parentMapID=cont}
+    end
+    if path=="C_Map.GetMapChildrenInfo" then
+        local out={}
+        if mapID==cont then
+            for _,id in ipairs(d.zones) do
+                if not x or x==d.maps[id].mapType then out[#out+1]=info(id) end
+            end
+        end
+        return true,out
+    end
+    if path=="C_Map.GetMapInfoAtPosition" then
+        if type(x)~="number" or type(y)~="number" then return true end
+        for _,id in ipairs(d.zones) do
+            local handled,zx,zy=self:RoutingPosition(mapID,id,x,y)
+            if handled and zx>=0 and zx<=1 and zy>=0 and zy<=1 then return true,info(id) end
+        end
+        return true
+    end
+    return false
+end
+
 function T:Frame(mapID)
+    local cont,d,m=self:RoutingDomain(mapID)
+    if m then local f=m.frame;return {instance=d.instance,a={f[1],f[2]},ix=2,iy=1,dx=-f[3],dy=-f[4]} end
     local vector=rawget(_G,"CreateVector2D")
     if not vector or type(mapID)~="number" then return nil end
     local function corner(x,y)

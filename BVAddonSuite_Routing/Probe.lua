@@ -41,10 +41,24 @@ function P:Note(text) if self.on then self:Add(">> "..text) end end
 function P:Plan(goal,steps)
     if not self.on then return end
     self:Add(string.format(">> PLAN to %s at %s",tostring(goal and goal.name),point(goal)))
+    local cfg=Routing:Config()
+    self:Add(string.format("   config mode %s roads %s/%s water %s cliffs %s",
+        tostring(cfg.routeMode),tostring(cfg.preferRoads),tostring(cfg.roadPercent),tostring(cfg.avoidWater),tostring(cfg.cliffs)))
+    local count=0
+    for _,step in ipairs(steps or {}) do count=count+(step.path and #step.path or 0) end
+    -- Exact geometry is needed to replay corner/progress reports. Keep long
+    -- tours bounded so their plan cannot evict all subsequent readings.
+    local capture=count<=512
+    if not capture then self:Add("   path omitted: "..count.." points (limit 512)") end
     for i,step in ipairs(steps or {}) do
         local apart=step.from.cont==step.to.cont and Routing.Navigate.Yards(step.from.cont,step.from.x,step.from.y,step.to.x,step.to.y) or nil
         self:Add(string.format("   %d. %s%s  %s -> %s  %s yd%s",i,step.kind,step.by and step.by.kind and ("/"..step.by.kind) or "",
             point(step.from),point(step.to),num(step.yards or apart),step.path and (", "..#step.path.." points") or ""))
+        if capture then for j,p in ipairs(step.path or {}) do
+            local z=p.z or p.endz
+            self:Add(string.format("   p%d.%d %.8f,%.8f z%s corner%d stack%d",i,j,p[1],p[2],
+                type(z)=="number" and string.format("%.3f",z) or "-",p.corner and 1 or 0,p.stack and 1 or 0))
+        end end
     end
 end
 -- One reading.
@@ -68,6 +82,16 @@ function P:Sample()
             parts[#parts+1]="  off-line "..num(N.Nearest(cont,cx,cy,step.path)).."  off "..tostring(N.off or 0)
             local reach=to.kind=="goal" and N.ARRIVE or to.kind=="door" and N.DOOR or N.REACH
             parts[#parts+1]="  ends at "..reach
+            parts[#parts+1]=string.format("  track along%s far%s ahead%s left%s outdoors%s",
+                num(N.trackAlong),num(N.farthest),tostring(N.ahead or "-"),num(N.left),tostring(N.outdoors))
+            -- Read the same anchor/target as the guide. Never call Locate or
+            -- Tick here: taking a diagnostic sample must not move progress.
+            local a=N:AnchorSample(cont,cx,cy)
+            if a then
+                parts[#parts+1]="  anchor"..num(a.along).." "..tostring(a.relation)
+                local tc,tx,ty,kind=N:CarrotFrom(a.along)
+                if tc then parts[#parts+1]=string.format("  target %s %.8f,%.8f %s",tostring(tc),tx,ty,tostring(kind)) end
+            end
         elseif step.kind=="transition" then
             local from=step.from
             local dFrom=from.cont==cont and N.Yards(cont,cx,cy,from.x,from.y) or nil
@@ -135,6 +159,7 @@ function P:Toggle()
         local version,build=Routing.Call("GetBuildInfo")
         local head={"BV route probe "..date("%Y-%m-%d %H:%M").."  client "..tostring(version).." build "..tostring(build),
             "Positions in percent of the map named; plan points on the continent map. \">>\": events. level: what Routing follows / cue: the subzone's.",
+            "p<step>.<point> and target: normalized continent coordinates (0..1); z in yards. track/anchor: yards along the planned path.",
             "z: your height from the NPCs near (Map Data z; range steps "..P.Steps()..", i interact, # item; y in range, n not, ? unknown); npc: each looked at.",
             "Name plates shown: friendly "..P.CVar("nameplateShowFriends").."  friendly NPCs "..P.CVar("nameplateShowFriendlyNPCs"),""}
         local text=table.concat(head,"\n")..table.concat(self.lines,"\n")

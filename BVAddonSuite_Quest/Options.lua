@@ -27,7 +27,14 @@ function Q:Changed()
 end
 local page
 local function build(parent)
-    page=UI:Panel(parent,880,600,"surface");UI:HideSurface(page)
+    -- Interface opt-in (2026-10-26, Config interfaceSettings): the page is built
+    -- in the captured Interface context like Gather. The page host stays a plain
+    -- ToolStyle container that never paints; without opt-in all is as before.
+    local pageStyle=UI:GetStyle();local interface=pageStyle.materialProfile=="interface"
+    if interface then
+        page=UI:WithStyle(UI:ToolStyle(),function() local host=UI:Panel(parent,880,600,"surface");UI:HideSurface(host);return host end)
+        page.bvStyle=pageStyle
+    else page=UI:Panel(parent,880,600,"surface");UI:HideSurface(page) end
     local g=UI:SettingsGrid(page);page.grid=g
     local controls={}
     local function cfg() return Q:Config() end
@@ -42,6 +49,9 @@ local function build(parent)
         {help="Quest log beside the world map: list, details of the selected quest, sorting and grouping."})
     g:Row("World map",UI:Button(g,"Open map",170,function() if ToggleWorldMap then ToggleWorldMap() end end),{help="Opens the world map with the quest log."})
     switch("hideBlizzard","Hide Blizzard's quest list","Closes Blizzard's own list beside the map while ours is shown; turning this or the module off gives it back.")
+    g:Section("automation","Quest dialog")
+    switch("autoAccept","Auto accept quests","Accepts a quest when you open its offer. Hold Shift for manual control. Shared quest confirmations and background offers stay manual; inactive in combat.")
+    switch("autoTurnIn","Auto turn in quests","Completes a ready quest when you open its dialog. Reward choices and quests requiring money stay manual. Hold Shift for manual control; inactive in combat.")
     g:Section("layout","Layout")
     dropdown("order","Order","Order of list, map and details from left to right. The map itself never moves or changes size.")
     controls.order:SetOptions(ORDERS)
@@ -62,9 +72,19 @@ local function build(parent)
     switch("showFooter","Summary line","Quests in the log, ready ones and their XP.")
     switch("dungeonColor","Dungeon quests tinted","Dungeon and raid quest names in a slightly warmer colour, in the list and the tracker.")
     g:Section("look","Look")
-    row("styleFamily","Style family",UI:Dropdown(g,190,ns.Styles:Choices(true),function(value) cfg().styleFamily=value;ns.Styles:Changed();Q:Changed() end),
-        "The suite's in-game style or an own one for list and details.")
-    controls.styleFamily:SetOptionsProvider(function() return ns.Styles:Choices(true) end)
+    if interface then
+        local hint=UI:Label(g,"Appearance follows the suite Interface theme.",12,"muted");hint:SetWordWrap(true)
+        g:Block(hint,24,function(width)
+            M.Width(hint,width);hint:SetHeight(0)
+            local height=math.max(24,M.ToDesign(hint:GetStringHeight())+4);M.Height(hint,height);return height
+        end)
+        g:Row("Suite appearance",UI:Button(g,"Open appearance",190,function() ns.Config:OpenPage("appearance") end),
+            {help="Change the shared appearance of the quest list, details, tracker and other suite windows."})
+    else
+        row("styleFamily","Style family",UI:Dropdown(g,190,ns.Styles:Choices(true),function(value) cfg().styleFamily=value;ns.Styles:Changed();Q:Changed() end),
+            "The suite's in-game style or an own one for list and details.")
+        controls.styleFamily:SetOptionsProvider(function() return ns.Styles:Choices(true) end)
+    end
     dropdown("density","Row height","Compact, normal or comfortable rows.")
     controls.density:SetOptions(DENSITY)
     slider("fontSize","Font size",9,18,1,"%d","Text size of the list.")
@@ -73,12 +93,13 @@ local function build(parent)
     switch("detailsText","Quest text","The description, collapsible in the details.")
     switch("detailsRewards","Rewards","XP, money and items; an arrow marks an upgrade over what you wear.")
     -- Tracker on screen (Horizon Focus as the model) and the dungeon banner.
-    local function trackerChanged(key) return function(value) cfg()[key]=value;Q.Tracker:Update() end end
+    local function trackerChanged(key) return function(value) cfg()[key]=value;Q.Tracker:Update();if key=="tracker" then Q.TrackerChoice:Check() end end end
     local function tswitch(key,title,help) return row(key,title,UI:Switch(g,false,trackerChanged(key)),help) end
     local function tdropdown(key,title,options,help) local control=row(key,title,UI:Dropdown(g,190,{},trackerChanged(key)),help);control:SetOptions(options);return control end
     local function tslider(key,title,low,high,step,format,help) return row(key,title,UI:InlineSlider(g,190,low,high,step,format,trackerChanged(key)),help) end
     g:Section("tracker","Tracker")
     tswitch("tracker","Show tracker","Quests on screen, nearest first.")
+    Q.TrackerChoice:BuildOptions(page,g)
     g:Row("Position",UI:Button(g,"Open Layout Editor",170,function() ns.LayoutEditor:Open("bv:questtracker") end),
         {help="Position, width and the most it grows to; taller content scrolls with the mouse wheel."})
     tswitch("trackerUnlocked","Move and resize freely","Drag the title to move it and the corner to resize it, without the Layout Editor. Off: fixed in place.")
@@ -104,25 +125,45 @@ local function build(parent)
             {help="Quest progress and quest ready appear on the notification stage; switch them there. The zone banner belongs to the Map module."})
     end
     local select=UI:SettingsTabs(page,g,{
-        {id="general",label="General",sections={"module","layout","banner"}},
+        {id="general",label="General",sections={"module","automation","layout","banner"}},
         {id="log",label="Quest log",sections={"list","look","details"}},
         {id="tracker",label="Tracker",sections={"tracker","trackerLook","trackerBehavior"}},
     })
     function page:Arrange(width)
         self.width=width
         UI:Place(g,self,0,0)
-        local height=g:Arrange(width)+8
+        -- Interface pages keep the approved 10-unit scroll reserve (as Gather).
+        local height=g:Arrange(interface and math.max(1,width-10) or width)+8
         M.Height(self,height);return height
     end
     function page:Refresh()
         local c=Q:Config()
         self.enabled:SetValue(ns.Settings:Module(Q.ID).enabled==true)
+        if self.trackerChoice then self.trackerChoice:Refresh() end
         for key,control in pairs(controls) do if control.SetValue then control:SetValue(c[key]) end end
+    end
+    if interface then
+        -- Profile change or hide closes only this page's own menus and picker.
+        local function owned(owner)
+            if not owner then return false end
+            for _,item in ipairs(g.items) do if item.control==owner then return true end end
+            return false
+        end
+        local function cancelOwnedMenu()
+            if UI.dropdown and owned(UI.dropdown.owner) then UI:CloseDropdown() end
+            if UI.colorPopup and owned(UI.colorPopup.owner) then UI.colorPopup:Hide() end
+        end
+        local dispose
+        local function watch() if not dispose then dispose=ns.Settings:BeforeProfileChange(page,cancelOwnedMenu) end end
+        page:HookScript("OnShow",watch)
+        page:HookScript("OnHide",function() cancelOwnedMenu();if dispose then dispose();dispose=nil end end)
+        if page:IsVisible() then watch() end
     end
     select("general");page:Refresh()
     return page
 end
 ns.Config:RegisterPage("quest",{title="Quest log",description="Quest log beside the world map: compact list, details, smart sorting.",
+    interfaceSettings=true,
     build=function(parent) return page or build(parent) end,
     refresh=function() if page then page:Refresh() end end})
 ns.Commands:RegisterAction("quest",function(action)

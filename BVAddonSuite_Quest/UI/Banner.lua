@@ -27,7 +27,8 @@ local function clock(seconds)
     if seconds>=3600 then return string.format("%d:%02d:%02d",math.floor(seconds/3600),math.floor(seconds/60)%60,seconds%60) end
     return string.format("%d:%02d",math.floor(seconds/60),seconds%60)
 end
-function B:Build(parent)
+function B:Build(parent,trackerStyle)
+    self.style=trackerStyle
     local f=CreateFrame("Button",nil,parent);f:Hide()
     f.band=f:CreateTexture(nil,"BACKGROUND");f.band:SetAllPoints(f);f.band:SetTexture("Interface\\Buttons\\WHITE8X8")
     f.stripe=f:CreateTexture(nil,"ARTWORK");f.stripe:SetTexture("Interface\\Buttons\\WHITE8X8")
@@ -61,24 +62,31 @@ function B:Layout(parent,y,width)
     if not f then return y end
     if not self:Shown() then f:Hide();self:Clock(false);return y end
     local v=self:Values()
-    local s,fam=Q:Style(),Q:Family()
+    local s,fam=self.style or Q:Style(),Q:Family()
     local size=Q:Config().fontSize
-    local function font(region,px,weight) ns.Styles:Font(fam,region,M.ToNative(px),weight or "regular","OUTLINE") end
+    local function font(region,px,weight)
+        if self.style then self.style:Font(region,px,weight or "regular")
+        else ns.Styles:Font(fam,region,M.ToNative(px),weight or "regular","OUTLINE") end
+    end
+    local headingH=self.style and math.max(16,size+4) or 16
+    local statsH=self.style and math.max(14,size+2) or 14
+    local statsY=self.style and 4+headingH+2 or 22
+    local height=self.style and statsY+statsH+4 or HEIGHT
     font(f.name,size,"bold");font(f.time,size,"bold");font(f.stats,size-2)
-    f.name:SetText(v.name);f.name:SetTextColor(s:Color("accent"))
+    f.name:SetText(v.name);f.name:SetTextColor(s:Color(self.style and "accentText" or "accent"))
     f.time:SetText(clock(v.elapsed));f.time:SetTextColor(s:Color("text"))
     f.stats:SetText(string.format("%s XP (%s/h)  ·  %s (%s/h)",large(v.xp),large(v.xpRate),money(v.money),money(v.moneyRate)))
     f.stats:SetTextColor(s:Color("muted"))
     local ar,ag,ab=s:Color("accent");f.band:SetVertexColor(ar,ag,ab,.16);f.stripe:SetVertexColor(ar,ag,ab,1)
     local r,g,b=s:Color("muted");f.restart.icon:SetVertexColor(r,g,b,1)
-    f:ClearAllPoints();M.Point(f,"TOPLEFT",parent,"TOPLEFT",6,-y);M.Size(f,width-12,HEIGHT)
-    f.name:ClearAllPoints();M.Point(f.name,"TOPLEFT",f,"TOPLEFT",6,-4);M.Size(f.name,width-110,16)
-    f.time:ClearAllPoints();M.Point(f.time,"TOPRIGHT",f,"TOPRIGHT",-24,-4);M.Size(f.time,70,16)
+    f:ClearAllPoints();M.Point(f,"TOPLEFT",parent,"TOPLEFT",6,-y);M.Size(f,width-12,height)
+    f.name:ClearAllPoints();M.Point(f.name,"TOPLEFT",f,"TOPLEFT",6,-4);M.Size(f.name,self.style and math.max(1,width-116) or width-110,headingH)
+    f.time:ClearAllPoints();M.Point(f.time,"TOPRIGHT",f,"TOPRIGHT",-24,-4);M.Size(f.time,70,headingH)
     f.restart:ClearAllPoints();M.Point(f.restart,"TOPRIGHT",f,"TOPRIGHT",-5,-5)
-    f.stats:ClearAllPoints();M.Point(f.stats,"TOPLEFT",f,"TOPLEFT",6,-22);M.Size(f.stats,width-24,14)
+    f.stats:ClearAllPoints();M.Point(f.stats,"TOPLEFT",f,"TOPLEFT",6,-statsY);M.Size(f.stats,width-24,statsH)
     f:Show()
     self:Clock(true)
-    return y+HEIGHT+6
+    return y+height+6
 end
 -- The time runs on while the banner is shown (one tick per second).
 function B:Clock(on)

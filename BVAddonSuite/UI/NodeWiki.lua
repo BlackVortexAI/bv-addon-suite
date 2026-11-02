@@ -26,9 +26,10 @@ local function clearView(view)
     for _,label in ipairs(view.headers)do label:Hide();label:SetText("")end
     for _,row in ipairs(view.rows)do row.frame:Hide();for _,cell in ipairs(row.cells)do cell:Hide();cell:SetText("")end end
 end
-local function measure(label,text,width,size,bold)
+local function measure(label,text,width,size,bold,style)
     label:SetText(literal(text));label:SetJustifyV("TOP");label:SetWordWrap(true)
-    ns.Theme:Font(label,M.ToNative(size),bold and ns.Theme:BoldFont() or nil)
+    if style and style.materialProfile=="interface" then style:Font(label,size,bold and "bold" or "regular")
+    else ns.Theme:Font(label,M.ToNative(size),bold and ns.Theme:BoldFont() or nil) end
     M.Width(label,width);M.Height(label,0)
     -- Keep all prepared text, including UTF-8. The estimate also protects mock and
     -- first-layout measurements before the native font renderer has settled.
@@ -40,19 +41,24 @@ local function measure(label,text,width,size,bold)
     local height=math.max(size*1.3*lines,M.ToDesign(label:GetStringHeight()))
     M.Height(label,height);label:Show();return height
 end
-function UI:NodeWiki(owner,provider)
+function UI:NodeWiki(owner,provider,options)
     local dialog=owner and owner.nodeWiki
+    local style=dialog and dialog.bvStyle or options and options.style or UI:GetStyle()
+    return UI:WithStyle(style,function()
     if not dialog then
         nextWindowID=nextWindowID+1
-        dialog=self:Dialog("BVAddonSuiteNodeWiki"..nextWindowID,WIDTH,HEIGHT,owner)
+        dialog=self:Dialog("BVAddonSuiteNodeWiki"..nextWindowID,WIDTH,HEIGHT,owner,{escapeScope=style.materialProfile=="interface"})
         if owner then owner.nodeWiki=dialog end
-        dialog.tableViews={};dialog.pageNumber=1;dialog.pageCount=1
+        dialog.bvStyle=style;dialog.tableViews={};dialog.pageNumber=1;dialog.pageCount=1
         local p=dialog.content
         dialog.subtitle=at(self:Label(p,"",13,"muted"),p,20,10);dialog.subtitle:SetJustifyV("TOP")
         dialog.topicLabel=at(self:Label(p,"Topic",12,"muted"),p,20,48)
         dialog.topic=at(self:Dropdown(p,340,{},function(value)dialog:LoadTopic(value)end),p,20,68)
         dialog.filterLabel=at(self:Label(p,"Filter rows",12,"muted"),p,380,48)
         dialog.filter=at(self:Input(p,WIDTH-400,function()end),p,380,68);dialog.filter:SetMaxLetters(80)
+        if dialog.TrackEscapeInput then
+            dialog:TrackEscapeInput(dialog.filter);dialog.filter.bvGraphEscapeDialog=dialog
+        end
         dialog.form=at(self:Form(p,WIDTH-40,HEIGHT-220,p),p,20,116);dialog.form:SetClipsChildren(true)
         dialog.previous=self:Button(p,"Previous",100,function()dialog:SetPage(dialog.pageNumber-1)end,"ghost")
         dialog.next=self:Button(p,"Next",100,function()dialog:SetPage(dialog.pageNumber+1)end,"ghost")
@@ -60,6 +66,7 @@ function UI:NodeWiki(owner,provider)
         dialog.notice=self:Label(p,"",12,"muted")
         function dialog:Layout()
             if not self.page then return end
+            return UI:WithStyle(style,function()
             local width,height=M.GetWidth(self),M.GetHeight(self)
             M.Size(self.subtitle,width-40,34)
             local topicWidth=math.min(340,(width-60)*.45)
@@ -91,17 +98,17 @@ function UI:NodeWiki(owner,provider)
                 if currentTable~=item.tableIndex then
                     currentTable=item.tableIndex;viewIndex=viewIndex+1;rowIndex=0;view=self.tableViews[viewIndex]
                     if not view then
-                        view={title=UI:Label(self.form.content,"",14,"accent",true),header=UI:Panel(self.form.content,tableWidth,36,"raised",nil,.65),headers={},rows={}}
+                        view={title=UI:Label(self.form.content,"",14,style.materialProfile=="interface" and "accentText" or "accent",true),header=UI:Panel(self.form.content,tableWidth,36,"raised",nil,.65),headers={},rows={}}
                         self.tableViews[viewIndex]=view
                     end
-                    at(view.title,self.form.content,0,y);y=y+measure(view.title,t.title,tableWidth,14,true)+8
+                    at(view.title,self.form.content,0,y);y=y+measure(view.title,t.title,tableWidth,14,true,style)+8
                     columnWidths={};local total=0
                     for _,c in ipairs(t.columns)do local weight=type(c.width)=="number" and c.width>0 and c.width<math.huge and c.width or 1/#t.columns;columnWidths[#columnWidths+1]=weight;total=total+weight end
                     local x,headerHeight=0,32
                     for i,c in ipairs(t.columns)do
                         columnWidths[i]=tableWidth*columnWidths[i]/total
                         local label=view.headers[i] or UI:Label(view.header,"",12,"muted",true);view.headers[i]=label
-                        at(label,view.header,x+10,8);headerHeight=math.max(headerHeight,measure(label,c.label,columnWidths[i]-20,12,true)+16);x=x+columnWidths[i]
+                        at(label,view.header,x+10,8);headerHeight=math.max(headerHeight,measure(label,c.label,columnWidths[i]-20,12,true,style)+16);x=x+columnWidths[i]
                     end
                     at(view.header,self.form.content,0,y);M.Size(view.header,tableWidth,headerHeight);view.header:Show();y=y+headerHeight
                 end
@@ -116,7 +123,7 @@ function UI:NodeWiki(owner,provider)
                     if item.empty and i>1 then cell:SetText("");cell:Hide()
                     else
                         local text=item.empty or item.row[c.key] or ""
-                        at(cell,row.frame,x+10,8);rowHeight=math.max(rowHeight,measure(cell,text,(item.empty and tableWidth or columnWidths[i])-20,13)+16)
+                        at(cell,row.frame,x+10,8);rowHeight=math.max(rowHeight,measure(cell,text,(item.empty and tableWidth or columnWidths[i])-20,13,nil,style)+16)
                     end
                     x=x+columnWidths[i]
                 end
@@ -124,6 +131,7 @@ function UI:NodeWiki(owner,provider)
                 if index==last or filtered[index+1].tableIndex~=currentTable then y=y+18 end
             end
             self.form:SetContentHeight(y)
+            end)
         end
         function dialog:SetPage(number)
             self.pageNumber=number;self:Layout();self.form.slider:SetValue(0)
@@ -156,5 +164,6 @@ function UI:NodeWiki(owner,provider)
         self:Bind(dialog,function()if dialog:IsShown()then dialog:Layout()end end)
     end
     dialog:Open(provider);return dialog
+    end)
 end
 

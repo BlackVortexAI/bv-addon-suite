@@ -14,21 +14,28 @@ function UI:BindPlayerChat(service)
         local dialog=UI.playerChatReview
         if #rows==0 and not dialog then return end
         if not dialog then
-            dialog=UI:Dialog("BVAddonSuitePlayerChat",560,350);UI.playerChatReview=dialog
+ local style=UI:InterfaceStyle();if not style then return end
+ local function make(method,...)
+  local args,n={...},select('#',...)
+  return UI:WithStyle(style,function()return UI[method](UI,unpack(args,1,n))end)
+ end
+
+            dialog=make("Dialog","BVAddonSuitePlayerChat",560,350,nil,{escapeScope=style.materialProfile=="interface"});UI.playerChatReview=dialog
+            dialog.bvStyle=style
             local p=dialog.content
             dialog.title:SetText("Player chat — review before sending")
-            dialog.destination=at(UI:Label(p,"",14,"text",true),p,20,8);D.Size(dialog.destination,520,40);dialog.destination:SetWordWrap(true)
-            dialog.message=at(UI:Label(p,"",14,"text"),p,20,50);D.Size(dialog.message,520,112);dialog.message:SetWordWrap(true)
-            dialog.status=at(UI:Label(p,"",12,"muted"),p,20,174);D.Size(dialog.status,520,52)
-            dialog.next=at(UI:Button(p,"Review next",130,function()
+            dialog.destination=at(make("Label",p,"",14,"text",true),p,20,8);D.Size(dialog.destination,520,40);dialog.destination:SetWordWrap(true)
+            dialog.message=at(make("Label",p,"",14,"text"),p,20,50);D.Size(dialog.message,520,112);dialog.message:SetWordWrap(true)
+            dialog.status=at(make("Label",p,"",12,"muted"),p,20,174);D.Size(dialog.status,520,52)
+            dialog.next=at(make("Button",p,"Review next",130,function()
                 local current=dialog.service:List();dialog.selected=current[1] and current[1].id;dialog.armed=nil;dialog:Refresh()
             end),p,20,250)
-            dialog.cancel=at(UI:Button(p,"Discard",110,function()
+            dialog.cancel=at(make("Button",p,"Discard",110,function()
                 local id=dialog.selected;dialog.selected=nil;dialog.armed=nil
                 if id then dialog.service:Cancel(id)end
                 dialog.status:SetText(labels.cancelled);dialog:Refresh()
             end),p,164,250)
-            dialog.send=at(UI:Button(p,"Send message",160,function()
+            dialog.send=at(make("Button",p,"Send message",160,function()
                 local id=dialog.selected;local armed=dialog.armed;dialog.armed=nil
                 if not id or armed~=id then return end
                 dialog.selected=nil
@@ -66,12 +73,14 @@ function UI:BindPlayerChat(service)
         dialog:Refresh()
         if #rows==0 and reason~="submitted_unconfirmed" and reason~="cancelled" then dialog:Hide()end
     end
+    binding.refresh=refresh
     service:Subscribe(binding,refresh)
     refresh(binding,"bound")
 end
 ns.Commands:RegisterAction("chat",function()
     local binding=UI.playerChatBinding
     if not binding or #binding.service:List()==0 then ns:Print("No pending player chat requests.");return end
+    binding.refresh(binding,"requested")
     local dialog=UI.playerChatReview
     if dialog then
         local rows=binding.service:List();dialog.selected=rows[1] and rows[1].id;dialog.armed=nil

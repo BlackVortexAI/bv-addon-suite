@@ -2,8 +2,8 @@
 ## Title: BV Addon Suite - Experience
 ## Notes: Experience bar, rested XP, pace and level-up estimates. Requires BV Core.
 ## Author: BV
-## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.8.93
+## IconTexture: Interface\AddOns\BVAddonSuite_Experience\Media\Brand\module-icon
+## Version: 0.8.94
 ## Dependencies: BVAddonSuite
 ## OptionalDeps: BVAddonSuite_Quest, BVAddonSuite_Codex
 

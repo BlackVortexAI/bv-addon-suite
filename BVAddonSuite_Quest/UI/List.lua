@@ -13,7 +13,10 @@ local GROUPS={{value="currentzone",label="Current zone first"},{value="zone",lab
 local SORTS={{value="distance",label="Nearest objective"},{value="progress",label="Progress"},{value="ready",label="Ready first"},
     {value="level",label="Level"},{value="recent",label="Recent progress"},{value="title",label="Name"}}
 
-local function style() return Q:Style() end
+local function style() return Q.Panes.style or Q:Style() end
+-- Match the Interface tracker: authored label case, independent of a saved
+-- Legacy module-family preference. Legacy keeps its family transformation.
+local function textLabel(value) return style().materialProfile=="interface" and value or ns.Styles:Label(Q:Family(),value) end
 function L:Build(pane)
     self.pane=pane
     local s=style()
@@ -65,6 +68,10 @@ function L:Row(index)
         row:SetScript("OnEnter",function() row.hovered=true;L:Paint(row) end)
         row:SetScript("OnLeave",function() row.hovered=false;L:Paint(row) end)
         self.rows[index]=row
+        if style().materialProfile=="interface" then
+            -- One row painter; title/level own their semantic colours, info remains muted.
+            style():Bind(function() L:Paint(row) end,row.title)
+        end
         return row
     end)
 end
@@ -80,7 +87,7 @@ function L:Paint(row)
     row.badge:Hide();row.level:Hide();row.bar:Hide();row.barBack:Hide();row.info:SetText("")
     local x=6
     if e.header then
-        row.title:SetText(ns.Styles:Label(Q:Family(),e.header));row.title:SetTextColor(s:Color("accent"))
+        row.title:SetText(textLabel(e.header));row.title:SetTextColor(s:Color(s.materialProfile=="interface" and "accentText" or "accent"))
         row.band:SetVertexColor(1,1,1,0)
     elseif e.objective then
         local o=e.objective
@@ -105,7 +112,7 @@ function L:Paint(row)
         elseif q.dungeon and cfg.dungeonColor then row.title:SetTextColor(Q.Data.DungeonColor(s))
         else row.title:SetTextColor(s:Color("text")) end
         local info={}
-        if q.ready then info[#info+1]="|cff5fd068"..ns.Styles:Label(Q:Family(),"Ready").."|r"
+        if q.ready then info[#info+1]="|cff5fd068"..textLabel("Ready").."|r"
         elseif cfg.progressMode=="text" then
             local have,need=0,0
             for _,o in ipairs(q.objectives) do if o.need then have,need=have+(o.have or 0),need+o.need end end

@@ -22,24 +22,64 @@ local function clearDebugCard(card)
     if card.debugPreview then card.debugPreview:SetText("No observation");card.debugLabel:SetText("Graph");card.debugContext:SetOptions({}) end
 end
 
-function UI:GraphEditor(controller)
-    local E={s=controller,cards={},freeCards={},lines={},selected={},zoom=1,panX=30,panY=35}
+function UI:GraphEditor(controller,options)
+    local style=options and options.style or UI:GetStyle()
+    local interface=style.materialProfile=="interface"
+    -- Capture only UI construction. Graph actions and runtime callbacks never
+    -- execute under an ambient style override. Cached windows keep this owner.
+    local dialogMethods={Dialog=true,SoundPicker=true,MacroActionEditor=true,MarkdownNoteEditor=true}
+    local function ownDialog(widget)
+        if not interface then return widget end
+        UI:ScopeDialogEscape(widget)
+        local function track(frame)
+            if frame.GetObjectType and frame:GetObjectType()=="EditBox" and frame.bvGraphEscapeDialog~=widget then
+                widget:TrackEscapeInput(frame);frame.bvGraphEscapeDialog=widget
+            end
+            if frame.GetChildren then for _,child in ipairs({frame:GetChildren()}) do track(child) end end
+        end
+        track(widget);return widget
+    end
+    local function construct(method,...)
+        local args,n={...},select("#",...)
+        if interface and method=="Label" and args[4]=="accent" then args[4]="accentText" end
+        if interface and (method=="Dialog" or method=="SoundPicker") then
+            local index=method=="Dialog" and 5 or 4;local original=args[index];local opts={}
+            for key,value in pairs(original or {}) do opts[key]=value end
+            opts.escapeScope=true;args[index]=opts;n=math.max(n,index)
+        end
+        local widget=UI:WithStyle(style,UI[method],UI,unpack(args,1,n))
+        if interface and dialogMethods[method] then ownDialog(widget)
+        elseif interface and (method=="Input" or method=="TransferText" or method=="ColorField") then
+            local input=method=="Input" and widget or widget.input
+            local parent=widget:GetParent()
+            while parent and not parent.TrackEscapeInput do parent=parent:GetParent() end
+            if input and parent and input.bvGraphEscapeDialog~=parent then parent:TrackEscapeInput(input);input.bvGraphEscapeDialog=parent end
+        end
+        return widget
+    end
+    local function host(parent,width,height)
+        if interface then local frame=CreateFrame("Frame",nil,parent);M.Size(frame,width,height);return frame end
+        local frame=construct("Panel",parent,width,height,"surface");UI:HideSurface(frame);return frame
+    end
+    local E={style=style,s=controller,cards={},freeCards={},lines={},selected={},zoom=1,panX=30,panY=35}
     local s=controller
-    local w=UI:Window("BVAddonSuiteAuraStudio",1220,760,{title="AuraStudio",minWidth=860,minHeight=510}); E.window=w
+    local function transfer(owner)
+        return ownDialog(UI:WithStyle(style,s.TransferUI,s,owner))
+    end
+    local w=construct("Window","BVAddonSuiteAuraStudio",1220,760,{title="AuraStudio",minWidth=860,minHeight=510}); E.window=w;w.bvStyle=style
     local body=w.content
-    local style=UI:GetStyle()
     local function action(fn) return function(...) local ok,why=pcall(fn,...); if not ok then s.message=ns.GraphValues.UserError(why);s.messageError=s.message; s:Diagnostic("editor","action",tostring(why)); E:Refresh() end end end
     local function group(width)
         local frame=CreateFrame("Frame",nil,body); M.Size(frame,width,38); frame.designWidth=width; return frame
     end
-    E.sidebar=UI:Panel(body,238,660,"canvas",2,1)
-    at(UI:Label(E.sidebar,"AURAS",11,"accent",true),E.sidebar,12,10)
-    E.new=at(UI:ActionButton(E.sidebar,"New","plus",78,action(function() E:Cancel(); s:New(false); E:LoadView() end)),E.sidebar,12,30); M.Height(E.new,28)
-    E.newGroup=at(UI:IconButton(E.sidebar,"folder",action(function()
+    E.sidebar=construct("Panel",body,238,660,"canvas",2,1)
+    at(construct("Label",E.sidebar,"AURAS",11,"accent",true),E.sidebar,12,10)
+    E.new=at(construct("ActionButton",E.sidebar,"New","plus",78,action(function() E:Cancel(); s:New(false); E:LoadView() end)),E.sidebar,12,30); M.Height(E.new,28)
+    E.newGroup=at(construct("IconButton",E.sidebar,"folder",action(function()
         E:Cancel(); local id=s:NewGroup(); E.libraryTarget={kind="group",id=id}; E:Refresh(); E:Details("library")
     end)),E.sidebar,98,30); M.Size(E.newGroup,28,28)
     UI:AttachTooltip(E.newGroup,"New group","Create an aura group. Its switch pauses members without changing their own switches.")
-    E.library=UI:LibraryTree(E.sidebar,action(function(item)
+    E.library=construct("LibraryTree",E.sidebar,action(function(item)
         if item.kind=="folder" then E.library.collapsed[item.id]=not E.library.collapsed[item.id]; E.library:Rebuild(); return end
         E:Cancel(); E.libraryTarget={kind=item.kind,id=item.id}
         if item.kind=="graph" then s:Select(item.id); E:LoadView() else E:Refresh() end
@@ -59,7 +99,7 @@ function UI:GraphEditor(controller)
                 if s.graphClipboard then table.insert(choices,2,{value="pasteAbove",label="Paste Above"});table.insert(choices,3,{value="pasteBelow",label="Paste Below"}) end
             else choices[#choices+1]={value="properties",label="Group options..."} end
             choices[#choices+1]={value="deleteGraph",label="Delete "..kind.."...",danger=true}
-            UI:ContextMenu(row,choices,action(function(command)
+            construct("ContextMenu",row,choices,action(function(command)
                 local current=s:Store()
                 if current~=store or (kind=="group" and current.groups or current.graphs)[id]~=record
                     or not w:IsShown() or not row:IsVisible() or row.item.id~=id or row.item.kind~=kind then return end
@@ -70,7 +110,7 @@ function UI:GraphEditor(controller)
                 elseif command=="share" then
                     E:Cancel(); s:Select(id); E:LoadView(); E:Details("share")
                 elseif command=="export" then
-                    E:Cancel(); E.transfer=s:TransferUI(w); E.transfer:Open("export",kind,id)
+                    E:Cancel(); E.transfer=transfer(w); E.transfer:Open("export",kind,id)
                 elseif command=="properties" then
                     E:Cancel()
                     if kind=="graph" then s:Select(id); E:LoadView() end
@@ -80,57 +120,59 @@ function UI:GraphEditor(controller)
         end),
     })
     at(E.library,E.sidebar,8,66)
-    E.delete=at(UI:IconButton(E.sidebar,"close",action(function() E:DeleteSelected() end)),E.sidebar,132,30); M.Size(E.delete,28,28)
+    E.delete=at(construct("IconButton",E.sidebar,"close",action(function() E:DeleteSelected() end)),E.sidebar,132,30); M.Size(E.delete,28,28)
     UI:AttachTooltip(E.delete,"Delete selected...","Confirm deletion of the selected graph or group.")
     E.libraryFooter=CreateFrame("Frame",nil,E.sidebar);M.Size(E.libraryFooter,238,SIDEBAR_FOOTER)
     M.Point(E.libraryFooter,"BOTTOMLEFT",E.sidebar,"BOTTOMLEFT",0,0)
-    E.libraryFooterRule=at(UI:Rule(E.libraryFooter,214),E.libraryFooter,12,0)
-    E.libraryHint=at(UI:Label(E.libraryFooter,"Right-click options / drag to reorder",10,"muted"),E.libraryFooter,12,36);M.Size(E.libraryHint,214,18)
-    E.quickAccess=at(UI:Switch(E.libraryFooter,false,action(function(value) s:SetQuickShown(value) end)),E.libraryFooter,12,9)
-    E.quickAccessLabel=at(UI:Label(E.libraryFooter,"Show Quick-Access",12,"text"),E.libraryFooter,60,9);M.Size(E.quickAccessLabel,166,20)
+    E.libraryFooterRule=at(construct("Rule",E.libraryFooter,214),E.libraryFooter,12,0)
+    E.libraryHint=at(construct("Label",E.libraryFooter,"Right-click options / drag to reorder",10,"muted"),E.libraryFooter,12,36);M.Size(E.libraryHint,214,18)
+    E.quickAccess=at(construct("Switch",E.libraryFooter,false,action(function(value) s:SetQuickShown(value) end)),E.libraryFooter,12,9)
+    E.quickAccessLabel=at(construct("Label",E.libraryFooter,"Show Quick-Access",12,"text"),E.libraryFooter,60,9);M.Size(E.quickAccessLabel,166,20)
     UI:AttachTooltip(E.quickAccess,"Show Quick-Access","Show the compact activation window. Right-click a graph or group to choose its inclusion.")
-    E.graphTitle=at(UI:Label(body,"",19,"text",true),body,258,10); E.graphTitle:SetWordWrap(false)
-    E.graphState=UI:Label(body,"",11,"muted"); E.graphState:SetJustifyH("RIGHT")
+    E.graphTitle=at(construct("Label",body,"",19,"text",true),body,258,10); E.graphTitle:SetWordWrap(false)
+    E.graphState=construct("Label",body,"",11,"muted"); E.graphState:SetJustifyH("RIGHT")
     local liveGroup,viewGroup,budgetGroup=group(126),group(350),group(230)
-    E.wikiButton=UI:Button(body,"Wiki",64,action(function() if s.OpenWiki then s:OpenWiki("page:start") end end),"nav")
+    E.wikiButton=construct("Button",body,"Wiki",64,action(function() if s.OpenWiki then s:OpenWiki("page:start") end end),"nav")
     E.wikiButton:SetLabelInsets(8,8,"CENTER")
     UI:AttachTooltip(E.wikiButton,"Wiki","Data types, secret values and a page for every node.")
-    E.apply=UI:ActionButton(body,"Save","save",96,action(function() if s:Apply()==false then E:FocusError() end end),true)
+    E.apply=construct("ActionButton",body,"Save","save",96,action(function() if s:Apply()==false then E:FocusError() end end),true)
     UI:AttachTooltip(E.apply,"Save","Save changes and update the active aura.")
-    E.resetTests=UI:Button(body,"Return all to Live",164,action(function()s:EndTest();E:Refresh()end),"ghost")
-    E.module=at(UI:Switch(liveGroup,false,action(function(value) ns.Modules:SetEnabled("aura_studio",value); if not value then E:Open() end; E:Refresh() end)),liveGroup,0,10)
-    at(UI:Label(liveGroup,"Module",11,"muted"),liveGroup,44,12)
+    E.resetTests=construct("Button",body,"Return all to Live",164,action(function()s:EndTest();E:Refresh()end),"ghost")
+    E.module=at(construct("Switch",liveGroup,false,action(function(value) ns.Modules:SetEnabled("aura_studio",value); if not value then E:Open() end; E:Refresh() end)),liveGroup,0,10)
+    at(construct("Label",liveGroup,"Module",11,"muted"),liveGroup,44,12)
     UI:AttachTooltip(E.module,"AuraStudio module","Master switch for all live graphs. Tests remain available when disabled.")
-    E.applied=at(UI:Switch(viewGroup,false,action(function(value) E:Cancel(); s.inspectApplied=value; E:Refresh() end)),viewGroup,0,10)
-    E.appliedLabel=at(UI:Label(viewGroup,"Applied view",11,"muted"),viewGroup,44,12)
+    E.applied=at(construct("Switch",viewGroup,false,action(function(value) E:Cancel(); s.inspectApplied=value; E:Refresh() end)),viewGroup,0,10)
+    E.appliedLabel=at(construct("Label",viewGroup,"Applied view",11,"muted"),viewGroup,44,12)
     UI:AttachTooltip(E.applied,"Applied view","Inspect the applied snapshot. Connections and values are read-only until this switch is disabled.")
-    E.freeze=at(UI:Switch(viewGroup,false,function(value)
+    E.freeze=at(construct("Switch",viewGroup,false,function(value)
         E.frozen=value
         if value then local trace=s:Trace(); E.frozenTrace=G.Copy(trace); E.frozenGraph=s:Graph().id; E.frozenRevision=s:Graph().revision end
         E:Debug()
     end),viewGroup,172,10)
-    at(UI:Label(viewGroup,"Freeze debug",11,"muted"),viewGroup,216,12)
-    at(UI:Label(budgetGroup,"Budget",11,"muted"),budgetGroup,0,12)
+    at(construct("Label",viewGroup,"Freeze debug",11,"muted"),viewGroup,216,12)
+    at(construct("Label",budgetGroup,"Budget",11,"muted"),budgetGroup,0,12)
     -- Enter and leaving the field both commit; an invalid value reverts on refresh.
     local commitBudget=action(function(text)
         local n=tonumber(text); assert(G.Number(n) and n>=.25 and n<=8,"Budget must be 0.25..8 ms")
         s:Store().budget=n; E:Refresh()
     end)
-    E.budget=at(UI:Input(budgetGroup,52,commitBudget),budgetGroup,44,3)
+    E.budget=at(construct("Input",budgetGroup,52,commitBudget),budgetGroup,44,3)
     E.budget:HookScript("OnEditFocusGained",function() E.textFocus=true end)
     E.budget:HookScript("OnEditFocusLost",function(self)
         E.textFocus=false
         if not E.refreshing and self:GetText()~=tostring(s:Store().budget) then commitBudget(self:GetText()) end
     end)
-    at(UI:Label(budgetGroup,"ms / slice",11,"muted"),budgetGroup,104,12)
-    E.reset=at(UI:IconButton(budgetGroup,"undo",function() s:Store().budget=1; E:Refresh() end),budgetGroup,180,3)
+    at(construct("Label",budgetGroup,"ms / slice",11,"muted"),budgetGroup,104,12)
+    E.reset=at(construct("IconButton",budgetGroup,"undo",function() s:Store().budget=1; E:Refresh() end),budgetGroup,180,3)
     UI:AttachTooltip(E.reset,"Reset budget","Restore the default execution budget of 1 ms per slice.")
     -- Keep stateful controls in the shared debug dialog; commands compose a
     -- Compact menu strip with Save; testing lives on individual source nodes.
     viewGroup:Hide(); budgetGroup:Hide(); liveGroup:Hide()
     E.menus={}
+    -- Stateful labels belong to command IDs, never to a menu position.
+    local commandOptions={}
     local commands={
-        Graph={{"new","New graph"},{"apply","Save"},{"discard","Discard Changes"},{"import","Import..."},{"examples","Examples..."},{"export","Export graph..."},{"exportGroup","Export selected group..."},{"delete","Delete selected..."}},
+        Graph={{"new","New graph"},{"apply","Save"},{"discard","Discard Changes"},{"load","Load conditions..."},{"import","Import..."},{"examples","Examples..."},{"export","Export graph..."},{"exportGroup","Export selected group..."},{"delete","Delete selected..."}},
         Edit={{"add","Add node..."},{"undo","Undo"},{"redo","Redo"},{"copy","Copy nodes"},{"paste","Paste nodes"},{"select","Select all nodes"},{"remove","Delete selected"},{"section","Add section"},{"blocks","Blocks..."}},
         View={{"fit","Fit graph"},{"applied","Toggle applied snapshot"},{"freeze","Freeze / resume debug"},{"errors","Diagnostics..."}},
         Tools={{"layout","Layout editor"},{"frames","Frame library..."},{"inspectFrames","Inspect frames"},{"debug","Debug & budget..."},{"module","Enable / disable module"},{"settings","Studio settings..."},{"communication","Addon message permissions..."},{"shortcuts","Keyboard shortcuts..."},{"nameplates","Nameplate stacking..."},{"share","Graph sharing..."},{"quick","Show Quick-Access"}},
@@ -143,11 +185,12 @@ function UI:GraphEditor(controller)
         elseif id=="apply" then if s:Apply()==false then E:FocusError() end
         elseif id=="discard" then E:Cancel(); s:Discard()
         elseif id=="import" or id=="export" or id=="exportGroup" then
-            E:Cancel(); E.transfer=s:TransferUI(w)
+            E:Cancel(); E.transfer=transfer(w)
             local target=E.libraryTarget
             E.transfer:Open(id=="import" and "import" or "export",id=="exportGroup" and "group" or "graph",
                 id=="exportGroup" and target and target.kind=="group" and target.id or id~="exportGroup" and s:Graph() and s:Graph().id or nil)
         elseif id=="properties" then E:Details("library")
+        elseif id=="load" then E:Details("load",s:Graph().id)
         elseif id=="delete" then E:DeleteSelected()
         elseif id=="add" then E:Search(80,30)
         elseif id=="undo" or id=="redo" then E:Cancel(); s:Undo(id=="redo")
@@ -174,28 +217,33 @@ function UI:GraphEditor(controller)
         elseif id=="module" then ns.Modules:SetEnabled("aura_studio",not s.active); if not s.active then E:Open() end; E:Refresh() end
     end
     for _,name in ipairs({"Graph","Edit","View","Tools"}) do
-        local options={}; for _,entry in ipairs(commands[name]) do options[#options+1]={value=entry[1],label=entry[2]} end
-        local menu=UI:TextMenu(body,name,name=="Graph" and 72 or 64,options,action(command))
+        local options={}
+        for _,entry in ipairs(commands[name]) do
+            local option={value=entry[1],label=entry[2]}
+            options[#options+1]=option;commandOptions[entry[1]]=option
+        end
+        local menu=construct("TextMenu",body,name,name=="Graph" and 72 or 64,options,action(command))
         menu:HookScript("OnMouseDown",function() menu:SetOptions(options) end)
         E.menus[#E.menus+1]=menu
     end
     E.debugGroups={viewGroup,budgetGroup,liveGroup}
-    E.canvas=at(UI:Panel(body,1184,595,"canvas"),body,18,86)
+    E.canvas=at(construct("Panel",body,1184,595,"canvas"),body,18,86)
     E.canvas:EnableMouse(true); E.canvas:EnableMouseWheel(true); E.canvas:SetClipsChildren(true)
     E.grid=style:CanvasGrid(E.canvas)
     E.legend=style:GraphLegend(body)
     E.content=CreateFrame("Frame",nil,E.canvas); E.content:SetAllPoints(E.canvas)
-    E.status=UI:Label(body,"",11,"muted"); M.Point(E.status,"BOTTOMLEFT",258,12); M.Width(E.status,1000)
+    E.status=construct("Label",body,"",11,"muted"); M.Point(E.status,"BOTTOMLEFT",258,12); M.Width(E.status,1000)
     E.statusHit=CreateFrame("Frame",nil,body);E.statusHit:SetAllPoints(E.status);E.statusHit:EnableMouse(true)
-    E.selectionBox=UI:Panel(E.canvas,1,1,"hover"); E.selectionBox:SetAlpha(.35); E.selectionBox:Hide()
-    E.ghost=UI:Panel(E.canvas,NODE_WIDTH,95,"raised"); E.ghost:SetAlpha(.6); E.ghost:Hide()
-    E.ghostLabel=at(UI:Label(E.ghost,"",14,"accent",true),E.ghost,12,12)
+    E.selectionBox=construct("Panel",E.canvas,1,1,"hover"); E.selectionBox:SetAlpha(.35); E.selectionBox:Hide()
+    E.ghost=construct("Panel",E.canvas,NODE_WIDTH,95,"raised"); E.ghost:SetAlpha(.6); E.ghost:Hide()
+    E.ghostLabel=at(construct("Label",E.ghost,"",14,"accent",true),E.ghost,12,12)
     E.pendingLine=style:GraphWire(E.canvas,"accent"); E.pendingLine:SetFrameLevel(E.content:GetFrameLevel()+1); E.pendingLine:Hide()
-    E.caption=UI:Label(body,"",11,"muted"); M.Point(E.caption,"BOTTOMRIGHT",-36,12); E.caption:SetJustifyH("RIGHT"); M.Width(E.caption,330)
+    E.caption=construct("Label",body,"",11,"muted"); M.Point(E.caption,"BOTTOMRIGHT",-36,12); E.caption:SetJustifyH("RIGHT"); M.Width(E.caption,330)
     function E:Layout()
-        local width,height=M.GetWidth(w),M.GetHeight(w)
+        local width,height=ns.ShellMetrics.ContentSize(M.GetWidth(w),M.GetHeight(w),w.shellMetrics)
+        local windowWidth,windowHeight=M.GetWidth(w),M.GetHeight(w)
         self.canvasLeft=258
-        at(self.sidebar,body,0,0); M.Size(self.sidebar,238,height-44)
+        at(self.sidebar,body,0,0); M.Size(self.sidebar,238,height)
         self.library:Arrange(210,math.max(100,M.GetHeight(self.sidebar)-66-SIDEBAR_FOOTER-8))
         M.Width(self.graphTitle,math.max(180,width-self.canvasLeft-250))
         at(self.graphState,body,width-246,5); M.Size(self.graphState,228,18)
@@ -208,7 +256,7 @@ function UI:GraphEditor(controller)
         local canvasWidth=math.max(300,width-self.canvasLeft-18)
         local legendWidth=578
         self.legend:Arrange(legendWidth,false)
-        local canvasHeight=math.max(120,height-44-self.canvasTop-38)
+        local canvasHeight=math.max(120,height-self.canvasTop-38)
         M.Size(self.canvas,canvasWidth,canvasHeight)
         self.legend:ClearAllPoints(); M.Point(self.legend,"BOTTOMRIGHT",body,"BOTTOMRIGHT",-18,6)
         -- Right of the sidebar so the start of messages (node name) stays visible.
@@ -216,7 +264,7 @@ function UI:GraphEditor(controller)
         M.Width(self.status,math.max(180,width-self.canvasLeft-legendWidth-36)); self.status:SetWordWrap(false)
         self.caption:Hide()
         if s:Store() and not w.minimized and not w.maximized then
-            s:Store().window.width=width; s:Store().window.height=height
+            s:Store().window.width=windowWidth; s:Store().window.height=windowHeight
         end
         self:Render()
     end
@@ -255,24 +303,59 @@ function UI:GraphEditor(controller)
         self.panX=cw/2-(n.x+self:NodeWidth(n)/2)*self.zoom;self.panY=ch/3-n.y*self.zoom
         self.selected={[v.node]=true};self:SaveView();self:Render();self:Refresh();return true
     end
-    -- Right-click on a node heading: rename, details, wiki.
+    -- Processing controls stay available without taking two ports on every card.
+    -- Wired controls are always visible; their local value is not an override.
     function E:NodeMenu(id,anchor)
-        local n=self:Graph().nodes[id];if not n then return end
+        local graph=self:Graph();local n=graph.nodes[id];if not n then return end
+        local record=s:Graph()
+        local definition=G.Definition(s.catalog[n.type],n)
+        local inputs=definition and G.Ports(definition) or {}
         local choices={{value="details",label="Details..."},{value="wiki",label="Wiki"}}
-        if not s.inspectApplied then table.insert(choices,1,{value="rename",label="Rename..."}) end
-        UI:ContextMenu(anchor,choices,action(function(command)
+        local expose=false;local controls=false
+        if not s.inspectApplied then
+            table.insert(choices,1,{value="rename",label="Rename..."})
+            for _,key in ipairs({"mute","bypass"}) do if inputs[key] and inputs[key].control then
+                if not G.Binding(graph,id,key) then
+                    controls=true
+                    if not n.exposed[key] then expose=true end
+                    local label=key=="mute" and (n.values[key] and "Unmute node" or "Mute node")
+                        or (n.values[key] and "Restore processing" or "Bypass node")
+                    choices[#choices+1]={value=key,label=label}
+                end
+            end end
+            if controls then choices[#choices+1]={value="controls",label=expose and "Show control inputs" or "Hide unconnected control inputs"} end
+        end
+        construct("ContextMenu",anchor,choices,action(function(command)
+            -- A menu opened for a previous draft must never edit a new selection.
+            if s:Graph()~=record or E:Graph()~=graph or E:Graph().nodes[id]~=n then return end
             if command=="rename" then E:RenameNode(id)
             elseif command=="details" then E.focusNode=id;E:Details("node",id)
             elseif command=="wiki" and s.OpenWiki then local node=E:Graph().nodes[id];if node then s:OpenWiki("node:"..node.type,G.Copy(node)) end end
+            if command=="mute" or command=="bypass" then
+                if inputs[command] and inputs[command].control and not G.Binding(graph,id,command) then s:SetValue(id,command,not n.values[command],false) end
+            elseif command=="controls" then
+                s:Edit(function(g)
+                    local node=assert(g.nodes[id])
+                    for _,key in ipairs({"mute","bypass"}) do
+                        if inputs[key] and inputs[key].control and not G.Binding(g,id,key) then node.exposed[key]=expose end
+                    end
+                end)
+            end
         end))
     end
     -- Example graphs (finding 55): imported through the normal import path as
     -- new, disabled graphs; the imported graph is selected afterwards.
-    function E:ExamplesMenu(anchor)
-        local choices={}
-        for _,e in ipairs(s.Examples and s:Examples() or {}) do choices[#choices+1]={value=e.id,label=e.name} end
+    function E:ExamplesMenu(anchor,category)
+        local choices,entries={},{}
+        if category then choices[#choices+1]={value="back",label="Back to examples"} end
+        for _,e in ipairs(s.Examples and s:Examples(category) or {}) do
+            choices[#choices+1]={value=e.id,label=e.name..(e.category and " >" or "")};entries[e.id]=e
+        end
         if #choices==0 then return end
-        UI:ContextMenu(anchor,choices,action(function(key)
+        construct("ContextMenu",anchor,choices,action(function(key)
+            if key=="back" then E:ExamplesMenu(anchor);return end
+            local entry=entries[key];if not entry then return end
+            if entry.category then E:ExamplesMenu(anchor,entry.category);return end
             local ok,why=pcall(s.ImportExample,s,key)
             if not ok then s.message=ns.GraphValues.UserError(why);s.messageError=s.message;s:Changed() end
             E:LoadView()
@@ -282,17 +365,17 @@ function UI:GraphEditor(controller)
     function E:RenameDialog(title,hint,value,apply)
         local d=self.renameDialog
         if not d then
-            d=UI:Dialog(nil,380,176,w);self.renameDialog=d
-            d.hint=UI:Label(d.content,"",11,"muted");at(d.hint,d.content,20,10);M.Size(d.hint,340,18)
-            d.input=UI:Input(d.content,340);at(d.input,d.content,20,34);d.input:SetMaxLetters(80)
+            d=construct("Dialog",nil,380,176,w);self.renameDialog=d
+            d.hint=construct("Label",d.content,"",11,"muted");at(d.hint,d.content,20,10);M.Size(d.hint,340,18)
+            d.input=construct("Input",d.content,340);at(d.input,d.content,20,34);d.input:SetMaxLetters(80)
             local function commit()
                 local apply=d.apply;d:Hide()
                 if apply then apply(d.input:GetText()) end
             end
             d.input:SetScript("OnEnterPressed",function() commit() end)
             d.input:SetScript("OnEscapePressed",function() d:Hide() end)
-            d.ok=UI:Button(d.content,"Rename",120,commit,true);M.Point(d.ok,"BOTTOMRIGHT",d.content,"BOTTOMRIGHT",-150,18)
-            d.cancel=UI:Button(d.content,"Cancel",120,function() d:Hide() end,"ghost");M.Point(d.cancel,"BOTTOMRIGHT",d.content,"BOTTOMRIGHT",-20,18)
+            d.ok=construct("Button",d.content,"Rename",120,commit,true);M.Point(d.ok,"BOTTOMRIGHT",d.content,"BOTTOMRIGHT",-150,18)
+            d.cancel=construct("Button",d.content,"Cancel",120,function() d:Hide() end,"ghost");M.Point(d.cancel,"BOTTOMRIGHT",d.content,"BOTTOMRIGHT",-20,18)
             d:HookScript("OnHide",function() d.apply=nil;d.nodeId=nil;d.sectionId=nil;d.input:ClearFocus() end)
         end
         d.title:SetText(title);d.hint:SetText(hint);d.apply=apply
@@ -327,7 +410,7 @@ function UI:GraphEditor(controller)
             table.insert(choices,1,{value="rename",label="Rename..."})
             choices[#choices+1]={value="delete",label="Delete section (keeps nodes)"}
         end
-        UI:ContextMenu(anchor,choices,action(function(command)
+        construct("ContextMenu",anchor,choices,action(function(command)
             if command=="rename" then E:RenameSection(id)
             elseif command=="options" then E.selectedSection=id;E:Details("section",id)
             elseif command=="delete" then E:DeleteSection(id) end
@@ -363,7 +446,9 @@ function UI:GraphEditor(controller)
         self.space=false
         if self.library then self.library:CancelDrag() end
         if self.pointerTimer then self.pointerTimer:Cancel(); self.pointerTimer=nil end
-        self.pointer=nil; self.working=nil; self.wire=nil; self.wirePress=nil; self.placing=nil
+        if self.searchTimer then self.searchTimer:Cancel(); self.searchTimer=nil end
+        self.searchJob=nil;self.searchLoading=nil
+        self.pointer=nil; self.working=nil; self.wire=nil; self.wirePress=nil; self.placing=nil; self.searchWire=nil; self.searchGraph=nil
         self.ghost:Hide(); self.pendingLine:Hide(); self.selectionBox:Hide()
         if self.search then self.search:Hide() end
         self:Render()
@@ -376,7 +461,7 @@ function UI:GraphEditor(controller)
         local x,y=self:Coordinates()
         if self.placing then at(self.ghost,self.canvas,x,y); self.ghost:Show(); return end
         if self.wire then
-            local p=self:PortPosition(self.wire.from,self.wire.output,false)
+            local p=self.wire.to and self:PortPosition(self.wire.to,self.wire.input,true) or self:PortPosition(self.wire.from,self.wire.output,false)
             if p then self.pendingLine:SetEndpoints(p.x,p.y,x,y,1); self.pendingLine:Show() end
             return
         end
@@ -449,8 +534,9 @@ function UI:GraphEditor(controller)
         if button=="LeftButton" and not self.placing and not self.wire and self.selectedSection then self.selectedSection=nil;self:Render() end
         if button=="LeftButton" and self.placing then self:Place(x,y); return end
         if button=="LeftButton" and self.wire then
-            local wire=self.wire; self:Cancel()
-            if wire.original then s:Edit(function(g) local _,i=G.Binding(g,wire.original.to,wire.original.input); if i then table.remove(g.edges,i) end end) end
+            local wire=self.wire
+            if wire.original then self:Disconnect(wire.original.to,wire.original.input)
+            else self:Search(x,y,wire) end
             return
         end
         self.space=self.space and UI:PointerWithin(self.canvas) and not UI:TextInputFocused() and (not IsKeyDown or IsKeyDown("SPACE",true))
@@ -482,15 +568,21 @@ function UI:GraphEditor(controller)
     end
     function E:Port(id,key,input)
         if s.inspectApplied then s.message="Applied view is read-only. Disable Applied view to edit connections."; self:Debug(); return end
-        if not input then self:Cancel(); self.wire={from=id,output=key}; self:Track(); self:Render(); return end
-        if self.wire then
+        if self.wire and ((input and not self.wire.to) or (not input and self.wire.to)) then
             local wire=self.wire; local g=G.Copy(s:Draft())
             if wire.original then local _,i=G.Binding(g,wire.original.to,wire.original.input); if i then table.remove(g.edges,i) end end
-            local result,why=G.Connect(g,s.catalog,wire.from,wire.output,id,key)
-            if result then self:Cancel(); s:Commit(result) else s.message=why; self:Refresh() end
+            local result,why=G.Connect(g,s.catalog,wire.from or id,wire.output or key,wire.to or id,wire.input or key)
+            if result then self:Cancel(); s:Commit(result) else
+                s.message=why and why:find("Display Stack",1,true) and "Display Stack required: multiple units need separate display instances. Connect Instance and Media to Display Stack." or why
+                s.messageError=s.message;self:Refresh()
+            end
+        elseif not input then
+            self:Cancel(); self.wire={from=id,output=key}; self:Track(); self:Render()
         else
             local edge=G.Binding(s:Draft(),id,key)
-            if edge then self:Cancel(); self.wire={from=edge.from,output=edge.output,original=G.Copy(edge)}; self:Track(); self:Render() end
+            self:Cancel()
+            self.wire=edge and {from=edge.from,output=edge.output,original=G.Copy(edge)} or {to=id,input=key}
+            self:Track(); self:Render()
         end
     end
     function E:Disconnect(id,key)
@@ -509,7 +601,7 @@ function UI:GraphEditor(controller)
         end
         if button~="LeftButton" then return end
         local x,y=self:Coordinates()
-        local completing=binding.input and self.wire~=nil
+        local completing=self.wire and ((binding.input and not self.wire.to) or (not binding.input and self.wire.to))
         self:Port(binding.card.nodeId,binding.key,binding.input)
         if self.wire and not completing then self.wirePress={port=port,x=x,y=y} end
     end
@@ -537,12 +629,13 @@ function UI:GraphEditor(controller)
         if math.abs(x-press.x)+math.abs(y-press.y)<=3 then return end
         if not self.wire then return end
         local kind,target=self:WireDropTarget()
-        if kind=="port" and target.input then
-            self:Port(target.card.nodeId,target.key,true)
+        if kind=="port" and ((target.input and not self.wire.to) or (not target.input and self.wire.to)) then
+            self:Port(target.card.nodeId,target.key,target.input)
             -- As with click-to-connect, an incompatible target keeps the
             -- original edge and preview available for retry or Escape.
         elseif kind=="canvas" and self.wire.original then
             local original=self.wire.original; self:Disconnect(original.to,original.input)
+        elseif kind=="canvas" then self:Search(x,y,self.wire)
         else self:Cancel() end
     end
     function E:SelectNode(id)
@@ -563,22 +656,23 @@ function UI:GraphEditor(controller)
     function E:Field(parent,slot)
         parent.fields=parent.fields or {}; if parent.fields[slot] then return parent.fields[slot] end
         local row={}; parent.fields[slot]=row
-        row.label=UI:Label(parent,"",11,"muted"); row.input=UI:Input(parent,125,function(text) E:SubmitField(row,text) end)
+        row.label=construct("Label",parent,"",11,"muted"); row.input=construct("Input",parent,125,function(text) E:SubmitField(row,text) end)
         row.input:SetMaxLetters(1024)
         row.input:HookScript("OnEditFocusGained",function() E.textFocus=true; row.focused=true end)
         row.input:HookScript("OnEditFocusLost",function()
             E.textFocus=false; row.focused=false
             if not E.refreshing and row.input:GetText()~=row.original then E:SubmitField(row,row.input:GetText()) end
         end)
-        row.color=UI:ColorField(parent,140,function(v) E:SubmitField(row,v) end)
+        row.color=construct("ColorField",parent,140,function(v) E:SubmitField(row,v) end)
+        if interface then row.color.bvColorOptions={style=style} end
         row.color.input:HookScript("OnEditFocusGained",function()E.textFocus=true end)
         row.color.input:HookScript("OnEditFocusLost",function()E.textFocus=false end)
-        row.toggle=UI:Switch(parent,false,function(v) E:SubmitField(row,v) end)
-        row.dropdown=UI:Dropdown(parent,140,{},function(v) E:SubmitField(row,v) end)
+        row.toggle=construct("Switch",parent,false,function(v) E:SubmitField(row,v) end)
+        row.dropdown=construct("Dropdown",parent,140,{},function(v) E:SubmitField(row,v) end)
         -- Catalog fields with slider={min,max,step,format}; commits on release/wheel.
         row.slider=CreateFrame("Frame",nil,parent);M.Size(row.slider,125,24);row.slider:Hide()
-        row.slider.value=UI:Label(row.slider,"",11,"text");M.Point(row.slider.value,"RIGHT")
-        row.slider.bar=UI:GetStyle():Slider(row.slider,80,0,1,.05,0);M.Point(row.slider.bar,"LEFT");M.Size(row.slider.bar,80,20)
+        row.slider.value=construct("Label",row.slider,"",11,"text");M.Point(row.slider.value,"RIGHT")
+        row.slider.bar=style:Slider(row.slider,80,0,1,.05,0);M.Point(row.slider.bar,"LEFT");M.Size(row.slider.bar,80,20)
         row.slider.bar:SetScript("OnValueChanged",function(_,v)
             local spec=row.binding and row.binding.slider;if not spec then return end
             row.slider.current=E.SliderValue(spec,v);row.slider.value:SetText(E.SliderText(spec,row.slider.current))
@@ -589,16 +683,18 @@ function UI:GraphEditor(controller)
             local spec=row.binding and row.binding.slider;if not spec or not row.slider.bar:IsMouseEnabled() then return end
             row.slider.bar:SetValue(math.max(spec.min,math.min(spec.max,(row.slider.current or spec.min)+delta*spec.step)));commitSlider()
         end)
-        row.picker=UI:ObjectButton(parent,125,action(function()
+        row.picker=construct("ObjectButton",parent,125,action(function()
             if row.binding.picker=="sound" then
                 local binding=G.Copy(row.binding);local rec=s:Graph();local node=rec.draft.nodes[binding.id]
                 if E.soundPicker then E.soundPicker:Hide()end
-                E.soundPicker=UI:SoundPicker(E.window,node.config,function(value)
-                    if s:Graph()==rec and rec.draft.nodes[binding.id]==node and not s.inspectApplied then E:SubmitField(row,value)end
+                E.soundPicker=construct("SoundPicker",E.window,node.config,function(value)
+                    local current=row.binding
+                    if s:Graph()==rec and rec.draft.nodes[binding.id]==node and not s.inspectApplied
+                        and current and current.id==binding.id and current.key==binding.key and current.config==binding.config then E:SubmitField(row,value)end
                 end);return
             end
             if row.binding.picker=="macro" then
-                E.macroEditor=E.macroEditor or UI:MacroActionEditor(E.window,s)
+                E.macroEditor=E.macroEditor or construct("MacroActionEditor",E.window,s)
                 E.macroEditor:Open(row.binding.id);return
             end
             if row.binding.picker=="symbol" then
@@ -609,7 +705,7 @@ function UI:GraphEditor(controller)
             E:Details(row.binding.picker=="icon" and "iconpicker" or "picker",row.binding.id)
         end))
         row.preview=row.picker.preview
-        row.itemBrowse=UI:IconButton(parent,"search",action(function()
+        row.itemBrowse=construct("IconButton",parent,"search",action(function()
             E.pickerBinding=G.Copy(row.binding);E.pickerGraph=s:Graph().id
             E:Details("itempicker",row.binding.id)
         end))
@@ -750,26 +846,36 @@ function UI:GraphEditor(controller)
             selection[key]=selected and true or nil
         end)
     end
+    local function paintCard(card)
+        card:PaintSurface({style:Color("panel")},{style:Color(card.bvGraphEdge)},1)
+        -- Material paint owns its regions; graph reachability owns whole-card opacity.
+        card:SetAlpha(card.bvGraphAlpha or 1)
+    end
     function E:Card(id)
         if self.cards[id] then return self.cards[id] end
         if #self.freeCards>0 then
             local card=table.remove(self.freeCards);card.nodeId=id;clearDebugCard(card)
             self.cards[id]=card;return card
         end
-        local c=UI:Panel(self.content,NODE_WIDTH,170,"surface"); self.cards[id]=c
+        local c=construct("Panel",self.content,NODE_WIDTH,170,"surface"); self.cards[id]=c
         c.nodeId=id; c.graphCardEditor=self
+        if interface then
+            c.bvGraphEdge="controlEdge"
+            style:Bind(function() paintCard(c) end,c)
+            c:HookScript("OnSizeChanged",function(card) card:SetAlpha(card.bvGraphAlpha or 1) end)
+        end
         c.inPorts={}; c.outPorts={}; c:EnableMouse(true)
-        c.header=UI:Button(c,"",NODE_WIDTH-4,nil,"ghost"); at(c.header,c,2,2); M.Height(c.header,36)
+        c.header=construct("Button",c,"",NODE_WIDTH-4,nil,"ghost"); at(c.header,c,2,2); M.Height(c.header,36)
         c.header:SetLabelInsets(32,44,"LEFT")
         -- Above the card, or the card takes the clicks and the heading's
         -- double-/right-click never arrive (in-game finding 46).
         c.header:SetFrameLevel(c:GetFrameLevel()+1)
-        style:Gradient(c.header,"HORIZONTAL","secondary",.04,"accent",.07,0)
-        c.headerRule=at(UI:Rule(c,NODE_WIDTH-2),c,1,39)
-        c.category=at(UI:CategoryGlyph(c),c,9,10);c.category:SetFrameLevel(c:GetFrameLevel()+3)
+        style:Gradient(c.header,"HORIZONTAL","secondary",.04,"accent",.07,interface and 4 or 0)
+        c.headerRule=at(construct("Rule",c,NODE_WIDTH-2),c,1,39)
+        c.category=at(construct("CategoryGlyph",c),c,9,10);c.category:SetFrameLevel(c:GetFrameLevel()+3)
         c.title=c.header.label; style:Font(c.title,13,"bold")
-        c.typeTitle=at(UI:Label(c,"",10,"muted"),c,34,28); M.Size(c.typeTitle,NODE_WIDTH-80,16); c.typeTitle:SetWordWrap(false)
-        c.rename=at(UI:InlineEdit(c,action(function(value) s:SetNodeTitle(c.nodeId,value) end)),c,32,7)
+        c.typeTitle=at(construct("Label",c.header,"",10,"muted"),c.header,32,26); M.Size(c.typeTitle,NODE_WIDTH-80,16); c.typeTitle:SetWordWrap(false)
+        c.rename=at(construct("InlineEdit",c,action(function(value) s:SetNodeTitle(c.nodeId,value) end)),c,32,7)
         c.rename:SetFrameLevel(c:GetFrameLevel()+5)
         c.header:EnableMouse(true)
         c.header:SetScript("OnMouseDown",action(function(_,button)
@@ -786,15 +892,15 @@ function UI:GraphEditor(controller)
             if not s.inspectApplied then E:Cancel();c.lastTitleClick=nil;E:RenameNode(c.nodeId) end
         end))
         c.header:SetScript("OnMouseUp",function(_,button) E:Release(button) end)
-        c.gear=at(UI:IconButton(c,"gear",action(function() E.focusNode=c.nodeId; E:Details("node",c.nodeId) end)),c,NODE_WIDTH-42,7); M.Height(c.gear,26)
+        c.gear=at(construct("IconButton",c,"gear",action(function() E.focusNode=c.nodeId; E:Details("node",c.nodeId) end)),c,NODE_WIDTH-42,7); M.Height(c.gear,26)
         c.gear:SetFrameLevel(c:GetFrameLevel()+3)
         UI:AttachTooltip(c.gear,"Node details","Inspect values, expose advanced ports and configure this node.")
-        c.freezeNode=UI:Button(c,"Freeze",100,action(function()s.nodeTesting.Freeze(s,c.nodeId);E:Refresh()end),"ghost")
-        c.testNode=UI:Button(c,"Test Mode",112,action(function()s.nodeTesting.Dialog(E,s,c.nodeId)end),"ghost")
-        c.state=UI:Label(c,"",10,"muted"); M.Point(c.state,"BOTTOMLEFT",12,8); M.Size(c.state,NODE_WIDTH-56,14); c.state:SetWordWrap(false)
+        c.freezeNode=construct("Button",c,"Freeze",100,action(function()s.nodeTesting.Freeze(s,c.nodeId);E:Refresh()end),"ghost")
+        c.testNode=construct("Button",c,"Test Mode",112,action(function()UI:WithStyle(style,s.nodeTesting.Dialog,E,s,c.nodeId);if E.nodeTestDialog then ownDialog(E.nodeTestDialog) end end),"ghost")
+        c.state=construct("Label",c,"",10,"muted"); M.Point(c.state,"BOTTOMLEFT",12,8); M.Size(c.state,NODE_WIDTH-56,14); c.state:SetWordWrap(false)
         -- "i" opens the wiki window at this node's page (round 4); the detailed
         -- field reference stays available from there and via E:OpenReference.
-        c.info=UI:IconButton(c,"info",action(function()
+        c.info=construct("IconButton",c,"info",action(function()
             E:Cancel()
             local graph=E:Graph();local node=graph and graph.nodes[c.nodeId]
             if not node or not c:IsVisible() then return end
@@ -815,7 +921,7 @@ function UI:GraphEditor(controller)
             local graph=E:Graph();local node=graph and graph.nodes[id]
             if not node then return end
             E.wikiBinding={store=s:Store(),graph=record,id=id,kind=node.type,applied=s.inspectApplied}
-            E.wiki=UI:NodeWiki(w,function(topic)
+            E.wiki=construct("NodeWiki",w,function(topic)
                 local binding=E.wikiBinding
                 if not binding or binding.store~=s:Store() or binding.graph~=s:Graph() or binding.applied~=s.inspectApplied then return nil end
                 local current=E:Graph()
@@ -844,34 +950,45 @@ function UI:GraphEditor(controller)
                     if input then E:Disconnect(card.nodeId,key) end
                 else E:Port(card.nodeId,key,input) end
             end))
-            button.portLabel=UI:Label(card,"",10,"muted"); M.Size(button.portLabel,NODE_WIDTH/2-28,16); button.portLabel:SetWordWrap(false); if not input then button.portLabel:SetJustifyH("RIGHT") end
+            button.portLabel=construct("Label",card,"",10,"muted"); M.Size(button.portLabel,NODE_WIDTH/2-28,16); button.portLabel:SetWordWrap(false); if not input then button.portLabel:SetJustifyH("RIGHT") end
             ports[key]=button
         end
-        local b=ports[key]; b.used=true; b.rowY=y; b:Show(); b.portLabel:Show(); b.portLabel:SetText(p.label or key)
+        local b=ports[key]; b.used=true; b.rowY=y; b:Show(); b.portLabel:Show()
+        local bound=input and G.Binding(self:Graph(),card.nodeId,key)
+        local many=self.repeatedNodes and self.repeatedNodes[input and bound and bound.from or not input and card.nodeId]
+        b.portLabel:SetText((p.label or key)..(many and " · many" or ""))
+        -- The suffix describes instance count, not a different Media type.
+        M.Width(b.portLabel,many and NODE_WIDTH/2-18 or NODE_WIDTH/2-28)
         at(b,card,input and -PORT_SIZE/2 or NODE_WIDTH-PORT_SIZE/2,y)
         at(b.portLabel,card,input and 14 or NODE_WIDTH/2+14,y+3)
         local connected=input and G.Binding(self:Graph(),card.nodeId,key)~=nil or false
         if not input then for _,edge in ipairs(self:Graph().edges) do if edge.from==card.nodeId and edge.output==key then connected=true; break end end end
-        b:SetConnected(connected); b:SetSelected(false); b:SetCompatible(nil)
-        if self.wire and input then
-            local source=self:Graph().nodes[self.wire.from]
-            local sourceDef=source and (G.Definition(s.catalog[source.type],source) or s.catalog[source.type])
-            local output=sourceDef and sourceDef.outputs[self.wire.output]
-            local compatible=output and G.Compatible(G.OutputType(self:Graph(),s.catalog,self.wire.from,self.wire.output),p.type) or false
+        b:SetConnected(connected); b:SetSelected(false); b:SetCompatible(nil);b.connectionReason=nil
+        if self.wire and ((input and not self.wire.to) or (not input and self.wire.to)) then
+            local graph=self:Graph()
+            local from,output=self.wire.from or card.nodeId,self.wire.output or key
+            local to,targetInput=self.wire.to or card.nodeId,self.wire.input or key
+            local target=graph.nodes[to]
+            local targetDef=target and G.Definition(s.catalog[target.type],target)
+            local targetPort=targetDef and G.Ports(targetDef)[targetInput]
+            local compatible=targetPort and G.Compatible(G.OutputType(graph,s.catalog,from,output),targetPort.type) or false
             if compatible then
-                local graph=self:Graph()
                 if not self.connectionChecks or self.connectionChecks.graph~=graph then self.connectionChecks={graph=graph,results={}} end
-                local identity=table.concat({self.wire.from,self.wire.output,card.nodeId,key},":")
+                local identity=table.concat({from,output,to,targetInput},":")
                 local result=self.connectionChecks.results[identity]
-                if result==nil then result=G.Connect(graph,s.catalog,self.wire.from,self.wire.output,card.nodeId,key)~=nil;self.connectionChecks.results[identity]=result end
-                compatible=result
+                if result==nil then
+                    local candidate,why=G.Connect(graph,s.catalog,from,output,to,targetInput)
+                    result={compatible=candidate~=nil,reason=why};self.connectionChecks.results[identity]=result
+                end
+                compatible=result.compatible;b.connectionReason=not compatible and result.reason or nil
             end
             b:SetCompatible(compatible)
         end
         local help=s.inspectApplied and "Applied view is read-only. Disable Applied view to edit connections."
-            or input and "Drag a connected input to another input to rewire; drop on empty canvas or right-click to disconnect. Escape cancels."
-            or "Drag to an input, or click this output then click an input. Escape cancels."
-        UI:AttachTooltip(b,p.label or key,G.TypeLabel(p.type)..(p.wire and (p.required==false and " / optional connection" or " / connection required") or "")..(p.control and " / control" or "").."\n"..help..(p.maySecret and "\nThis source can be secret depending on the client and situation." or ""))
+            or input and "Drag a free input onto empty canvas to find matching sources, or connect it to an output. Drag a connected input to rewire; drop it on empty canvas or right-click to disconnect. Escape cancels."
+            or "Drag to an input, or onto empty canvas to find matching nodes. You can also click both ports. Escape cancels."
+        local portType=not input and G.OutputType(self:Graph(),s.catalog,card.nodeId,key) or p.type
+        UI:AttachTooltip(b,p.label or key,G.TypeLabel(portType)..(many and " / multiple units" or "")..(p.wire and (p.required==false and " / optional connection" or " / connection required") or "")..(p.control and " / control" or "")..(many and "\nOne value per unit. Use Display Stack to render these separate instances." or "").."\n"..help..(b.connectionReason and "\nCannot connect: "..b.connectionReason or "")..(p.maySecret and "\nThis source can be secret depending on the client and situation." or ""))
         b.tooltipEnter=function()
             local trace=s:Trace(); local rec=s:Graph(); local message=b.tooltipText
             local signal=E:PortSignal(card.nodeId,key,input)
@@ -970,14 +1087,14 @@ function UI:GraphEditor(controller)
         M.Point(f.edges[4],"TOPRIGHT");M.Point(f.edges[4],"BOTTOMRIGHT");M.Width(f.edges[4],2)
         f.header=CreateFrame("Button",nil,f);M.Point(f.header,"TOPLEFT");M.Point(f.header,"TOPRIGHT");M.Height(f.header,s.sections.header)
         f.header.bg=f.header:CreateTexture(nil,"ARTWORK");f.header.bg:SetAllPoints(f.header)
-        f.title=UI:Label(f.header,"",13,"text",true);M.Point(f.title,"LEFT",f.header,"LEFT",10,0);f.title:SetWordWrap(false)
+        f.title=construct("Label",f.header,"",13,"text",true);M.Point(f.title,"LEFT",f.header,"LEFT",10,0);f.title:SetWordWrap(false)
         -- Gear (right) opens the options; moving or resizing never does.
-        f.gear=UI:IconButton(f.header,"gear",action(function() E.selectedSection=f.sectionId;E:Details("section",f.sectionId) end))
+        f.gear=construct("IconButton",f.header,"gear",action(function() E.selectedSection=f.sectionId;E:Details("section",f.sectionId) end))
         M.Point(f.gear,"RIGHT",f.header,"RIGHT",-4,0);M.Height(f.gear,24)
         UI:AttachTooltip(f.gear,"Section options","Name, colour, Mute, Bypass and Delete. Double-click the title to rename; click it and press Delete to remove the frame (nodes stay).")
-        f.bypass=UI:Button(f.header,"Bypass",86,action(function() local sec=s.sections.Find(s:Draft(),f.sectionId);if sec then s:SetSection(f.sectionId,"bypassed",not sec.bypassed) end end),"ghost")
+        f.bypass=construct("Button",f.header,"Bypass",86,action(function() local sec=s.sections.Find(s:Draft(),f.sectionId);if sec then s:SetSection(f.sectionId,"bypassed",not sec.bypassed) end end),"ghost")
         M.Point(f.bypass,"RIGHT",f.gear,"LEFT",-4,0);M.Height(f.bypass,24)
-        f.mute=UI:Button(f.header,"Mute",76,action(function() local sec=s.sections.Find(s:Draft(),f.sectionId);if sec then s:SetSection(f.sectionId,"muted",not sec.muted) end end),"ghost")
+        f.mute=construct("Button",f.header,"Mute",76,action(function() local sec=s.sections.Find(s:Draft(),f.sectionId);if sec then s:SetSection(f.sectionId,"muted",not sec.muted) end end),"ghost")
         M.Point(f.mute,"RIGHT",f.bypass,"LEFT",-4,0);M.Height(f.mute,24)
         f.header:EnableMouse(true)
         f.header:SetScript("OnMouseDown",action(function(_,button)
@@ -1022,7 +1139,7 @@ function UI:GraphEditor(controller)
     end
     function E:EditNote(id)
         if s.inspectApplied then return end
-        E:Cancel();E.noteEditor=E.noteEditor or UI:MarkdownNoteEditor(w,s);E.noteEditor:Open(id)
+        E:Cancel();E.noteEditor=E.noteEditor or construct("MarkdownNoteEditor",w,s);E.noteEditor:Open(id)
     end
     -- Lua Script code editor (finding 53): the shared multi-line field; Save
     -- goes through the normal node-value path, so syntax errors are refused
@@ -1032,15 +1149,15 @@ function UI:GraphEditor(controller)
         E:Cancel()
         local d=self.codeEditor
         if not d then
-            d=UI:Dialog(nil,760,560,w);self.codeEditor=d;d.title:SetText("Lua Script")
+            d=construct("Dialog",nil,760,560,w);self.codeEditor=d;d.title:SetText("Lua Script")
             local p=d.content
-            d.hint=UI:Label(p,"Inputs arrive as in1..in4; return the outputs in order (return a, b). Available: math, string, table, memory (kept between runs), read-only game functions such as UnitHealth, UnitName, GetTime. No globals, frames or protected actions.",11,"muted")
+            d.hint=construct("Label",p,"Inputs arrive as in1..in4; return the outputs in order (return a, b). Available: math, string, table, memory (kept between runs), read-only game functions such as UnitHealth, UnitName, GetTime. No globals, frames or protected actions.",11,"muted")
             at(d.hint,p,20,10);M.Size(d.hint,720,32)
-            d.body=at(UI:TransferText(p,720,380,4000,function() if d.body then d.note:SetText(#d.body.input:GetText().." / 4000 bytes") end end),p,20,50)
+            d.body=at(construct("TransferText",p,720,380,4000,function() if d.body then d.note:SetText(#d.body.input:GetText().." / 4000 bytes") end end),p,20,50)
             if d.body.input.SetCountInvisibleLetters then d.body.input:SetCountInvisibleLetters(true) end
-            d.note=UI:Label(p,"",12,"text");M.Point(d.note,"BOTTOMLEFT",p,"BOTTOMLEFT",20,26);M.Size(d.note,440,40);d.note:SetJustifyV("TOP")
-            d.cancelButton=UI:Button(p,"Cancel",120,function() d:Hide() end,"ghost");M.Point(d.cancelButton,"BOTTOMRIGHT",p,"BOTTOMRIGHT",-20,20)
-            d.saveButton=UI:Button(p,"Save",140,function()
+            d.note=construct("Label",p,"",12,"text");M.Point(d.note,"BOTTOMLEFT",p,"BOTTOMLEFT",20,26);M.Size(d.note,440,40);d.note:SetJustifyV("TOP")
+            d.cancelButton=construct("Button",p,"Cancel",120,function() d:Hide() end,"ghost");M.Point(d.cancelButton,"BOTTOMRIGHT",p,"BOTTOMRIGHT",-20,20)
+            d.saveButton=construct("Button",p,"Save",140,function()
                 local node=E:Graph().nodes[d.nodeId]
                 if not node or node.type~="lua_script" or s.inspectApplied then d.note:SetText("Graph selection changed; reopen this node.");return end
                 if s:SetValue(d.nodeId,"code",d.body.input:GetText(),true)~=false then d:Hide();E:Refresh()
@@ -1061,7 +1178,10 @@ function UI:GraphEditor(controller)
         if not s:Graph() or not self.canvas then if self.wiki then self.wiki:Hide();self.wikiBinding=nil end;return end
         self.grid:Update(M.GetWidth(self.canvas),M.GetHeight(self.canvas),self.panX,self.panY,self.zoom)
         self.refreshing=true
-        local graph=self:Graph(); local plan=G.Compile(graph,s.catalog,true,true)
+        local graph=self:Graph()
+        -- Resolve once per render, also covering restored/externally repaired
+        -- draft nodes whose persisted revision has not changed.
+        local plan=G.Compile(graph,s.catalog,true,true);self.repeatedNodes=plan and plan.repeated or {}
         self.invalidNodes=plan and plan.invalid or {}
         local binding=self.wikiBinding
         if self.wiki and self.wiki:IsShown() and binding and (binding.store~=s:Store() or binding.graph~=s:Graph() or binding.applied~=s.inspectApplied or not graph.nodes[binding.id] or graph.nodes[binding.id].type~=binding.kind) then self.wiki:Hide();self.wikiBinding=nil end
@@ -1083,11 +1203,14 @@ function UI:GraphEditor(controller)
             M.Height(c.header,n.title and 50 or 36); at(c.headerRule,c,1,n.title and 54 or 39)
             local cw=self:NodeWidth(n)
             M.Width(c,cw);M.Width(c.header,cw-4);M.Width(c.headerRule,cw-2);at(c.gear,c,cw-42,7);M.Width(c.typeTitle,cw-80);M.Width(c.state,cw-56)
-            at(c.title,c.header,32,7); M.Size(c.title,cw-80,20)
+            c.header:SetLabelInsets(32,44,"LEFT",7,20)
             UI:AttachTooltip(c.header,n.title or def.label,def.label.." / "..id.."\nDouble-click the heading to set a custom title.")
-            c:SetAlpha((not plan or plan.active[id] or def.annotation) and 1 or .55)
+            local alpha=(not plan or plan.active[id] or def.annotation) and 1 or .55
+            c:SetAlpha(alpha)
+            if interface then c.bvGraphAlpha=alpha end
             c.gear.tooltipText=def.help or "Inspect values, expose advanced ports and configure this node."
-            for _,edge in ipairs(c.edges) do edge:SetColorTexture(ns.Theme:Color(self.selected[id] and "accent" or "edge")) end
+            if interface then c.bvGraphEdge=self.selected[id] and "accentText" or "controlEdge";paintCard(c)
+            else for _,edge in ipairs(c.edges) do edge:SetColorTexture(ns.Theme:Color(self.selected[id] and "accent" or "edge")) end end
             -- Do not hide active hit targets during a redraw: WoW can cancel
             -- mouse capture when a pressed Button is hidden, even briefly.
             for _,ports in ipairs({c.inPorts,c.outPorts}) do for _,b in pairs(ports) do b.used=false end end
@@ -1122,18 +1245,18 @@ function UI:GraphEditor(controller)
             end
             -- Lua Script: open the code editor from the card (finding 53).
             if n.type=="lua_script" then
-                if not c.editCode then c.editCode=UI:Button(c,"Edit code",110,action(function() E:EditCode(c.nodeId) end),"ghost") end
+                if not c.editCode then c.editCode=construct("Button",c,"Edit code",110,action(function() E:EditCode(c.nodeId) end),"ghost") end
                 c.editCode:SetLabelText(s.inspectApplied and "View code" or "Edit code");at(c.editCode,c,12,y);c.editCode:Show();y=y+36
             end
             if c.debugPreview then c.debugPreview:Hide();c.debugContext:Hide();c.debugDetails:Hide();c.debugLabel:Hide() end
             if def.debugPreview then
                 if not c.debugPreview then
-                    c.debugLabel=UI:Label(c,"Graph",10,"muted");c.debugLabel:SetWordWrap(false)
-                    c.debugPreview=UI:Label(c,"No observation",11,"text");c.debugPreview:SetJustifyV("TOP")
-                    c.debugContext=UI:Dropdown(c,NODE_WIDTH-24,{},action(function(token)
+                    c.debugLabel=construct("Label",c,"Graph",10,"muted");c.debugLabel:SetWordWrap(false)
+                    c.debugPreview=construct("Label",c,"No observation",11,"text");c.debugPreview:SetJustifyV("TOP")
+                    c.debugContext=construct("Dropdown",c,NODE_WIDTH-24,{},action(function(token)
                         local _,run=s:Trace();c.debugSelection=ns.GraphDebug.Select(run,token);c.debugStamp=nil;self:Debug()
                     end))
-                    c.debugDetails=UI:Button(c,"Expand value",NODE_WIDTH-24,action(function()
+                    c.debugDetails=construct("Button",c,"Expand value",NODE_WIDTH-24,action(function()
                         c.debugExpanded=not c.debugExpanded;c.debugStamp=nil;self:Render()
                     end))
                 end
@@ -1152,13 +1275,13 @@ function UI:GraphEditor(controller)
             -- Markdown Note: rendered text instead of ports and fields.
             if def.annotation then
                 if not c.note then
-                    c.note=UI:MarkdownView(c,NODE_WIDTH-24,{breaks=true})
-                    c.editNote=UI:Button(c,"Edit",80,action(function() E:EditNote(c.nodeId) end),"ghost")
+                    c.note=construct("MarkdownView",c,NODE_WIDTH-24,{breaks=true})
+                    c.editNote=construct("Button",c,"Edit",80,action(function() E:EditNote(c.nodeId) end),"ghost")
                 end
                 if not c.noteGrip then
                     c.noteGrip=CreateFrame("Button",nil,c);M.Size(c.noteGrip,16,16);M.Point(c.noteGrip,"BOTTOMRIGHT",-2,2)
                     c.noteGrip.art=c.noteGrip:CreateTexture(nil,"OVERLAY");c.noteGrip.art:SetAllPoints(c.noteGrip)
-                    c.noteGrip.art:SetColorTexture(ns.Theme:Color("muted"));c.noteGrip:SetAlpha(.5)
+                    c.noteGrip.art:SetColorTexture(style:Color("muted"));c.noteGrip:SetAlpha(.5)
                     c.noteGrip:SetScript("OnMouseDown",action(function(_,button) E:NoteDown(c.nodeId,button) end))
                     c.noteGrip:SetScript("OnMouseUp",function(_,button) E:Release(button) end)
                     UI:AttachTooltip(c.noteGrip,"Resize note","Drag to change the note width.")
@@ -1227,31 +1350,37 @@ function UI:GraphEditor(controller)
             card.state:SetText(bad and ("! Needs update: "..ns.GraphValues.UserError(bad)) or v and v.node==id and ("! "..ns.GraphValues.UserError(v.message)) or (def and def.debugPreview and (self.frozen and "Frozen preview" or "Session preview / 5 Hz")) or (t and (ns.GraphValues.StatusLabel(t.status)..observed) or (not matches and "Draft / no matching live trace" or "No observation")))
             local failing=bad or (v and v.node==id) or (t and t.status=="faulted")
             if failing and not card.errorTint then
-                card.errorTint=card:CreateTexture(nil,"BORDER");card.errorTint:SetAllPoints(card)
-                card.errorBar=card:CreateTexture(nil,"OVERLAY");M.Point(card.errorBar,"TOPLEFT",card,"TOPLEFT",0,0);M.Point(card.errorBar,"TOPRIGHT",card,"TOPRIGHT",0,0);M.Height(card.errorBar,4)
+                card.errorTint=card:CreateTexture(nil,"BORDER");if interface then M.Point(card.errorTint,"TOPLEFT",card,"TOPLEFT",6,-6);M.Point(card.errorTint,"BOTTOMRIGHT",card,"BOTTOMRIGHT",-6,6) else card.errorTint:SetAllPoints(card) end
+                card.errorBar=card:CreateTexture(nil,"OVERLAY");M.Point(card.errorBar,"TOPLEFT",card,"TOPLEFT",interface and 6 or 0,interface and -2 or 0);M.Point(card.errorBar,"TOPRIGHT",card,"TOPRIGHT",interface and -6 or 0,interface and -2 or 0);M.Height(card.errorBar,4)
                 card.errorIcon=card:CreateTexture(nil,"OVERLAY");M.Size(card.errorIcon,18,18)
                 local path,l,r,tt,bb=ns.Symbols:Coords("triangle-alert",18)
                 if path then card.errorIcon:SetTexture(path);card.errorIcon:SetTexCoord(l,r,tt,bb) end
             end
             if card.errorTint then
-                local r,g,b=ns.Theme:Color("danger")
+                local r,g,b=style:Color("danger")
                 card.errorTint:SetColorTexture(r,g,b,.16);card.errorBar:SetColorTexture(r,g,b,1);card.errorIcon:SetVertexColor(r,g,b,1)
                 card.errorIcon:ClearAllPoints();M.Point(card.errorIcon,"TOPRIGHT",card,"TOPRIGHT",-48,-11)
                 local show=failing and true or false;card.errorTint:SetShown(show);card.errorBar:SetShown(show);card.errorIcon:SetShown(show)
             end
             local color=(bad or v and v.node==id) and "danger" or (self.selected[id] or (t and GetTime()-t.at<.4)) and "accent" or "edge"
-            for _,edge in ipairs(card.edges) do edge:SetColorTexture(ns.Theme:Color(color)) end
+            if interface then card.bvGraphEdge=color=="accent" and "accentText" or color=="edge" and "controlEdge" or color;paintCard(card)
+            else for _,edge in ipairs(card.edges) do edge:SetColorTexture(ns.Theme:Color(color)) end end
         end end
         local state=(run and run.test and "TEST" or s.runs[rec.id] and "LIVE" or "IDLE").." / r"..rec.revision..(self.frozen and " / frozen" or "")..(matches and "" or " / draft differs")
         -- Errors from editor actions are shown here, not only in the tooltip.
         local problem=s.messageError and s.messageError==s.message and ("  |cffff6b6b"..tostring(s.message):gsub("|","||").."|r") or ""
+        -- Reserve the footer for actionable feedback while an action error is
+        -- current. Otherwise the legend leaves only a clipped status fragment.
+        self.legend:SetShown(problem=="")
+        M.Width(self.status,math.max(180,M.GetWidth(body)-(self.canvasLeft or 256)-(problem=="" and 614 or 36)))
+        M.Height(self.status,problem=="" and 16 or 28);self.status:SetWordWrap(problem~="")
         UI:AttachTooltip(self.statusHit,"Graph status",state.."\n"..(s.message or "Ready"))
-        self.status:SetText((run and run.test and "TEST" or s.runs[rec.id] and "LIVE" or "IDLE").." r"..rec.revision.." / "..math.floor(self.zoom*100).."%"..(s.inspectApplied and " / read-only" or "")..(#s.errors>0 and " / !"..#s.errors or "")..problem)
+        self.status:SetText(problem~="" and problem or (run and run.test and "TEST" or s.runs[rec.id] and "LIVE" or "IDLE").." r"..rec.revision.." / "..math.floor(self.zoom*100).."%"..(s.inspectApplied and " / read-only" or "")..(#s.errors>0 and " / !"..#s.errors or ""))
         UI:AttachTooltip(self.canvas,"Graph status",state.."\n"..(s.message or "Ready").."\nPending: "..#s.queue.." / diagnostics: "..#s.errors)
-        self.menus[3].options[2].label=s.inspectApplied and "Edit draft" or "Applied snapshot"
-        self.menus[3].options[3].label=self.frozen and "Resume debug" or "Freeze debug"
-        self.menus[4].options[3].label=s.active and "Disable module" or "Enable module"
-        self.menus[4].options[5].label=s:Store().quick.shown and "Hide Quick-Access" or "Show Quick-Access"
+        commandOptions.applied.label=s.inspectApplied and "Edit draft" or "Applied snapshot"
+        commandOptions.freeze.label=self.frozen and "Resume debug" or "Freeze debug"
+        commandOptions.module.label=s.active and "Disable module" or "Enable module"
+        commandOptions.quick.label=s:Store().quick.shown and "Hide Quick-Access" or "Show Quick-Access"
         if self.details and self.details:IsShown() and self.detailMode=="node" then
             local n=self:Graph().nodes[self.focusNode]; local t=matches and trace[self.focusNode]
             if n and s.catalog[n.type].source and t then
@@ -1271,21 +1400,80 @@ function UI:GraphEditor(controller)
         self.library:SetDefinitions(s:Library()); self.library:SetValue(self.libraryTarget.id)
         self.resetTests:SetShown(s.test and s.test.nodeOverrides~=nil or false)
         self.graphTitle:SetText(rec.name..(s:Unsaved(rec) and " *" or ""))
-        self.graphState:SetText(not rec.applied and "Draft only" or not rec.enabled and "Disabled" or not s:GroupAllows(rec) and "Paused by group" or not s.active and "Module disabled" or "Live enabled")
+        self.graphState:SetText(not rec.applied and "Draft only" or not rec.enabled and "Disabled" or not s:GroupAllows(rec) and "Paused by group" or not s.active and "Module disabled" or not s:LoadAllows(rec) and "Load conditions not met" or not s.runs[rec.id] and "Waiting to start" or "Live enabled")
         self.module:SetValue(s.active==true); self.applied:SetValue(s.inspectApplied==true)
         self.appliedLabel:SetText(s.inspectApplied and "Applied (read-only)" or "Applied view")
         self.budget:SetText(tostring(s:Store().budget)); self:Render()
         if self.details and self.details:IsShown() and self.detailMode=="node" then self:Details("node",self.focusNode) end
     end
-    function E:Search(x,y)
+    -- Evaluate actual default node definitions and the same connection validator
+    -- used by manual wiring. Cache this bounded list for this picker session;
+    -- typing only filters labels and never recompiles every candidate.
+    function E:WireSuggestions(wire,yieldStep)
+        local suggestions={}
+        local original=s:Draft()
+        for _,kind in ipairs(s.catalogOrder) do
+            local graph=G.Copy(original)
+            local ok,id=pcall(G.Add,graph,kind,s.catalog,0,0)
+            if yieldStep then yieldStep() end
+            if ok then
+                local def=G.Definition(s.catalog[kind],graph.nodes[id])
+                local ports=def and (wire.to and def.outputs or G.Ports(def)) or {}
+                for _,key in ipairs(G.Ordered(ports)) do
+                    local port=ports[key]
+                    -- Hidden generic controls are not helpful first suggestions.
+                    if not port.control then
+                        local from,output=wire.from or id,wire.output or key
+                        local to,input=wire.to or id,wire.input or key
+                        local target=graph.nodes[to]
+                        local targetDef=target and G.Definition(s.catalog[target.type],target)
+                        local targetPort=targetDef and G.Ports(targetDef)[input]
+                        if targetPort and G.Compatible(G.OutputType(graph,s.catalog,from,output),targetPort.type)
+                            and G.Connect(graph,s.catalog,from,output,to,input) then
+                            suggestions[#suggestions+1]={kind=kind,port=key,label=def.label.." · "..(port.label or key)}
+                        end
+                        if yieldStep then yieldStep() end
+                    end
+                end
+            end
+        end
+        table.sort(suggestions,function(a,b)return a.label==b.label and a.kind..a.port<b.kind..b.port or a.label<b.label end)
+        return suggestions
+    end
+    function E:StartWireSearch(wire)
+        local job={record=s:Graph(),revision=s:Graph().draftRevision}
+        job.thread=coroutine.create(function() return self:WireSuggestions(wire,coroutine.yield) end)
+        self.searchJob=job;self.searchLoading=true
+        self.searchTimer=C_Timer.NewTicker(.01,function()
+            if self.searchJob~=job then return end
+            if not self.search:IsShown() or s:Graph()~=job.record or s:Graph().draftRevision~=job.revision or s.inspectApplied then self:Cancel();return end
+            -- Keep short searches responsive without blocking a whole frame on
+            -- a large draft. A single validation is indivisible and can exceed
+            -- this budget; cap work even if the optional profiler does not move.
+            local started=debugprofilestop and debugprofilestop()
+            for _=1,started and 16 or 2 do
+                local ok,result=coroutine.resume(job.thread)
+                if not ok or coroutine.status(job.thread)=="dead" then
+                    self.searchTimer:Cancel();self.searchTimer=nil;self.searchJob=nil;self.searchLoading=nil
+                    if not ok then self:Cancel();s.message=tostring(result);self:Debug();return end
+                    self.searchCandidates=result;self:SearchResults();return
+                end
+                if started and debugprofilestop()-started>=3 then break end
+            end
+        end)
+    end
+    function E:Search(x,y,wire)
         if s.inspectApplied then s.message="Leave applied view to add nodes"; self:Debug(); return end
         self:Cancel(); self.searchX,self.searchY=x,y
+        self.searchWire=wire and G.Copy(wire) or nil
+        self.searchGraph=wire and s:Graph() or nil
+        self.searchCandidates=wire and {} or nil;self.searchLoading=wire~=nil
         if not self.search then
-            self.searchPopup=UI:DismissiblePopup(body,340,320)
+            self.searchPopup=construct("DismissiblePopup",body,340,320,interface and "dialog" or nil)
             self.search=self.searchPopup.panel
             self.search:SetClampedToScreen(true)
-            self.searchInput=at(UI:Input(self.search,280),self.search,12,12)
-            self.searchClose=at(UI:IconButton(self.search,"close",function() E.search:Hide() end,"ghost"),self.search,300,12)
+            self.searchInput=at(construct("Input",self.search,280),self.search,12,12)
+            self.searchClose=at(construct("IconButton",self.search,"close",function() E.search:Hide() end,"ghost"),self.search,300,12)
             M.Size(self.searchClose,28,32)
             UI:AttachTooltip(self.searchClose,"Close node search","Escape or click outside to cancel without adding a node.")
             self.searchInput:SetScript("OnTextChanged",function() E:SearchResults() end)
@@ -1295,19 +1483,47 @@ function UI:GraphEditor(controller)
                 if key=="DOWN" then E.searchIndex=math.min(#E.matches,(E.searchIndex or 1)+1); E:SearchResults(true)
                 elseif key=="UP" then E.searchIndex=math.max(1,(E.searchIndex or 1)-1); E:SearchResults(true) end
             end)
-            self.search:HookScript("OnHide",function() E.searchInput:ClearFocus(); E.lastClick=nil end)
-            self.searchMode=at(UI:Dropdown(self.search,316,{{value="alphabetical",label="Alphabetical"},{value="categories",label="Categories"}},function(value)
+            self.search:HookScript("OnHide",function()
+                E.searchInput:ClearFocus();E.lastClick=nil;E.searchWire=nil;E.searchGraph=nil;E.searchCandidates=nil
+                if E.searchTimer then E.searchTimer:Cancel();E.searchTimer=nil end
+                E.searchJob=nil;E.searchLoading=nil
+            end)
+            self.searchMode=at(construct("Dropdown",self.search,316,{{value="alphabetical",label="Alphabetical"},{value="categories",label="Categories"}},function(value)
                 s:Store().nodePalette.mode=value; E:SearchResults()
             end),self.search,12,49)
-            self.searchList=at(UI:ResultList(self.search,316,function(index) E.searchIndex=index; E:ChooseSearch() end),self.search,12,87)
+            self.searchHint=at(construct("Label",self.search,"",12,"muted"),self.search,12,49);M.Size(self.searchHint,316,24);self.searchHint:Hide()
+            self.searchList=at(construct("ResultList",self.search,316,function(index) E.searchIndex=index; E:ChooseSearch() end),self.search,12,87)
             self.searchButtons=self.searchList.buttons
         end
-        -- The content viewport is the window minus its 44-unit chrome.
-        at(self.search,body,math.max(8,math.min(M.GetWidth(w)-348,(self.canvasLeft or 18)+x)),math.max(0,math.min(M.GetHeight(w)-44-M.GetHeight(self.search)-8,(self.canvasTop or 86)+y)))
+        local contentWidth,contentHeight=ns.ShellMetrics.ContentSize(M.GetWidth(w),M.GetHeight(w),w.shellMetrics)
+        at(self.search,body,math.max(8,math.min(contentWidth-348,(self.canvasLeft or 18)+x)),math.max(0,math.min(contentHeight-M.GetHeight(self.search)-8,(self.canvasTop or 86)+y)))
         self.searchPopup:Open(); self.searchInput:SetText(""); self:SearchResults(); self.searchInput:SetFocus()
+        if wire then self:StartWireSearch(G.Copy(wire)) end
     end
     function E:SearchResults(keep)
         local q=self.searchInput:GetText():lower():match("^%s*(.-)%s*$"); self.matches={}
+        self.searchMode:SetShown(not self.searchWire)
+        self.searchHint:SetShown(self.searchWire~=nil)
+        if self.searchWire then
+            local entries={}
+            for _,candidate in ipairs(self.searchCandidates or {}) do
+                local def=s.catalog[candidate.kind]
+                if candidate.label:lower():find(q,1,true) or candidate.kind:find(q,1,true) or (def.keywords and def.keywords:lower():find(q,1,true)) then
+                    self.matches[#self.matches+1]=candidate
+                    entries[#entries+1]={label=candidate.label,category=ns.DesignSystem.NodeCategory(candidate.kind,def)}
+                end
+            end
+            if not keep then self.searchIndex=1;self.searchList.offset=0 end
+            self.searchIndex=math.max(1,math.min(#self.matches,self.searchIndex or 1))
+            self.searchHint:SetText(self.searchLoading and "Finding matching ports..." or #self.matches==0 and "No matching ports" or (self.searchWire.to and "Matching outputs" or "Matching inputs").." · "..#self.matches)
+            local available=math.min(M.GetHeight(w)-44,M.ToDesign(UIParent:GetHeight()/self.search:GetEffectiveScale()))-96
+            local rows=math.max(1,math.min(8,#self.matches,math.floor(available/33)))
+            at(self.searchList,self.search,12,77)
+            self.searchList:SetEntries(entries,rows,self.searchIndex,true);M.Height(self.search,85+rows*33)
+            at(self.search,body,math.max(8,math.min(M.GetWidth(w)-348,self.canvasLeft+self.searchX)),math.max(0,math.min(M.GetHeight(w)-44-M.GetHeight(self.search)-8,self.canvasTop+self.searchY)))
+            return
+        end
+        at(self.searchList,self.search,12,87)
         local store=s:Store(); store.nodePalette=store.nodePalette or {mode="categories",collapsed={}}
         local prefs=store.nodePalette; prefs.collapsed=prefs.collapsed or {}
         self.searchMode:SetValue(prefs.mode)
@@ -1351,6 +1567,17 @@ function UI:GraphEditor(controller)
     end
     function E:ChooseSearch()
         local kind=self.matches[self.searchIndex or 1]; if not kind then return end
+        if self.searchWire and type(kind)=="table" and kind.kind then
+            if s.inspectApplied or self.searchGraph~=s:Graph() then self:Cancel();return end
+            local wire=G.Copy(self.searchWire)
+            local graph=G.Copy(s:Draft())
+            local ok,id=pcall(G.Add,graph,kind.kind,s.catalog,(self.searchX-self.panX)/self.zoom,(self.searchY-self.panY)/self.zoom)
+            if not ok then s.message=tostring(id);self:Debug();return end
+            local result,why=G.Connect(graph,s.catalog,wire.from or id,wire.output or kind.port,wire.to or id,wire.input or kind.port)
+            if not result then s.message=why;self:Debug();return end
+            self:Cancel();self.selected={[id]=true};s:Commit(result)
+            return
+        end
         if type(kind)=="table" then
             local prefs=s:Store().nodePalette;prefs.collapsed[kind.category]=not prefs.collapsed[kind.category];self:SearchResults();return
         end
@@ -1373,7 +1600,7 @@ function UI:GraphEditor(controller)
         local resetScroll=mode~=self.detailMode or (mode=="node" and nextNode~=self.focusNode)
         self.detailMode=mode; self.focusNode=id or self.focusNode
         if not self.details then
-            self.details=UI:Dialog("BVAddonSuiteAuraDetails",460,320,w)
+            self.details=construct("Dialog","BVAddonSuiteAuraDetails",460,320,w)
             self.details:HookScript("OnHide",function()
                 ns.Sound:Release(E)
                 if E.iconView then E.iconView:Hide(); E.iconView:Close() end
@@ -1383,9 +1610,9 @@ function UI:GraphEditor(controller)
                 E.pickerSearch=nil
             end)
             self.detailTitle=self.details.title
-            self.detailText=at(UI:Label(self.details.content,"",11,"muted"),self.details.content,18,7); M.Size(self.detailText,410,30)
-            self.detailRows=UI:Panel(self.details.content,424,510,"surface"); at(self.detailRows,self.details.content,18,DETAIL_TOP)
-            self.detailForm=UI:Form(self.details.content,424,510,self.details.content); at(self.detailForm,self.details.content,18,DETAIL_TOP)
+            self.detailText=at(construct("Label",self.details.content,"",11,"muted"),self.details.content,18,7); M.Size(self.detailText,410,30)
+            self.detailRows=construct("Panel",self.details.content,424,510,"surface"); at(self.detailRows,self.details.content,18,DETAIL_TOP)
+            self.detailForm=construct("Form",self.details.content,424,510,self.details.content); at(self.detailForm,self.details.content,18,DETAIL_TOP)
             self.detailForm:SetClipsChildren(true); self.detailForm:Hide(); self.detailForm.slider:Hide()
             self.detailButtons={}; self.expose={}; self.outputChoices={}
         end
@@ -1403,6 +1630,7 @@ function UI:GraphEditor(controller)
         if self.iconView then self.iconView:Hide() end
         for _,widget in ipairs(self.libraryWidgets or {}) do widget:Hide() end
         if self.settingsPanel then self.settingsPanel:Hide() end
+        if self.loadPanel then self.loadPanel:Hide() end
         if self.communicationPanel then self.communicationPanel:Hide() end
         if self.shortcutPanel then self.shortcutPanel:Hide() end
         if self.nameplatePanel then self.nameplatePanel:Hide() end
@@ -1410,6 +1638,7 @@ function UI:GraphEditor(controller)
         if self.symbolView then self.symbolView:Hide() end
         if self.sectionPanel then self.sectionPanel:Hide() end
         if self.blockPanel then self.blockPanel:Hide() end
+        if self.logForm then self.logForm:Hide() end
         for _,frame in ipairs(self.debugGroups) do frame:Hide() end
         if mode~="picker" then self.pickerSearch=nil; if self.pickerInput then self.pickerInput:ClearFocus() end end
         local p=self.detailRows
@@ -1419,11 +1648,13 @@ function UI:GraphEditor(controller)
         else at(p,self.details.content,18,DETAIL_TOP); M.Size(p,424,510) end
         if resetScroll then self.detailForm.slider:SetValue(0) end
         local function button(key,label,x,y,callback)
-            if not self.detailButtons[key] then self.detailButtons[key]=UI:Button(p,label,140,function() local b=self.detailButtons[key]; b.callback() end) end
+            if not self.detailButtons[key] then self.detailButtons[key]=construct("Button",p,label,140,function() local b=self.detailButtons[key]; b.callback() end) end
             local b=self.detailButtons[key]; b.callback=action(callback); at(b,p,x,y); M.Height(b,26); b:Show()
             -- Width fits the label (at least 140) so it is never cut to "...".
+            if b.label then b.label:SetText(label)end
             local w=b.label and b.label.GetUnboundedStringWidth and M.ToDesign(b.label:GetUnboundedStringWidth()) or 0
             M.Width(b,math.max(140,math.floor(w+40)))
+            b:SetLabelText(label)
             return b
         end
         -- Footer buttons: laid out in one row below the content after the mode
@@ -1431,7 +1662,7 @@ function UI:GraphEditor(controller)
         -- the window.
         self.footerList={}
         local function footer(key,label,callback,kind)
-            if not self.detailButtons[key] then self.detailButtons[key]=UI:Button(p,label,140,function() local b=self.detailButtons[key]; b.callback() end,kind) end
+            if not self.detailButtons[key] then self.detailButtons[key]=construct("Button",p,label,140,function() local b=self.detailButtons[key]; b.callback() end,kind) end
             local b=self.detailButtons[key]; b.callback=action(callback);b:SetLabelText(label);b:Show()
             self.footerList[#self.footerList+1]=b;return b
         end
@@ -1442,48 +1673,56 @@ function UI:GraphEditor(controller)
         elseif mode=="communication" then
             self.detailTitle:SetText("Addon message permissions")
             self.detailText:SetText("Local profile settings, saved immediately. External delivery requires native testing; API success is not a receipt.")
-            if not self.communicationPanel then self.communicationPanel=at(UI:MessageOptions(p,s,424),p,0,0) end
+            if not self.communicationPanel then self.communicationPanel=at(construct("MessageOptions",p,s,424),p,0,0) end
             self.communicationPanel:Refresh(); self.communicationPanel:Show()
         elseif mode=="blocks" then
             self.detailTitle:SetText("Building blocks")
             self.detailText:SetText("Save selected nodes as a reusable block. Inserting creates an independent copy; later changes to the block do not affect earlier copies. Use Relay nodes as named inputs/outputs.")
             if not self.blockPanel then
-                local panel=at(UI:Panel(p,424,470,"surface"),p,0,0);UI:HideSurface(panel);self.blockPanel=panel
-                at(UI:Label(panel,"Name",11,"muted"),panel,12,11)
-                panel.name=at(UI:Input(panel,200),panel,60,6); M.Height(panel.name,26)
-                panel.save=at(UI:Button(panel,"Save selection",140,action(function()
+                local panel=at(host(p,424,470),p,0,0);self.blockPanel=panel
+                at(construct("Label",panel,"Name",11,"muted"),panel,12,11)
+                panel.name=at(construct("Input",panel,200),panel,60,6); M.Height(panel.name,26)
+                panel.save=at(construct("Button",panel,"Save selection",140,action(function()
                     local sel={};for nodeId in pairs(E.selected) do sel[nodeId]=true end
                     if s:SaveBlock(panel.name:GetText(),sel) then panel.name:SetText("") end
                     E:Details("blocks")
                 end),true),panel,272,6); M.Height(panel.save,26)
-                panel.status=at(UI:Label(panel,"",11,"text"),panel,12,40);M.Size(panel.status,280,18)
-                panel.exportAll=at(UI:Button(panel,"Export all",110,action(function() E:Cancel();E.transfer=s:TransferUI(w);E.transfer:Open("export","blocks") end),"ghost"),panel,302,36); M.Height(panel.exportAll,24)
+                panel.status=at(construct("Label",panel,"",11,"text"),panel,12,40);M.Size(panel.status,280,18)
+                panel.exportAll=at(construct("Button",panel,"Export all",110,action(function() E:Cancel();E.transfer=transfer(w);E.transfer:Open("export","blocks") end),"ghost"),panel,302,36); M.Height(panel.exportAll,24)
+                panel.form=at(construct("Form",panel,424,56),panel,0,64);panel.form:SetClipsChildren(true)
                 panel.rows={}
                 function panel:Row(i)
                     local r=self.rows[i];if r then return r end
                     r={}
-                    r.label=UI:Label(self,"",12,"text");M.Size(r.label,170,18);r.label:SetWordWrap(false)
-                    r.insert=UI:Button(self,"Insert",70,action(function()
+                    local content=self.form.content
+                    r.label=construct("Label",content,"",12,"text");M.Size(r.label,110,18);r.label:SetWordWrap(false)
+                    r.insert=construct("Button",content,"Insert",64,action(function()
                         local fragment,blockName=s:BlockFragment(r.id);if not fragment or s.inspectApplied then return end
                         E:Cancel();E.placing={fragment=fragment};E.ghostLabel:SetText("Place block: "..blockName);E:Track()
                     end),"ghost")
-                    r.export=UI:Button(self,"Export",70,action(function() E:Cancel();E.transfer=s:TransferUI(w);E.transfer:Open("export","block",r.id) end),"ghost")
-                    r.send=UI:Button(self,"Send",60,action(function() s:ShareCurrent("block",r.id);E:Details("blocks") end),"ghost")
-                    r.delete=UI:Button(self,"Delete",70,action(function() s:DeleteBlock(r.id);E:Details("blocks") end),"ghost")
+                    r.export=construct("Button",content,"Export",64,action(function() E:Cancel();E.transfer=transfer(w);E.transfer:Open("export","block",r.id) end),"ghost")
+                    r.send=construct("Button",content,"Send",58,action(function() s:ShareCurrent("block",r.id);E:Details("blocks") end),"ghost")
+                    r.delete=construct("Button",content,"Delete",70,action(function() s:DeleteBlock(r.id);E:Details("blocks") end),"ghost")
                     self.rows[i]=r;return r
                 end
             end
             local panel=self.blockPanel;panel:SetParent(p);at(panel,p,0,0)
             panel.status:SetText(s.message or "")
             local list=s:BlockList()
+            if not panel.empty then panel.empty=at(construct("Label",panel.form.content,"No building blocks saved yet. Select nodes, enter a name and save the selection.",12,"muted"),panel.form.content,12,4);M.Size(panel.empty,376,44) end
+            panel.empty:SetShown(#list==0)
+            local listHeight=math.max(56,#list*28);local viewport=math.min(336,listHeight)
+            M.Height(panel.form,viewport);M.Height(panel.form.slider,viewport);panel.form:SetContentHeight(listHeight)
+            M.Height(panel,72+viewport)
             for _,r in ipairs(panel.rows) do r.label:Hide();r.insert:Hide();r.export:Hide();r.send:Hide();r.delete:Hide() end
-            for i,b in ipairs(list) do if i<=12 then
-                local r=panel:Row(i);r.id=b.id;local y=64+(i-1)*28
-                r.label:SetText(b.name.." ("..b.nodes..")");M.Width(r.label,120);at(r.label,panel,12,y+4);r.label:Show()
-                at(r.insert,panel,136,y);at(r.export,panel,210,y);at(r.send,panel,284,y);at(r.delete,panel,348,y)
+            for i,b in ipairs(list) do
+                local r=panel:Row(i);r.id=b.id;local y=(i-1)*28;local content=panel.form.content
+                UI:FitCaption(r.label,b.name.." ("..b.nodes..")",M.ToNative(106));at(r.label,content,10,y+4);r.label:Show()
+                UI:AttachTooltip(r.insert,b.name,"Insert an independent copy of this building block.")
+                at(r.insert,content,122,y);at(r.export,content,190,y);at(r.send,content,258,y);at(r.delete,content,320,y)
                 for _,c in ipairs({r.insert,r.export,r.send,r.delete}) do M.Height(c,24); c:Show() end
                 if s.inspectApplied then r.insert:Disable();r.delete:Disable() else r.insert:Enable();r.delete:Enable() end
-            end end
+            end
             if s.inspectApplied then panel.save:Disable() else panel.save:Enable() end
             if #list>0 then panel.exportAll:Enable() else panel.exportAll:Disable() end
             panel:Show()
@@ -1495,15 +1734,15 @@ function UI:GraphEditor(controller)
             for _,nodeId in ipairs(members) do local def=definition(s.catalog,graph.nodes[nodeId]);if not def.bypass then fixed=fixed+1 end end
             self.detailText:SetText(#members.." nodes. Mute silences all of them; Bypass passes media/values through "..(#members-fixed).." of them ("..fixed.." have no bypass). Save applies Mute/Bypass.")
             if not self.sectionPanel then
-                local panel=at(UI:Panel(p,424,220,"surface"),p,0,0);UI:HideSurface(panel);self.sectionPanel=panel
-                at(UI:Label(panel,"Name",11,"muted"),panel,12,14)
-                panel.name=at(UI:Input(panel,260,action(function(text)
+                local panel=at(host(p,424,140),p,0,0);self.sectionPanel=panel
+                at(construct("Label",panel,"Name",11,"muted"),panel,12,14)
+                panel.name=at(construct("Input",panel,260,action(function(text)
                     assert(#text<=40 and not text:find("[%c|]"),"Section names have at most 40 characters")
                     s:SetSection(E.selectedSection,"name",text);E:Details("section",E.selectedSection)
                 end)),panel,110,8)
-                at(UI:Label(panel,"Colour",11,"muted"),panel,12,54)
-                panel.color=at(UI:ColorField(panel,160,action(function(hex) s:SetSection(E.selectedSection,"color",hex:sub(1,6):upper());E:Details("section",E.selectedSection) end)),panel,110,48)
-                panel.delete=at(UI:Button(panel,"Delete section",150,action(function() E:DeleteSection(E.selectedSection) end),"danger"),panel,12,100)
+                at(construct("Label",panel,"Colour",11,"muted"),panel,12,54)
+                panel.color=at(construct("ColorField",panel,160,action(function(hex) s:SetSection(E.selectedSection,"color",hex:sub(1,6):upper());E:Details("section",E.selectedSection) end)),panel,110,48)
+                panel.delete=at(construct("Button",panel,"Delete section",150,action(function() E:DeleteSection(E.selectedSection) end),"danger"),panel,12,100)
                 UI:AttachTooltip(panel.delete,"Delete section","Removes the frame only; its nodes stay where they are.")
             end
             local panel=self.sectionPanel;panel:SetParent(p);at(panel,p,0,0)
@@ -1513,50 +1752,89 @@ function UI:GraphEditor(controller)
         elseif mode=="share" then
             self.detailTitle:SetText("Graph sharing")
             self.detailText:SetText("Send the selected graph or a block to your target or a group member. Both players need BV Addon Suite 0.8.57; the receiver must allow receiving, accept the offer and confirm the import preview.")
-            if not self.sharePanel then self.sharePanel=at(UI:ShareOptions(p,s,424),p,0,0) end
+            if not self.sharePanel then self.sharePanel=at(construct("ShareOptions",p,s,424),p,0,0) end
             self.sharePanel:Refresh(); self.sharePanel:Show()
         elseif mode=="nameplates" then
             self.detailTitle:SetText("Nameplate stacking")
             self.detailText:SetText("Blizzard's own nameplate stacking. Changed only by your click, never by graphs or imports.")
-            if not self.nameplatePanel then self.nameplatePanel=at(UI:NameplateOptions(p,s,424),p,0,0) end
+            if not self.nameplatePanel then self.nameplatePanel=at(construct("NameplateOptions",p,s,424),p,0,0) end
             self.nameplatePanel:Refresh(); self.nameplatePanel:Show()
         elseif mode=="shortcuts" then
             self.detailTitle:SetText("Keyboard shortcuts")
             self.detailText:SetText("Local profile settings, saved immediately. Keys never travel with graph exports. Native key input requires in-game testing.")
-            if not self.shortcutPanel then self.shortcutPanel=at(UI:ShortcutOptions(p,s,424,500),p,0,0) end
+            if not self.shortcutPanel then self.shortcutPanel=at(construct("ShortcutOptions",p,s,424,500),p,0,0) end
             self.shortcutPanel:Refresh(); self.shortcutPanel:Show()
         elseif mode=="settings" then
             self.detailTitle:SetText("Studio settings")
-            self.detailText:SetText("Appearance is shared by all BV windows. Quick-Access choices are saved with this profile.")
+            self.detailText:SetText("The suite Interface theme styles Studio windows. Quick-Access choices are saved with this profile.")
             if not self.settingsPanel then
                 -- Compact settings (0.8.73): SettingsGrid rows, notes as tooltips.
-                local panel=at(UI:Panel(p,424,300,"surface"),p,0,0); UI:HideSurface(panel); self.settingsPanel=panel
-                local g=UI:SettingsGrid(panel); panel.grid=g
+                local panel=at(host(p,424,300),p,0,0); self.settingsPanel=panel
+                local g=construct("SettingsGrid",panel); panel.grid=g
                 g:Section("quick","Quick-Access")
-                self.quickShown=g:Row("Show Quick-Access",UI:Switch(g,false,function(value) s:SetQuickShown(value) end),
+                self.quickShown=g:Row("Show Quick-Access",construct("Switch",g,false,function(value) s:SetQuickShown(value) end),
                     {help="Choose included graphs and group switches in the graph context menu. New items are hidden by default."})
                 g:Section("look","Appearance")
-                self.settingsTheme=g:Row("Theme",UI:AppearanceChoice(g,"themeKey",200),{help="Shared by all BV windows."})
-                self.settingsFont=g:Row("Font family",UI:AppearanceChoice(g,"font",200),{help="Font of all BV windows. Shared with Global Settings."})
-                self.settingsScale=g:Row(nil,UI:ScaleSlider(g,300,function(value)
+                self.settingsAppearance=g:Row("Suite appearance",construct("Button",g,"Open appearance",160,function() ns.Config:OpenPage("appearance") end),
+                    {help="Choose the Interface theme and accent for Studio and other suite windows in Global Settings."})
+                self.settingsFont=g:Row("Font family",construct("AppearanceChoice",g,"font",200),{help="Font of all BV windows. Shared with Global Settings."})
+                self.settingsScale=g:Row(nil,construct("ScaleSlider",g,300,function(value)
                     ns.Settings:Set("scale",value); windowSize(w,M.GetWidth(w),M.GetHeight(w)); E:Details("settings")
                     if s.quick and s.quick:IsShown() then s.quick:Refresh() end
                 end),{width=300})
                 g:Section("minimap","Minimap launcher")
                 -- Same controls contract as UI:MinimapOptions (show, lock, reset, Refresh).
                 local launcher=UI.MinimapLauncher; local minimap={}
-                minimap.show=g:Row("Show minimap button",UI:Switch(g,false,function(value) launcher:SetShown(value) end),
+                minimap.show=g:Row("Show minimap button",construct("Switch",g,false,function(value) launcher:SetShown(value) end),
                     {help="Show one shared BV launcher. Recover it anytime with /bv minimap show."})
-                minimap.lock=g:Row("Lock minimap position",UI:Switch(g,false,function(value) launcher:SetLocked(value) end),
+                minimap.lock=g:Row("Lock minimap position",construct("Switch",g,false,function(value) launcher:SetLocked(value) end),
                     {help="Prevent dragging the BV launcher around the minimap."})
-                minimap.reset=g:Row("Minimap position",UI:Button(g,"Reset",110,function() launcher:ResetPosition() end),
+                minimap.reset=g:Row("Minimap position",construct("Button",g,"Reset",110,function() launcher:ResetPosition() end),
                     {help="Restore the default minimap angle without changing visibility or other settings."})
                 function minimap:Refresh() local data=launcher:Store(); self.show:SetValue(not data.hide); self.lock:SetValue(data.lock) end
                 launcher.controls[minimap]=true; minimap:Refresh(); self.minimapOptions=minimap
                 UI:Place(g,panel,0,4); M.Height(panel,g:Arrange(412)+8)
             end
             self.settingsPanel:Show(); self.quickShown:SetValue(s:Store().quick.shown)
-            self.settingsTheme:SetValue(ns.Settings:Get("themeKey")); self.settingsFont:SetValue(ns.Settings:Get("font")); self.settingsScale:SetValue(ns.Settings:Get("scale"))
+            self.settingsFont:SetValue(ns.Settings:Get("font")); self.settingsScale:SetValue(ns.Settings:Get("scale"))
+        elseif mode=="load" then
+            self.loadGraphID=id or self.loadGraphID or s:Graph().id
+            local rec=s:Store().graphs[self.loadGraphID]
+            if not rec then self.details:Hide();self.refreshing=false;return end
+            self.detailTitle:SetText("Load conditions")
+            self.detailText:SetText("Optional filters for "..rec.name..". All selected conditions must match. Saved immediately; the graph stays enabled while waiting.")
+            if not self.loadPanel then
+                local panel=at(host(p,424,1),p,0,0);self.loadPanel=panel
+                local grid=construct("SettingsGrid",panel);panel.grid=grid
+                grid:Section("load","Run only when")
+                local function change(key,value)
+                    if E.refreshing then return end
+                    s:SetLoadCondition(E.loadGraphID,key,value)
+                    E:Details("load",E.loadGraphID)
+                end
+                local classes={{value="",label="Any class"}}
+                for _,token in ipairs({"WARRIOR","PALADIN","HUNTER","ROGUE","PRIEST","SHAMAN","MAGE","WARLOCK","DRUID","DEATHKNIGHT","MONK","DEMONHUNTER","EVOKER"})do
+                    classes[#classes+1]={value=token,label=token:sub(1,1)..token:sub(2):lower()}
+                end
+                panel.class=grid:Row("Player class",construct("Dropdown",grid,210,classes,function(v)change("class",v~="" and v or nil)end))
+                panel.instance=grid:Row("Instance type",construct("Dropdown",grid,210,{{value="",label="Anywhere"},{value="none",label="Open world"},{value="party",label="Dungeon"},{value="raid",label="Raid"},{value="pvp",label="Battleground"},{value="arena",label="Arena"},{value="scenario",label="Scenario"}},function(v)change("instance",v~="" and v or nil)end))
+                local function idInput(key)
+                    return construct("Input",grid,210,function(v)
+                        v=v:match("^%s*(.-)%s*$")
+                        if v==""then change(key,nil)else change(key,tonumber(v) or v)end
+                    end)
+                end
+                panel.mapID=grid:Row("Map ID",idInput("mapID"),{help="Optional exact UI map ID (including its floor). Empty means any map; parent zones are not matched automatically."})
+                panel.instanceID=grid:Row("Instance ID",idInput("instanceID"),{help="Optional instance ID from GetInstanceInfo. This is not the UI map ID. Empty means any instance."})
+                panel.status=grid:Block(construct("Label",grid,"",12,"muted"),72)
+                UI:Place(grid,panel,0,4);M.Height(panel,grid:Arrange(412)+8)
+            end
+            local panel=self.loadPanel;local conditions=rec.load or {}
+            panel.class:SetValue(conditions.class or "");panel.instance:SetValue(conditions.instance or "")
+            panel.mapID:SetText(conditions.mapID and tostring(conditions.mapID) or "");panel.instanceID:SetText(conditions.instanceID and tostring(conditions.instanceID) or "")
+            local matches,reason=s:LoadAllows(rec)
+            panel.status:SetText((matches and "Conditions match this character and location." or reason or "Conditions do not match.").."\nUnmatched graphs are hidden from Quick-Access. New runs wait until combat ends.")
+            panel:Show()
         elseif mode=="library" then
             local target=self.libraryTarget or {kind="graph",id=s:Graph().id}
             self.libraryEditing={kind=target.kind,id=target.id}
@@ -1568,25 +1846,25 @@ function UI:GraphEditor(controller)
                 -- Compact properties (0.8.73): SettingsGrid rows.
                 self.libraryWidgets={}
                 local function keep(widget) self.libraryWidgets[#self.libraryWidgets+1]=widget; return widget end
-                local panel=keep(at(UI:Panel(p,424,300,"surface"),p,0,0)); UI:HideSurface(panel)
-                local g=UI:SettingsGrid(panel); self.libraryGrid=g
+                local panel=keep(at(host(p,424,300),p,0,0))
+                local g=construct("SettingsGrid",panel); self.libraryGrid=g
                 local function rename()
                     local t=E.libraryEditing; s:Rename(t.kind,t.id,E.libraryName:GetText()); E:Details("library")
                 end
                 g:Section("properties","Properties")
-                self.libraryName=g:Row("Name",UI:Input(g,220,action(rename)),{help="Press Enter or Save name to keep the new name."}); self.libraryName:SetMaxLetters(80)
+                self.libraryName=g:Row("Name",construct("Input",g,220,action(rename)),{help="Press Enter or Save name to keep the new name."}); self.libraryName:SetMaxLetters(80)
                 self.libraryName:HookScript("OnEditFocusGained",function() E.textFocus=true end)
                 self.libraryName:HookScript("OnEditFocusLost",function() E.textFocus=false end)
-                g:Row(nil,UI:ActionButton(g,"Save name","check",130,action(rename),true))
-                self.membership=g:Row("Group",UI:Dropdown(g,220,{},action(function(id)
+                g:Row(nil,construct("ActionButton",g,"Save name","check",130,action(rename),true))
+                self.membership=g:Row("Group",construct("Dropdown",g,220,{},action(function(id)
                     s:MoveGraph(E.libraryEditing.id,id~="ungrouped" and id or nil); E:Details("library")
                 end)),{help="Group in the library this graph belongs to."})
                 self.membershipLabel=self.membership.bvGridRow.label
-                self.quickIncluded=g:Row("Include in Quick-Access",UI:Switch(g,false,function(value)
+                self.quickIncluded=g:Row("Include in Quick-Access",construct("Switch",g,false,function(value)
                     local target=E.libraryEditing; s:SetQuickIncluded(target.kind,target.id,value)
                 end),{help="Lists this graph or group in the Quick-Access panel for fast on/off switching."})
                 self.quickIncludedLabel=self.quickIncluded.bvGridRow.label
-                self.libraryNote=g:Block(UI:Label(g,"",11,"muted"),72)
+                self.libraryNote=g:Block(construct("Label",g,"",11,"muted"),72)
                 UI:Place(g,panel,0,4); self.libraryGridHeight=g:Arrange(412)+8; M.Height(panel,self.libraryGridHeight)
             end
             for _,widget in ipairs(self.libraryWidgets) do widget:Show() end
@@ -1603,6 +1881,7 @@ function UI:GraphEditor(controller)
                     E.deleteTarget={id=target.id,record=item}; E:Details("deleteGraph")
                 end)
                 M.Width(remove,190); remove:SetLabelText("Delete graph...")
+                button("loadGraph","Load conditions...",216,self.libraryGridHeight+8,function()E:Details("load",target.id)end)
             else
                 self.libraryNote:SetText("Use the group switch in the tree to pause or resume its enabled graphs together.\n\nDrag a graph onto a group, or use the graph context menu to assign its group.")
             end
@@ -1610,7 +1889,7 @@ function UI:GraphEditor(controller)
             local target=self.deleteTarget
             assert(target and s:Store().groups[target.id]==target.record,"Group changed; reopen deletion")
             self.detailTitle:SetText("Delete group?"); self.detailText:SetText(target.record.name)
-            if not self.deleteNote then self.deleteNote=at(UI:Label(p,"",13,"text"),p,12,16); M.Size(self.deleteNote,398,200) end
+            if not self.deleteNote then self.deleteNote=at(construct("Label",p,"",13,"text"),p,12,16); M.Size(self.deleteNote,398,200) end
             self.deleteNote:SetText("Move this group's graphs to Ungrouped. Graphs, snapshots and history are preserved. Enabled graphs may resume running.\n\nDeleting the group cannot be undone."); M.Height(self.deleteNote,142); self.deleteNote:Show()
             local remove=button("confirmDeleteGroup","Delete group",12,178,function()
                 if E.detailMode=="deleteGroup" and E.deleteTarget==target and s:DeleteGroup(target.id,target.record) then E.details:Hide() end
@@ -1622,7 +1901,7 @@ function UI:GraphEditor(controller)
             self.detailTitle:SetText("Delete graph?")
             self.detailText:SetText(target.record.name)
             if not self.deleteNote then
-                self.deleteNote=at(UI:Label(p,"",13,"text"),p,12,16); M.Size(self.deleteNote,398,200)
+                self.deleteNote=at(construct("Label",p,"",13,"text"),p,12,16); M.Size(self.deleteNote,398,200)
             end
             self.deleteNote:SetText("Delete this graph, its draft, applied snapshot and history. Its live output and test stop.\n\nOther graphs and shared layout anchors are preserved. This cannot be undone."); M.Height(self.deleteNote,142)
             self.deleteNote:Show()
@@ -1657,12 +1936,16 @@ function UI:GraphEditor(controller)
                     y=y+30
                     if field.advanced then
                         local k=key; local b=self.expose[key]
-                        if not b then b=UI:Switch(p,false,function(v)
+                        if not b then b=construct("Switch",p,false,function(v)
                             s:Edit(function(g) local node=g.nodes[E.focusNode]; assert(not G.Binding(g,node.id,k),"Connected ports must remain visible"); node.exposed[k]=v end)
-                        end); b.caption=UI:Label(p,"",11,"muted"); self.expose[key]=b end
+                        end); b.caption=construct("Label",p,"",11,"muted"); self.expose[key]=b end
                         -- The switch belongs to the input above: say so explicitly.
-                        b.caption:SetText("Show \""..(field.label or key).."\" on the node card");M.Size(b.caption,250,16);b.caption:SetWordWrap(false)
-                        at(b,p,106,y); at(b.caption,p,150,y+2); b:SetValue(n.exposed[key]==true); b:Show(); b.caption:Show()
+                        b.caption:SetText(field.control and ("Show dynamic "..(field.label or key).." input") or ("Show \""..(field.label or key).."\" on the node card"));M.Size(b.caption,250,16);b.caption:SetWordWrap(false)
+                        local help=key=="mute" and field.control and "Mute suppresses this node's processing and outputs. Use Visible for display visibility, or Active for timer control (false resets the timer). Mute is not pause."
+                            or key=="bypass" and field.control and "Bypass forwards only the node's declared input-to-output mapping, without applying its processing. It does not hide a display."
+                            or "Show this advanced input on the node card. Connected inputs always remain visible."
+                        UI:AttachTooltip(b,field.label or key,help.." Connected values are read-only.")
+                        at(b,p,106,y); at(b.caption,p,150,y+2); b:SetValue(n.exposed[key]==true or G.Binding(self:Graph(),n.id,key)~=nil); b:Show(); b.caption:Show()
                         if G.Binding(self:Graph(),n.id,key) or s.inspectApplied then b:Disable() else b:Enable() end; y=y+26
                     end
                 end
@@ -1671,10 +1954,10 @@ function UI:GraphEditor(controller)
                 self:ShowField(self:Field(p,slot),p,{id=n.id,key=field.key,label=field.label,type=field.type,choices=field.choices,choiceLabels=field.choiceLabels,picker=field.picker,options=field.options,slider=field.slider,config=true},n.config[field.key]==nil and field.default or n.config[field.key],10,y,230,s.inspectApplied); y=y+30
             end end
             if def.selectableOutputs and type(def.outputSelectionKey)=="string" then
-                if not self.outputChoiceTitle then self.outputChoiceTitle=UI:Label(p,"Visible outputs",12,"text") end
+                if not self.outputChoiceTitle then self.outputChoiceTitle=construct("Label",p,"Visible outputs",12,"text") end
                 if not self.outputFilter then
-                    self.outputFilterLabel=UI:Label(p,"Find outputs",11,"muted")
-                    self.outputFilter=UI:Input(p,280); self.outputFilter:SetMaxLetters(80)
+                    self.outputFilterLabel=construct("Label",p,"Find outputs",11,"muted")
+                    self.outputFilter=construct("Input",p,280); self.outputFilter:SetMaxLetters(80)
                     self.outputFilter:SetScript("OnTextChanged",function()
                         if E.refreshing then return end
                         E.detailForm.slider:SetValue(0); E:Details("node",E.focusNode)
@@ -1698,11 +1981,11 @@ function UI:GraphEditor(controller)
                     if query=="" or key:lower():find(query,1,true) or (port.label or key):lower():find(query,1,true) then
                     matched=matched+1; local choice=self.outputChoices[key]
                     if not choice then
-                        choice=UI:Switch(p,false,action(function(value)
+                        choice=construct("Switch",p,false,action(function(value)
                             local binding=E.outputChoices[key]
                             if binding.nodeId then E:SetOutputSelected(binding.nodeId,key,value) end
                         end))
-                        choice.caption=UI:Label(p,"",11,"text"); choice.caption:SetWordWrap(false)
+                        choice.caption=construct("Label",p,"",11,"text"); choice.caption:SetWordWrap(false)
                         self.outputChoices[key]=choice
                     end
                     choice.nodeId=n.id; at(choice,p,10,y); at(choice.caption,p,58,y+3); M.Size(choice.caption,330,18)
@@ -1799,7 +2082,7 @@ function UI:GraphEditor(controller)
             self.detailTitle:SetText(selected and s.catalog[selected.type].secureAction and "Choose self-cast spell" or "Choose player aura")
             self.detailText:SetText("Search names or partial Spell IDs. Best matches appear first.\nIcons, rank and game text load automatically for visible results.")
             if not self.pickerView then
-                self.pickerView=at(UI:LookupPicker(p,398),p,10,10)
+                self.pickerView=at(construct("LookupPicker",p,398),p,10,10)
                 self.pickerInput=self.pickerView.input; self.pickerButtons=self.pickerView.buttons
                 self.pickerNote=self.pickerView.note; self.pickerPages=self.pickerView.pages
                 self.pickerWidgets={self.pickerView}
@@ -1822,7 +2105,7 @@ function UI:GraphEditor(controller)
             self.detailTitle:SetText("Choose carried item")
             self.detailText:SetText("Search items in bags 0–4 and equipment. No bank or global item scan.\nUse the node's numeric Item ID for items outside this snapshot.")
             if not self.itemView then
-                self.itemView=at(UI:ItemPicker(p,398),p,10,10)
+                self.itemView=at(construct("ItemPicker",p,398),p,10,10)
                 self.itemView.input:HookScript("OnEditFocusGained",function()E.textFocus=true end)
                 self.itemView.input:HookScript("OnEditFocusLost",function()E.textFocus=false end)
             end
@@ -1837,7 +2120,7 @@ function UI:GraphEditor(controller)
             assert(binding and self.pickerGraph==s:Graph().id and not s.inspectApplied,"Selector context changed")
             self.detailTitle:SetText("Symbols")
             self.detailText:SetText("Lucide symbols (ISC licence). Click one to use it.\nChanges stay in the draft until Save.")
-            if not self.symbolView then self.symbolView=at(UI:SymbolPicker(p,398),p,10,0) end
+            if not self.symbolView then self.symbolView=at(construct("SymbolPicker",p,398),p,10,0) end
             local node=self:Graph().nodes[binding.id]
             self.symbolView:Open(node and node.config[binding.key],action(function(name)
                 if s:Graph().id~=E.pickerGraph or s.inspectApplied then return end
@@ -1850,7 +2133,7 @@ function UI:GraphEditor(controller)
             self.detailTitle:SetText("Icon catalog")
             self.detailText:SetText("Choose the icon for this node.\nChanges stay in the draft until Save.")
             if not self.iconView then
-                self.iconView=at(UI:IconPicker(p,398),p,10,0)
+                self.iconView=at(construct("IconPicker",p,398,{style=style}),p,10,0)
                 for _,input in ipairs({self.iconView.input,self.iconView.reference}) do
                     input:HookScript("OnEditFocusGained",function() E.textFocus=true end)
                     input:HookScript("OnEditFocusLost",function() E.textFocus=false end)
@@ -1878,8 +2161,18 @@ function UI:GraphEditor(controller)
         elseif mode=="errors" then
             self.detailTitle:SetText("Graph diagnostics")
             self.detailText:SetText("Bounded log; repeated faults are counted. Retry does not replay lost events.")
-            if not self.logText then self.logText=at(UI:Label(p,"",11,"text"),p,10,10); M.Width(self.logText,400); M.Height(self.logText,400) end
-            self.logText:SetText(s:ErrorsText()); self.logText:Show()
+            if not self.logForm then
+                self.logForm=at(construct("Form",p,424,60),p,0,0)
+                self.logForm:SetClipsChildren(true)
+                self.logText=at(construct("Label",self.logForm.content,"",11,"text"),self.logForm.content,10,8)
+                M.Width(self.logText,380);self.logText:SetJustifyV("TOP")
+            end
+            self.logText:SetText(s:ErrorsText())
+            local textHeight=math.max(24,M.ToDesign(self.logText:GetStringHeight()))
+            M.Height(self.logText,textHeight)
+            local viewport=math.min(300,math.max(60,textHeight+16))
+            M.Height(self.logForm,viewport);M.Height(self.logForm.slider,viewport)
+            self.logForm:SetContentHeight(textHeight+16);self.logForm:Show();self.logText:Show()
             footer("retry","Retry faults",function() s:Retry(); E:Details("errors") end)
         end
         if mode~="test" then
@@ -1893,10 +2186,20 @@ function UI:GraphEditor(controller)
         finishFields(self.detailRows); self.refreshing=false
         -- Content height is measured from what the mode actually shows (no
         -- per-mode guesses); the footer row sits below it.
-        local contentHeight=mode=="node" and self.nodeContentHeight or math.max(120,UI:ContentBottom(p)+12)
+        local detailTop=DETAIL_TOP
+        if mode~="node" then
+            local introHeight=math.max(30,M.ToDesign(self.detailText:GetStringHeight()))
+            M.Height(self.detailText,introHeight);detailTop=7+introHeight+10
+            at(p,self.details.content,18,detailTop)
+        else M.Height(self.detailText,30) end
+        -- Footer buttons retain their old anchors when a dialog is reused.
+        -- Exclude them from content measurement before placing the new footer.
+        for _,b in ipairs(self.footerList)do b:Hide()end
+        local contentHeight=mode=="node" and self.nodeContentHeight or math.max(60,UI:ContentBottom(p)+12)
         if mode~="node" then M.Height(p,contentHeight) end
-        local footerHeight=UI:ButtonRow(p,self.footerList,0,contentHeight+6,424)
-        self.details:FitContent(460,36+DETAIL_TOP+contentHeight+(footerHeight>0 and footerHeight+12 or 0)+18)
+        local footerHeight=construct("ButtonRow",p,self.footerList,0,contentHeight+6,424)
+        for _,b in ipairs(self.footerList)do b:Show()end
+        self.details:FitContent(460,36+detailTop+contentHeight+(footerHeight>0 and footerHeight+12 or 0)+18)
         self.details:Show()
         UI:FocusWindow(self.details)
         if mode=="picker" and self.pickerSearch:Status().ready then self.pickerInput:SetFocus() end
@@ -1963,6 +2266,7 @@ function UI:GraphEditor(controller)
             E:Cancel(); E.space=false; E.textFocus=false
             E.budget:ClearFocus()
             if E.details then E.details:Hide() end
+            if interface then for _,key in ipairs({"soundPicker","macroEditor","noteEditor","codeEditor","nodeTestDialog","transfer"}) do if E[key] then E[key]:Hide() end end end
             if E.wiki then E.wiki:Hide();E.wikiBinding=nil end
             UI:CloseDropdown()
         end
@@ -1981,7 +2285,11 @@ end
 
 function UI:AuraStudioPage(parent,s)
     if s.page then return s.page end
-    local page=UI:Panel(parent,880,390,"surface"); at(page,parent,0,0); UI:HideSurface(page); s.page=page
+    local style=UI:GetStyle();local page
+    if style.materialProfile=="interface" then
+        page=CreateFrame("Frame",nil,parent);M.Size(page,880,390)
+    else page=UI:Panel(parent,880,390,"surface");UI:HideSurface(page) end
+    at(page,parent,0,0);page.bvStyle=style;s.page=page
     local overview=CreateFrame("Frame",nil,page); at(overview,page,0,0)
     local helpPage=CreateFrame("Frame",nil,page); at(helpPage,page,0,0); helpPage:Hide()
     local workspace=UI:Section(overview,"Graph workspace",430,210,"tree")
@@ -1989,7 +2297,7 @@ function UI:AuraStudioPage(parent,s)
     local graphSummary=at(UI:Label(workspace,"",12,"muted"),workspace,16,110)
     at(UI:Button(workspace,"Open AuraStudio",190,function() s:Open() end,true),workspace,16,148)
     local execution=UI:Section(overview,"Execution",430,210,"play")
-    at(UI:Label(execution,"Enable module",14,"text"),execution,16,64)
+    local executionLabel=at(UI:Label(execution,"Enable module",14,"text"),execution,16,64)
     page.enabled=UI:Switch(execution,false,function(v) ns.Modules:SetEnabled("aura_studio",v); page:Refresh() end)
     local executionHelp=at(UI:Label(execution,"Live execution is enabled separately for each graph. You can edit graphs and send test signals while the module is disabled.",13,"muted"),execution,16,110)
     local workflow=UI:Section(overview,"Workflow",880,160,"grid")
@@ -2013,6 +2321,7 @@ function UI:AuraStudioPage(parent,s)
         local workflowY=two and 226 or 452; card(workflow,0,workflowY,width,160)
         M.Size(intro,column-32,44); M.Size(graphSummary,column-32,24)
         at(self.enabled,execution,column-52,65); M.Size(executionHelp,column-32,80)
+        if style.materialProfile=="interface" then M.Size(executionLabel,column-84,M.GetHeight(self.enabled)) end
         M.Size(workflowText,width-32,88); M.Size(overview,width,workflowY+160)
         card(editing,0,0,width,340); M.Size(editingText,width-32,260)
         card(testing,0,356,width,180); M.Size(testingText,width-32,108); M.Size(helpPage,width,536)

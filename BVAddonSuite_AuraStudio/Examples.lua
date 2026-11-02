@@ -53,9 +53,21 @@ yG1M1lxve(3W0JsIyOC)7QDEfuJXszMuKvQ4y1mzgotZ1vmrESSopvsmb07X9g8qbECyNhDsGXfI4XBr
 TD(WLzuouRS2sLE75qaDRbsar(ndmTCPV45IV6lEY)X((11Fm5U)H)w2Lb7rpz6CJ(5Zd
 ]==]},
 }
-function A.ExampleText(entry) return (entry.text:gsub("%s+","")) end
-function S:Examples()
-    local out={};for i,e in ipairs(A.Examples) do out[i]={id=e.id,name=e.name,description=e.description} end;return out
+function A.ExampleText(entry)
+    if entry.build then return ns.TransferCodec.Encode(entry.build(entry)) end
+    return (entry.text:gsub("%s+",""))
+end
+function S:Examples(category)
+    local out,seen={},{}
+    for _,e in ipairs(A.Examples) do
+        if category and e.category==category or not category and not e.category then
+            out[#out+1]={id=e.id,name=e.name,description=e.description}
+        elseif not category and e.category and not seen[e.category] then
+            seen[e.category]=true
+            out[#out+1]={id="reagents:"..e.category,name="Reagent stock: "..e.categoryName,category=e.category}
+        end
+    end
+    return out
 end
 -- Imports one example as a new, disabled graph and selects it.
 function S:ImportExample(id)

@@ -89,25 +89,31 @@ local function buildSpectrum(popup,width)
 end
 -- Shared spectrum colour picker (0.8.73). Any owner with value, SetValue,
 -- callback and IsVisible can use it; ColorField and ColorInput both do.
-local function openPicker(self)
+local colorPopups={}
+local function openPicker(self,options)
+    options=options or self.bvColorOptions or {}
     if self.locked or not self:IsVisible() then return end
     UI:CloseDropdown()
-    local popup=UI.colorPopup
+    if UI.colorPopup then UI.colorPopup:Hide() end
+    local style=options.style or UI:GetStyle()
+    local popup=colorPopups[style]
     if not popup then
-        popup=UI:DismissiblePopup(UIParent,320,440);UI.colorPopup=popup
+      UI:WithStyle(style,function()
+        popup=UI:DismissiblePopup(UIParent,320,440,style.materialProfile=="interface" and "dialog" or nil)
         D.Point(popup.panel,"CENTER",UIParent,"CENTER",0,0);popup.panel:SetClampedToScreen(true)
         UI:Place(UI:Label(popup.panel,"Color",16,"text"),popup.panel,16,12)
         popup.sample=popup.panel:CreateTexture(nil,"ARTWORK");D.Point(popup.sample,"TOPRIGHT",-16,-16);D.Size(popup.sample,48,30)
         popup.hex=UI:Input(popup.panel,176,function(text)
             local hex,c=colorHex(text)
-            if hex then popup:SetColor(c) else popup.hex:SetText(popup.value or "") end
+            if hex then popup:SetColor(c) else popup.hex:SetText(popup.rgb and (popup.value or ""):sub(1,6) or (popup.value or "")) end
         end);popup.hex:SetMaxLetters(9);UI:Place(popup.hex,popup.panel,16,43)
         popup.sliders={};popup.labels={}
         function popup:SetColor(c)
+            c={c[1],c[2],c[3],self.rgb and 1 or c[4]}
             self.updating=true;self.color={unpack(c)}
             for i,slider in ipairs(self.sliders)do slider:SetValue(math.floor(c[i]*255+.5));self.labels[i]:SetText(({"R","G","B","A"})[i].."  "..math.floor(c[i]*255+.5))end
             self.value=colorHex(string.format("%02X%02X%02X%02X",math.floor(c[1]*255+.5),math.floor(c[2]*255+.5),math.floor(c[3]*255+.5),math.floor(c[4]*255+.5)))
-            self.hex:SetText(self.value);self.sample:SetColorTexture(unpack(c));self.updating=false
+            self.hex:SetText(self.rgb and self.value:sub(1,6) or self.value);self.sample:SetColorTexture(unpack(c));self.updating=false
             if not self.keepHsv then
                 local h,s,v=rgbToHsv(c[1],c[2],c[3])
                 -- Grey keeps the last hue so the bar does not jump to red.
@@ -123,26 +129,81 @@ local function openPicker(self)
             local slider=UI:GetStyle():Slider(popup.panel,210,0,255,1,255);popup.sliders[i]=slider
             UI:Place(slider,popup.panel,90,238+(i-1)*32)
             slider:SetScript("OnValueChanged",function(_,v)
-                if popup.updating or not popup.owner then return end
+                if popup.updating or not popup.owner or (popup.rgb and index==4) then return end
                 local c={unpack(popup.color)};c[index]=math.floor(v+.5)/255;popup:SetColor(c)
             end)
         end
         popup.cancel=UI:Place(UI:Button(popup.panel,"Cancel",130,function()popup:Hide()end),popup.panel,16,388)
         popup.apply=UI:Place(UI:Button(popup.panel,"Apply",130,function()
             local owner,value=popup.owner,colorHex(popup.hex:GetText())
-            if not value then popup.hex:SetText(popup.value or "");return end
+            if not value then popup.hex:SetText(popup.rgb and (popup.value or ""):sub(1,6) or (popup.value or ""));return end
+            if popup.rgb then value=value:sub(1,6).."FF" end
             popup:Hide()
             if owner and owner:IsVisible() and not owner.locked then owner:SetValue(value);ns:Call("color picker",owner.callback,value)end
         end),popup.panel,174,388)
+        popup.default=UI:Place(UI:Button(popup.panel,"Default",288,function()
+            local owner,value=popup.owner,popup.defaultValue
+            if not value then return end
+            popup:Hide()
+            if owner and owner:IsVisible() and not owner.locked then owner:SetValue(value);ns:Call("color default",owner.callback,"")end
+        end),popup.panel,16,334)
         popup:HookScript("OnHide",function(self)self.owner=nil;self.hex:ClearFocus();if self.dragTicker then self.dragTicker:Cancel();self.dragTicker=nil end end)
+      end)
+      colorPopups[style]=popup
     end
-    popup:Hide();popup.owner=self
+    UI.colorPopup=popup;popup.owner=self;popup.rgb=options.rgb==true
+    popup.defaultValue=options.default and colorHex(options.default) or nil
+    popup.default:SetShown(popup.rgb and popup.defaultValue~=nil)
+    popup.labels[4]:SetShown(not popup.rgb);popup.sliders[4]:SetShown(not popup.rgb)
+    popup.sliders[4]:EnableMouse(not popup.rgb);popup.hex:SetMaxLetters(popup.rgb and 7 or 9)
     popup.panel:SetScale(self:GetEffectiveScale()/UIParent:GetEffectiveScale())
     popup:SetColor(select(2,colorHex(self.value or "")) or {1,1,1,1});popup:Open()
 end
-function UI:OpenColorPicker(owner,callback)
+function UI:OpenColorPicker(owner,callback,options)
     if callback then owner.callback=callback end
-    openPicker(owner)
+    openPicker(owner,options)
+end
+ns.Settings:BeforeProfileChange(colorPopups,function()if UI.colorPopup then UI.colorPopup:Hide()end end)
+-- Compact preset rail with a shape cue for the selection and a full RGB picker.
+function UI:ColorPalette(parent,choices,changed)
+    local host=CreateFrame("Frame",nil,parent)
+    D.Size(host,(#choices+1)*24,24)
+    host.chips={}
+    function host:SetValue(hex)
+        self.value=hex:sub(1,6):lower()
+        for _,chip in ipairs(self.chips) do chip.mark:SetShown(chip.hex==self.value) end
+        self.custom.value=self.value.."FF"
+        self.custom.sample:SetColorTexture(UI:RGBA(self.custom.value))
+    end
+    local function choose(hex)
+        host:SetValue(hex)
+        changed(host.value)
+    end
+    for i,choice in ipairs(choices) do
+        local chip=CreateFrame("Button",nil,host)
+        chip.hex=choice.value:lower()
+        D.Size(chip,23,24);D.Point(chip,"LEFT",(i-1)*24,0)
+        local fill=chip:CreateTexture(nil,"ARTWORK")
+        D.Size(fill,16,14);D.Point(fill,"CENTER",0,2)
+        fill:SetColorTexture(UI:RGBA(chip.hex.."FF"))
+        chip.mark=chip:CreateTexture(nil,"OVERLAY")
+        D.Size(chip.mark,12,2);D.Point(chip.mark,"BOTTOM",0,1)
+        chip.mark:SetColorTexture(UI:GetStyle():Color("text"))
+        chip:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square","ADD")
+        UI:AttachTooltip(chip,choice.label)
+        chip:SetScript("OnClick",function() choose(chip.hex) end)
+        host.chips[i]=chip
+    end
+    host.bvStyle=UI:GetStyle()
+    host.custom=UI:IconButton(host,"plus",function(b) UI:OpenColorPicker(b,choose,{rgb=true,style=host.bvStyle}) end)
+    function host.custom:SetValue(hex) host:SetValue(hex) end
+    host:HookScript("OnHide",function() if UI.colorPopup and UI.colorPopup.owner==host.custom then UI.colorPopup:Hide() end end)
+    D.Point(host.custom,"LEFT",#choices*24,0);D.Size(host.custom,22,22)
+    host.custom.sample=host.custom:CreateTexture(nil,"OVERLAY")
+    D.Point(host.custom.sample,"BOTTOMLEFT",2,1);D.Point(host.custom.sample,"BOTTOMRIGHT",-2,1);D.Height(host.custom.sample,2)
+    UI:AttachTooltip(host.custom,"Custom color","Choose any color from the spectrum.")
+    host:SetValue(choices[1].value)
+    return host
 end
 function UI:ColorField(parent,width,callback)
     local host=CreateFrame("Frame",nil,parent);D.Size(host,width,30);host.callback=callback
@@ -188,6 +249,11 @@ function UI:ScaleSlider(parent, width, callback)
     host.label=self:Label(host,"100%",11,"text"); D.Point(host.label,"RIGHT"); D.Size(host.label,40,16); host.label:SetJustifyH("RIGHT")
     local slider=self:GetStyle():Slider(host,width-126,50,130,1,100); host.slider=slider
     D.Size(slider,math.max(40,width-126),20); D.Point(slider,"LEFT",82,0)
+    function host:Resize(value)
+        D.Width(self,value)
+        D.Width(self.slider,math.max(40,value-126))
+    end
+    host:HookScript("OnSizeChanged",function()D.Width(slider,math.max(40,D.GetWidth(host)-126))end)
     slider:SetScript("OnValueChanged",function(_,value)
         host.value=math.floor(value+0.5)/100; host.label:SetText(string.format("%.0f%%",host.value*100))
     end)
@@ -201,7 +267,43 @@ function UI:ScaleSlider(parent, width, callback)
     host:SetValue(1); return host
 end
 
-function UI:NumberInput(parent, width, minimum, maximum, callback)
+function UI:NumberInput(parent, width, minimum, maximum, callback, options)
+    -- Optional presentation only: never round the authoritative numeric value.
+    if options and options.displayDecimals ~= nil then
+        local decimals = options.displayDecimals
+        assert(type(decimals) == "number" and decimals % 1 == 0 and decimals >= 0 and decimals <= 6, "Invalid number display precision")
+        local input, rendered, editing
+        local function show(full)
+            local value = input.value or minimum
+            local text = string.format(full and "%.17g" or ("%." .. decimals .. "f"), value)
+            if not full and decimals > 0 then text = text:gsub("0+$", ""):gsub("%.$", "") end
+            if not full and text == "-0" then text = "0" end
+            rendered = text
+            input:SetText(text)
+            input:SetCursorPosition(0)
+        end
+        local function commit(text)
+            editing = false
+            -- Also avoids parsing a rounded display or a no-op Enter/Blur twice.
+            if text ~= rendered then
+                local value = tonumber(text)
+                if ns.ProgressModel.Number(value) then
+                    value = math.max(minimum, math.min(maximum, value))
+                    if value ~= input.value then input.value = value; callback(value) end
+                end
+            end
+            show(false)
+        end
+        input = self:Input(parent, width, commit)
+        function input:SetValue(value) self.value = value; show(editing) end
+        input:HookScript("OnEditFocusGained", function() editing = true; show(true) end)
+        input:HookScript("OnEditFocusLost", function(self) ns:Call("number input", commit, self:GetText()) end)
+        input:SetScript("OnEscapePressed", function(self)
+            -- Edits are pending text only; the current value (including external updates) is intact.
+            editing = false; show(false); self:ClearFocus()
+        end)
+        return input
+    end
     local input
     local function commit(text)
         local value = tonumber(text)

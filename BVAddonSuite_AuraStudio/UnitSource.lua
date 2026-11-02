@@ -4,6 +4,9 @@ local _,A=...
 if A.blocked then return end
 local G=A.G
 local P={};A.UnitSource=P
+-- Registered once by UnitInformation. Virtual fields reuse bounded UnitData
+-- capture/projection; they are never passed to a native API as field names.
+P.projections={}
 P.presentationFields={classIcon=true,classColor=true,classRed=true,classGreen=true,classBlue=true,roleIcon=true}
 -- Player-only observations reuse the existing progress/economy adapter. Their
 -- names cannot collide with ordinary UnitData fields such as level or power.
@@ -48,7 +51,7 @@ function P.Token(kind,config,instance)
         if binding and P.ValidToken(binding.unit) and binding.unit:match("^nameplate%d+$") then return binding.unit end
         return
     end
-    if kind=="unit" or kind=="unit_aura" or kind=="unit_cast" then kind=config and config.unit or "player" end
+    if kind=="unit" or kind=="unit_information" or kind=="unit_aura" or kind=="unit_cast" then kind=config and config.unit or "player" end
     if protected(kind) or type(kind)~="string" then return end
     if fixed[kind] then return fixed[kind] end
     local limit=kind=="party_member" and 4 or (kind=="raid_member" or kind=="nameplate") and 40
@@ -150,11 +153,27 @@ function P.New(api)
     return {Capture=function(_,requested,unit,options)
         unit=unit or "player";assert(P.ValidToken(unit),"Unsupported unit selector")
         requested=requested or {}
-        local fields={exists=true};for key in pairs(requested) do if key~="instance" and key~="castSucceeded" and key~="succeededSpellID" and not derived[key] and not P.playerFields[key] then fields[key]=true end end
+        local fields={exists=true};for key in pairs(requested) do
+            local projection=P.projections[key]
+            if projection then fields[projection.source]=true
+            elseif key~="instance" and key~="castSucceeded" and key~="succeededSpellID" and not derived[key] and not P.playerFields[key] then fields[key]=true end
+        end
         if requested.classIcon or requested.classColor or requested.classRed or requested.classGreen or requested.classBlue then fields.classToken=true end
         if requested.roleIcon then fields.groupRolesAssigned=true end
         options=options or {};options.liveExistence=true
         local result=source:Capture(unit,fields,options)
+        for key in pairs(requested) do
+            local projection=P.projections[key]
+            if projection then
+                local handle=result.values[projection.source]
+                if handle then result.values[key],result.fields[key]=A.UnitData.Project(handle,projection.schema,projection.field,1)
+                else result.fields[key]=result.fields[projection.source] or "unavailable" end
+            end
+        end
+        for key in pairs(requested) do
+            local projection=P.projections[key]
+            if projection and not requested[projection.source] then result.values[projection.source]=nil;result.fields[projection.source]=nil end
+        end
         enrich(result,requested)
         local observations={}
         for _,key in ipairs(P.playerFieldOrder) do

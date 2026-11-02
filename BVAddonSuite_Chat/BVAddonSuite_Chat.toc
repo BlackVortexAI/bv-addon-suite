@@ -1,0 +1,15 @@
+## Interface: 16001
+## Title: BV Addon Suite - Chat
+## Notes: Mix channels, whispers and game feeds in independently configurable chat windows. /bvchat
+## Author: BV
+## Version: 0.1.18
+## Dependencies: BVAddonSuite
+## IconTexture: Interface\AddOns\BVAddonSuite_Chat\Media\Brand\module-icon
+
+Chat.lua
+Client.lua
+UI\Blizzard.lua
+UI\Layout.lua
+UI\Workspace.lua
+UI\Toolbar.lua
+UI\Rules.lua

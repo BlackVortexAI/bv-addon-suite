@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.8.90","0.8.101",1) then return end
+if not ns:RequireCore(package,"0.8.91","0.8.101",1) then return end
 local N,UI,D=ns.NativeButtons,ns.UI,ns.DesignSystem.Metrics
 
 -- Known micro buttons (Forever/Classic and Mainline names), default order,
@@ -164,6 +164,7 @@ end
 ns.Modules:Register({id="micro_menu",OnEnable=function(context) Micro:Enable(context) end})
 local page
 ns.Config:RegisterPage("micromenu",{title="Micro Menu",description="Character, spellbook, quest log and more as one skinned, movable bar.",
+    interfaceSettings=true,
     build=function(parent)
         if not page then
             page=UI:NativeBarPage(parent,Micro,function(p,cfg,changed)
@@ -174,7 +175,8 @@ ns.Config:RegisterPage("micromenu",{title="Micro Menu",description="Character, s
                 -- One row per button: label "n. Name", then visible / up / down.
                 p.slots={}
                 for i=1,#ordered(cfg()) do
-                    local slot=UI:Panel(g,168,26,"surface");UI:HideSurface(slot)
+                    -- A neutral row host from the page: never a painted surface (Interface opt-in).
+                    local slot=p:Host(168,26)
                     slot.bvVisible=UI:Place(UI:Switch(slot,true,function(value) if slot.bvName then setShown(slot.bvName,value) end end),slot,0,3)
                     slot.bvUp=UI:Place(UI:Button(slot,"Up",58,function() if slot.bvName then move(slot.bvName,-1) end end,"ghost"),slot,46,0)
                     slot.bvDown=UI:Place(UI:Button(slot,"Down",58,function() if slot.bvName then move(slot.bvName,1) end end,"ghost"),slot,110,0)

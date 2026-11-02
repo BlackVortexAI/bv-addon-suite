@@ -17,6 +17,35 @@ local PAD,HEADER,GAP=8,20,7
 local WHITE="Interface\\Buttons\\WHITE8X8"
 local function cfg() return Q:Config() end
 local function family() return Q:Family() end
+local function style() return T.style or UI:InterfaceStyle() end
+local function interface() return T.style and T.style.materialProfile=="interface" end
+local function action(parent,name,callback)
+    if not interface() then return UI:IconButton(parent,name,callback,"ghost") end
+    local s=style()
+    local button=CreateFrame("Button",nil,parent);button.bvTooltipStyle=s
+    button.icon=s:Icon(button,name,16,"accentText");M.Point(button.icon,"CENTER")
+    local function paint()
+        button.icon.colorRole=button:IsEnabled() and (button.hovered and "text" or "accentText") or "muted"
+        button.icon:SetColor(s:Color(button.icon.colorRole))
+    end
+    button:SetScript("OnClick",function() callback() end)
+    button.BindHover=function()
+        button:HookScript("OnEnter",function()button.hovered=true;paint()end)
+        button:HookScript("OnLeave",function()button.hovered=false;paint()end)
+    end
+    button:HookScript("OnHide",function()button.hovered=false;paint()end)
+    button:SetScript("OnEnable",paint);button:SetScript("OnDisable",paint)
+    s:Bind(paint,button)
+    return button
+end
+local function textLabel(value) return interface() and value or ns.Styles:Label(family(),value) end
+local function flat(region)
+    if interface() then
+        if region.SetSnapToPixelGrid then region:SetSnapToPixelGrid(false) end
+        if region.SetTexelSnappingBias then region:SetTexelSnappingBias(0) end
+    end
+    return region
+end
 
 -- Which quests and in which sections.
 function T:Sections()
@@ -93,12 +122,24 @@ local function hoverScripts(frame)
 end
 function T:Build()
     if self.content then return end
+    local captured=UI:InterfaceStyle();if not captured then return nil end
     self:Create()
-    UI:WithStyle(Q:Style(),function()
+    self.style=captured
+    UI:WithStyle(self.style,function()
         local f=self.frame
-        -- Background (optional) sized to the content; it also takes the mouse
+        -- Content-sized host; only the background material obeys background opacity. It takes the mouse
         -- for mouseover-only, so the empty rest of the box never blocks clicks.
-        self.content=UI:GamePanel(Q.ID,f,260,100,"bg",4,function() return cfg().trackerOpacity/100 end)
+        if interface() then
+            -- A passive carrier scales every material region, independently of content/fade.
+            self.materialCarrier=CreateFrame("Frame",nil,f);self.materialCarrier:EnableMouse(false)
+            self.material=UI:Panel(self.materialCarrier,260,100,"dialog",4,1);self.material:EnableMouse(false)
+            if ns.InterfaceSurfaces and ns.InterfaceSurfaces.AttachHUD then ns.InterfaceSurfaces:AttachHUD(self.style,self.material) end
+            self.content=CreateFrame("Frame",nil,f);M.Size(self.content,260,100)
+            self.content.bvTooltipStyle=self.style
+            self.content:SetFrameLevel(self.material:GetFrameLevel()+1)
+            self.materialCarrier:SetAllPoints(self.content)
+            self.material:SetPoint("TOPLEFT",self.materialCarrier,"TOPLEFT")
+        else self.content=UI:GamePanel(Q.ID,f,260,100,"bg",4,function() return cfg().trackerOpacity/100 end) end
         self.content:SetPoint("TOPLEFT",f,"TOPLEFT",0,0);self.content:EnableMouse(true)
         hoverScripts(self.content)
         -- Header: title (drag handle when unlocked) and the auto-focus button.
@@ -107,7 +148,7 @@ function T:Build()
         self.handle:SetScript("OnDragStop",function() T:StopMove() end)
         hoverScripts(self.handle)
         self.title=self.handle:CreateFontString(nil,"OVERLAY");self.title:SetJustifyH("LEFT")
-        self.rule=self.content:CreateTexture(nil,"ARTWORK");self.rule:SetTexture(WHITE)
+        self.rule=flat(self.content:CreateTexture(nil,"ARTWORK"));self.rule:SetTexture(WHITE)
         self.focus=CreateFrame("Button",nil,self.content);M.Size(self.focus,16,16)
         self.focus.icon=self.focus:CreateTexture(nil,"ARTWORK");self.focus.icon:SetAllPoints(self.focus)
         local path,l,r,t,b=ns.Symbols:Coords("crosshair",64)
@@ -117,7 +158,7 @@ function T:Build()
             UI:ShowTooltip(button,"Auto-focus",cfg().autoFocus and (T.paused and "Paused: you picked a target yourself. Click to resume." or "On: the nearest quest is your navigation target. Click to turn off.")
                 or "Off. Click to set the nearest quest as navigation target automatically. Also /bv quest focus (bindable as a macro).") end)
         self.focus:SetScript("OnLeave",function(button) T:Hover(-1);UI:HideTooltip(button) end)
-        Q.Banner:Build(self.content)
+        UI:WithStyle(Q:Style(),function() Q.Banner:Build(self.content,interface() and self.style or nil) end)
         -- Quests scroll inside the box once they are taller than it.
         self.viewport=CreateFrame("ScrollFrame",nil,self.content);self.viewport:SetClipsChildren(true)
         self.viewport:SetScript("OnMouseWheel",function(_,delta) T:Scroll(delta) end)
@@ -134,6 +175,7 @@ function T:Build()
         self.edges={}
         for i=1,4 do local e=self.content:CreateTexture(nil,"OVERLAY");e:SetTexture(WHITE);e:Hide();self.edges[i]=e end
         f:SetScript("OnSizeChanged",function() if T.sizing then T:Layout() end end)
+        if interface() then self.style:Bind(function() if T:Shown() then T:Layout() end end,self.content) end
     end)
 end
 
@@ -159,13 +201,14 @@ function T:Block(index)
     hoverScripts(b)
     -- Lead there (BV Quest Navigation, when installed): the next open
     -- objective or the turn-in; asked again, the next spot.
-    b.go=UI:IconButton(b,"navigation",function() T:Go(b.quest) end,"ghost");M.Size(b.go,18,18);b.go:Hide()
+    b.go=action(b,"navigation",function() T:Go(b.quest) end);M.Size(b.go,18,18);b.go:Hide()
     b.go:SetScript("OnEnter",function(btn) T:GoTip(btn,b.quest) end)
     b.go:SetScript("OnLeave",function() if GameTooltip then GameTooltip:Hide() end end)
     -- An x beside it for the lines other modules add (Florian 2026-10-16:
     -- the class quest and trainer lines never went away; right-click was hidden).
-    b.close=UI:IconButton(b,"x",function() T:Dismiss(b.quest) end,"ghost");M.Size(b.close,16,16);b.close:Hide()
+    b.close=action(b,"x",function() T:Dismiss(b.quest) end);M.Size(b.close,16,16);b.close:Hide()
     UI:AttachTooltip(b.close,"Remove","Takes this line out of the tracker.")
+    if interface() then b.go:BindHover();b.close:BindHover() end
     self.blocks[index]=b
     return b
 end
@@ -179,12 +222,13 @@ function T:Line(b,index)
     return line
 end
 local function font(region,size,weight)
-    ns.Styles:Font(family(),region,M.ToNative(size),weight or "regular","OUTLINE")
+    if interface() then style():Font(region,size,weight or "regular")
+    else ns.Styles:Font(family(),region,M.ToNative(size),weight or "regular","OUTLINE") end
 end
 
 -- Paints the quest rows into the scroll body; returns their height.
 function T:Rows(width)
-    local c,s=cfg(),Q:Style()
+    local c,s=cfg(),style()
     local size=c.fontSize
     local titleH,lineH=size+6,size+3
     local supertracked=Q.Call("C_SuperTrack.GetSuperTrackedQuestID")
@@ -198,11 +242,11 @@ function T:Rows(width)
         local label,rule=self.sectionLabels[si],self.sectionRules[si]
         if not label then
             label=self.body:CreateFontString(nil,"OVERLAY");label:SetJustifyH("LEFT");label:SetWordWrap(false);self.sectionLabels[si]=label
-            rule=self.body:CreateTexture(nil,"ARTWORK");rule:SetTexture(WHITE);self.sectionRules[si]=rule
+            rule=flat(self.body:CreateTexture(nil,"ARTWORK"));rule:SetTexture(WHITE);self.sectionRules[si]=rule
         end
         if si>1 then y=y+4 end
-        font(label,size-2,"bold");label:SetText(ns.Styles:Label(family(),section.title))
-        if section.dungeon and c.dungeonColor then label:SetTextColor(Q.Data.DungeonColor(s)) else label:SetTextColor(mr,mg,mb) end
+        font(label,size-2,"bold");label:SetText(textLabel(section.title))
+        if section.dungeon and c.dungeonColor then label:SetTextColor(Q.Data.DungeonColor(s)) elseif interface() then label:SetTextColor(s:Color("accentText")) else label:SetTextColor(mr,mg,mb) end
         label:ClearAllPoints();M.Point(label,"TOPLEFT",self.body,"TOPLEFT",0,-y);label:Show()
         local labelW=math.min(width*.7,(label.GetStringWidth and M.ToDesign(label:GetStringWidth() or 0) or 80)+6)
         M.Size(label,labelW,lineH)
@@ -224,7 +268,7 @@ function T:Rows(width)
             if q.extra then b.title:SetText(q.title)
             else b.title:SetText(string.format("|cff%02x%02x%02x%s|r  %s%s",r*255,g*255,bl*255,q.level or "?",q.title,tags)) end
             if q.failed then b.title:SetTextColor(s:Color("danger"))
-            elseif target then b.title:SetTextColor(ar,ag,ab)
+            elseif target then b.title:SetTextColor(s:Color(interface() and "accentText" or "accent"))
             elseif q.dungeon and c.dungeonColor then b.title:SetTextColor(Q.Data.DungeonColor(s))
             else b.title:SetTextColor(tr,tg,tb) end
             local distance=""
@@ -289,7 +333,8 @@ end
 -- Paints everything: header, banner, quests; the box height caps the content.
 function T:Layout()
     if not (self.frame and self.content) then return end
-    local c,s=cfg(),Q:Style()
+    local c,s=cfg(),style()
+    local materialAlpha=interface() and (c.trackerBackground and math.max(0,math.min(1,c.trackerOpacity/100)) or 0) or 1
     local width=math.max(180,M.GetWidth(self.frame))
     local box=M.GetHeight(self.frame)
     if box<HEADER*2 then box=c.trackerMaxHeight end
@@ -297,15 +342,15 @@ function T:Layout()
     local unlocked=c.trackerUnlocked and not (ns.LayoutEditor and ns.LayoutEditor.active)
     -- Header.
     local y=PAD
-    font(self.title,c.fontSize,"bold");self.title:SetText(ns.Styles:Label(family(),"Quests"));self.title:SetTextColor(s:Color("accent"))
+    font(self.title,c.fontSize,"bold");self.title:SetText(textLabel("Quests"));self.title:SetTextColor(s:Color(interface() and "accentText" or "accent"))
     self.handle:ClearAllPoints();M.Point(self.handle,"TOPLEFT",self.content,"TOPLEFT",PAD,-y);M.Size(self.handle,inner-22,HEADER)
     self.handle:EnableMouse(unlocked)
     self.title:ClearAllPoints();M.Point(self.title,"TOPLEFT",self.handle,"TOPLEFT",0,0);M.Size(self.title,inner-22,HEADER)
     self.focus:ClearAllPoints();M.Point(self.focus,"TOPRIGHT",self.content,"TOPRIGHT",-PAD,-y-2)
-    local fr,fg,fb=s:Color(c.autoFocus and (self.paused and "warning" or "accent") or "muted");self.focus.icon:SetVertexColor(fr,fg,fb,1)
+    local fr,fg,fb=s:Color(c.autoFocus and (self.paused and "warning" or (interface() and "accentText" or "accent")) or "muted");self.focus.icon:SetVertexColor(fr,fg,fb,1)
     y=y+HEADER
     local ar,ag,ab=s:Color("accent")
-    self.rule:ClearAllPoints();M.Point(self.rule,"TOPLEFT",self.content,"TOPLEFT",PAD,-y);M.Size(self.rule,inner,1);self.rule:SetVertexColor(ar,ag,ab,.35)
+    self.rule:ClearAllPoints();M.Point(self.rule,"TOPLEFT",self.content,"TOPLEFT",PAD,-y);M.Size(self.rule,inner,1);self.rule:SetVertexColor(ar,ag,ab,.35*materialAlpha)
     y=y+6
     y=Q.Banner:Layout(self.content,y,width)
     -- Quests: everything that does not fit scrolls.
@@ -330,9 +375,19 @@ function T:Layout()
     local height=y+visible+PAD
     if unlocked then height=box end
     M.Size(self.content,width,math.max(height,HEADER+PAD*2))
-    -- Background: switch and opacity are read on every paint.
-    self.content.surfaceHidden=not c.trackerBackground
-    if self.content.RepaintSurface then self.content:RepaintSurface() end
+    if interface() then
+        M.Size(self.material,width,math.max(height,HEADER+PAD*2))
+        self.materialCarrier:SetAlpha(materialAlpha)
+        -- Banner band/stripe are decoration; its labels and restart button remain readable.
+        local banner=Q.Banner.frame
+        if banner then
+            banner.band:SetVertexColor(ar,ag,ab,.16*materialAlpha)
+            banner.stripe:SetVertexColor(ar,ag,ab,materialAlpha)
+        end
+    else
+        self.content.surfaceHidden=not c.trackerBackground
+        if self.content.RepaintSurface then self.content:RepaintSurface() end
+    end
     -- Unlocked: corner grip, and an outline while the mouse is over it.
     self.grip:SetShown(unlocked)
     self.grip:ClearAllPoints();M.Point(self.grip,"BOTTOMRIGHT",self.content,"BOTTOMRIGHT",-1,1)
@@ -399,6 +454,7 @@ end
 function T:Shown() return self.frame~=nil and self.frame:IsShown() end
 function T:Update()
     if not self.frame then return end
+    if not self.content and not UI:InterfaceStyle() then return nil end
     local c=cfg()
     local on=Q:Active() and c.tracker
     -- Blizzard's tracker follows the switch at once, not only after a reload.
@@ -495,7 +551,7 @@ function T:OpenOnMap(q)
     Q.Details:Select(q.id)
 end
 function T:Menu(b,q)
-    b.bvMenuStyle=Q:Style()
+    b.bvMenuStyle=style()
     local options={{value="navigate",label="Set as navigation target"},{value="map",label="Show in quest log"},
         {value="untrack",label=q.watched and "Stop tracking" or "Track"},{value="share",label="Share with group"},{value="abandon",label="Abandon…",danger=true}}
     if Q.MapWaypoints() then table.insert(options,2,{value="waypoint",label="Waypoint to the objective"}) end
@@ -580,7 +636,7 @@ function T:BlizzardAfterCombat()
 end
 
 function T:Enable(context)
-    self:Build()
+    self:Build();if not self.content then return nil end
     Q:On("Changed",self,function() T:AutoFocus();if T:Shown() then T:Layout() end end)
     Q:On("Run",self,function() if T:Shown() then T:Layout() end end)
     pcall(context.Subscribe,context,"PLAYER_REGEN_DISABLED",function() T.combat=true;T:Update() end)

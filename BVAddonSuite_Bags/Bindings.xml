@@ -1,0 +1,4 @@
+<Bindings>
+    <Binding name="BVBAGS_INVENTORY" category="BV Addon Suite">SlashCmdList.BVADDONSUITE("inventory")</Binding>
+    <Binding name="BVBAGS_STACKS" category="BV Addon Suite">BVAddonSuiteCore.Bags.Inventory:ToggleStacks()</Binding>
+</Bindings>

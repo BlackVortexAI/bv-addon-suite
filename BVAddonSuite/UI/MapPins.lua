@@ -20,14 +20,28 @@ local DISC="Interface\\CHARACTERFRAME\\TempPortraitAlphaMask"
 -- tell (outdoor, indoor); C_Minimap.GetViewRadius is used when present.
 local OUTDOOR={[0]=466+2/3,[1]=400,[2]=333+1/3,[3]=266+2/3,[4]=200,[5]=133+1/3}
 local INDOOR={[0]=300,[1]=240,[2]=180,[3]=120,[4]=80,[5]=50}
+local RETRY=1 -- seconds before a point the client could not place is asked again
+local MINPX=3 -- pixels apart on the minimap at least for a point of a line to be drawn
 
+-- A path's parts are split once; the results pass through without a table
+-- (Claude 2026-10-25: called many times a second while idle, each call made
+-- garbage).
+local parts={}
+local function results(ok,...)
+    if not ok then return nil end
+    return ...
+end
 local function call(path,...)
+    local list=parts[path]
+    if not list then
+        list={}
+        for part in path:gmatch("[^%.]+") do list[#list+1]=part end
+        parts[path]=list
+    end
     local f=_G
-    for part in path:gmatch("[^%.]+") do if type(f)~="table" then return nil end;f=f[part] end
+    for i=1,#list do if type(f)~="table" then return nil end;f=f[list[i]] end
     if type(f)~="function" then return nil end
-    local result={pcall(f,...)}
-    if not result[1] then return nil end
-    return unpack(result,2)
+    return results(pcall(f,...))
 end
 local function secret(value) return issecretvalue and issecretvalue(value) or false end
 local function xy(vector)
@@ -101,14 +115,24 @@ function P:OnMap(point,mapID,remember)
     local memo=self.moved[point]
     if memo and memo.map==mapID and memo.from==point.mapID and memo.px==point.x and memo.py==point.y then
         if memo.x then return memo.x,memo.y end
-        return nil
+        -- A point the client could not place is asked again after a moment (Claude 2026-10-25:
+        -- placed while the map was not ready, after a teleport or a zone change, it stayed
+        -- unplaced and the way on the minimap kept a gap there).
+        local now=call("GetTime") or 0
+        if now-(memo.at or 0)<RETRY then return nil end
     end
     local x,y=self:Move(point,mapID)
     if not memo then memo={};self.moved[point]=memo end
     memo.map,memo.from,memo.px,memo.py,memo.x,memo.y=mapID,point.mapID,point.x,point.y,x or false,y
+    memo.at=not x and (call("GetTime") or 0) or nil
     return x,y
 end
 function P:Move(point,mapID)
+    local T=ns.MapTerrain
+    if T and T.RoutingPosition then
+        local handled,x,y=T:RoutingPosition(point.mapID,mapID,point.x,point.y)
+        if handled then return x,y end
+    end
     local vector=rawget(_G,"CreateVector2D")
     if vector then
         local continent,world=call("C_Map.GetWorldPosFromMapPos",point.mapID,vector(point.x,point.y))
@@ -130,6 +154,9 @@ local function rect(mapID,top)
 end
 -- The continent a map lies on (map type 2), or nil.
 function P:Continent(mapID)
+    local T=ns.MapTerrain
+    local domain=T and T.RoutingDomain and T:RoutingDomain(mapID)
+    if domain then return domain end
     for _=1,8 do
         local info=call("C_Map.GetMapInfo",mapID)
         if type(info)~="table" then return nil end
@@ -158,13 +185,35 @@ end
 -- Chevrons along a line (x, y relative to the anchor, y up): every SPACING
 -- pixels a ">" of two short lines pointing from the first point to the
 -- second, light so they read on any line colour. store: the pool.
-function P:Chevrons(store,overlay,anchor,point,x1,y1,x2,y2,size,thickness,spacing,count,alpha)
+function P:Chevrons(store,overlay,anchor,point,x1,y1,x2,y2,size,thickness,spacing,count,alpha,phase)
+    local cfg=self.lineConfig
+    if cfg then
+        if not cfg.arrows or cfg.opacity==0 or (alpha or 1)==0 then return count end
+        alpha=(alpha or 1)*cfg.opacity/100
+        if cfg.style=="ribbon" then spacing=spacing*.72 end
+    end
     local dx,dy=x2-x1,y2-y1
     local length=math.sqrt(dx*dx+dy*dy)
-    if length<spacing*.75 then return count end
+    local first,last=self.arrowStartGap or 0,self.arrowEndGap or 0
+    if length>0 and (first>0 or last>0) then
+        local ux,uy=dx/length,dy/length
+        x1,y1=x1+ux*first,y1+uy*first
+        x2,y2=x2-ux*last,y2-uy*last
+        dx,dy=x2-x1,y2-y1
+        length=length-first-last
+        if phase then phase=phase+first end
+    end
+    if length<=0 or (not phase and length<spacing*.75) then return count end
     local ux,uy=dx/length,dy/length
     local n=math.max(1,math.floor(length/spacing))
     local start=(length-(n-1)*spacing)/2
+    -- Distance-faded routes subdivide only their drawing. Keep arrow spacing
+    -- across those short pieces instead of dropping all their arrows.
+    if phase then
+        start=(spacing/2-phase)%spacing
+        if start>=length then return count end
+        n=math.ceil((length-start)/spacing)
+    end
     for k=0,n-1 do
         local d=start+k*spacing+size/2
         local tx,ty=x1+ux*d,y1+uy*d
@@ -288,12 +337,13 @@ function P:WorldLine(index,canvas)
     line.shadow:SetTexture(WHITE)
     local show,hide=line.Show,line.Hide
     function line:Show() show(self);self.shadow:Show() end
-    function line:Hide() hide(self);self.shadow:Hide() end
+    function line:Hide() hide(self);self.shadow:Hide();ns.RouteLineStyles:HideParts(self) end
     self.worldLines[index]=line
     return line
 end
 -- Paints every provider's points on the map shown (and their lines).
 function P:PaintWorld()
+    self.lineConfig=ns.RouteLineStyles:Config()
     local canvas,_,map=self:Canvas()
     local used,lines,arrows=0,0,0
     if canvas and map and map:IsShown() and map.GetMapID then
@@ -304,6 +354,7 @@ function P:PaintWorld()
         local playerX,playerY=xy(call("C_Map.GetPlayerMapPosition",shown,"player"))
         for _,id in ipairs(self.order) do
             local provider=self.providers[id]
+            self.linePhase=0;self.lastStyledLine=nil
             local points
             if provider.world~=false then points=self:Points(provider,shown) end
             if points then
@@ -323,15 +374,13 @@ function P:PaintWorld()
                             lines=lines+1
                             local line=self:WorldLine(lines,canvas)
                             local c=point.leadColor or point.color or {1,1,1}
-                            line:SetVertexColor(c[1],c[2],c[3],.95*(point.leadAlpha or point.lineAlpha or 1));line:SetThickness(M.ToNative(3)/scale)
-                            line.shadow:SetVertexColor(0,0,0,.7*(point.leadAlpha or point.lineAlpha or 1));line.shadow:SetThickness(M.ToNative(6)/scale)
-                            for _,l in ipairs({line,line.shadow}) do
-                                l:SetStartPoint("TOPLEFT",canvas,playerX*w,-playerY*h);l:SetEndPoint("TOPLEFT",canvas,x*w,-y*h)
-                            end
-                            line:Show()
+                            local routePhase,routeLine=self.linePhase,self.lastStyledLine;self.linePhase=0;self.lastStyledLine=nil
+                            self:StyledLine(line,canvas,"TOPLEFT",playerX*w,-playerY*h,x*w,-y*h,c,
+                                point.leadAlpha or point.lineAlpha, M.ToNative(1)/scale,0,point.lineEndGap)
+                            self.linePhase,self.lastStyledLine=provider.continuousArrows and self.linePhase or routePhase,routeLine
                             if provider.arrows then
                                 arrows=self:Chevrons(self.worldArrows,self:Overlay(canvas),canvas,"TOPLEFT",playerX*w,-playerY*h,x*w,-y*h,
-                                    M.ToNative(5)/scale,M.ToNative(1.6)/scale,M.ToNative(46)/scale,arrows,point.leadAlpha or point.lineAlpha)
+                                    M.ToNative(5)/scale,M.ToNative(1.6)/scale,M.ToNative(46)/scale,arrows,point.leadAlpha or point.lineAlpha,provider.continuousArrows and 0 or nil)
                             end
                         end
                         if not point.noPin then
@@ -355,22 +404,16 @@ function P:PaintWorld()
                             lines=lines+1
                             local line=self:WorldLine(lines,canvas)
                             local c=point.lineColor or point.color or {1,.82,.2}
-                            line:SetVertexColor(c[1],c[2],c[3],.95*(point.lineAlpha or 1))
-                            line:SetThickness(M.ToNative(2.5)/scale)
-                            line.shadow:SetVertexColor(0,0,0,.7*(point.lineAlpha or 1))
-                            line.shadow:SetThickness(M.ToNative(5)/scale)
-                            for _,l in ipairs({line,line.shadow}) do
-                                l:SetStartPoint("TOPLEFT",canvas,previous[1]*w,-previous[2]*h)
-                                l:SetEndPoint("TOPLEFT",canvas,x*w,-y*h)
-                            end
-                            line:Show()
+                            local arrowPhase=provider.continuousArrows and (self.linePhase or 0) or nil
+                            self:StyledLine(line,canvas,"TOPLEFT",previous[1]*w,-previous[2]*h,x*w,-y*h,c,
+                                point.lineAlpha,M.ToNative(1)/scale,previous[3],point.lineEndGap)
                             if provider.arrows then
                                 arrows=self:Chevrons(self.worldArrows,self:Overlay(canvas),canvas,"TOPLEFT",previous[1]*w,-previous[2]*h,x*w,-y*h,
-                                    M.ToNative(5)/scale,M.ToNative(1.6)/scale,M.ToNative(46)/scale,arrows,point.lineAlpha)
+                                    M.ToNative(5)/scale,M.ToNative(1.6)/scale,M.ToNative(46)/scale,arrows,point.lineAlpha,arrowPhase)
                             end
                         end
-                        previous={x,y}
-                    elseif provider.lines then previous=nil end
+                        previous={x,y,point.lineEndGap or 0}
+                    elseif provider.lines then previous=nil;self.linePhase=0;self.lastStyledLine=nil end
                 end
             end
         end
@@ -523,11 +566,43 @@ function P:MinimapLine(index,minimap)
     line.shadow=self.miniOverlay:CreateLine(nil,"OVERLAY",nil,1);line.shadow:SetTexture(WHITE)
     local show,hide=line.Show,line.Hide
     function line:Show() show(self);self.shadow:Show() end
-    function line:Hide() hide(self);self.shadow:Hide() end
+    function line:Hide() hide(self);self.shadow:Hide();ns.RouteLineStyles:HideParts(self) end
     self.miniLines[index]=line
     return line
 end
+-- This changes rendered strokes only. Gaps clear hollow Gather markers;
+-- provider coordinates, progress and the clipping algorithm stay intact.
+function P:StyledLine(line,anchor,point,x1,y1,x2,y2,color,alpha,unit,startGap,endGap)
+    self.arrowStartGap,self.arrowEndGap=(startGap or 0)*unit,(endGap or 0)*unit
+    local previous=(self.linePhase or 0)>0 and self.lastStyledLine or nil
+    self.linePhase=ns.RouteLineStyles:Paint(line,self.lineConfig or ns.RouteLineStyles:Config(),anchor,point,
+        x1,y1,x2,y2,color,alpha,unit,self.linePhase or 0,(startGap or 0)*unit,(endGap or 0)*unit)
+    if previous then ns.RouteLineStyles:Join(previous,line) end
+    self.lastStyledLine=line
+end
+-- One piece of a provider's line on the minimap, cut at its edge; returns the counts of lines and chevrons used.
+function P:MiniSegment(minimap,half,square,provider,point,ax,ay,bx,by,lines,arrows,startGap)
+    local phase=self.linePhase or 0
+    local length=math.sqrt((bx-ax)^2+(by-ay)^2)*half
+    local x1,y1,x2,y2=clip(ax,ay,bx,by,square)
+    if not x1 then self.linePhase=phase+length;self.lastStyledLine=nil;return lines,arrows end
+    lines=lines+1
+    local line=self:MinimapLine(lines,minimap)
+    local c=point.lineColor or point.color or {1,.82,.2}
+    self.linePhase=phase+math.sqrt((x1-ax)^2+(y1-ay)^2)*half
+    local arrowPhase=provider.continuousArrows and self.linePhase or nil
+    self:StyledLine(line,minimap,"CENTER",x1*half,y1*half,x2*half,y2*half,c,point.lineAlpha,M.ToNative(.8),
+        (math.abs(x1-ax)<1e-6 and math.abs(y1-ay)<1e-6) and (startGap or 0) or 0,
+        (math.abs(x2-bx)<1e-6 and math.abs(y2-by)<1e-6) and point.lineEndGap or 0)
+    self.linePhase=phase+length
+    if provider.arrows then
+        arrows=self:Chevrons(self.miniArrows,self.miniOverlay,minimap,"CENTER",x1*half,y1*half,x2*half,y2*half,
+            M.ToNative(4),M.ToNative(1.4),M.ToNative(26),arrows,point.lineAlpha,arrowPhase)
+    end
+    return lines,arrows
+end
 function P:PaintMinimap()
+    self.lineConfig=ns.RouteLineStyles:Config()
     local minimap=rawget(_G,"Minimap")
     local used,lines,arrows=0,0,0
     self.miniArrows=self.miniArrows or {}
@@ -551,13 +626,17 @@ function P:PaintMinimap()
         self.miniView=view
         for _,id in ipairs(self.order) do
             local provider=self.providers[id]
+            self.linePhase=0;self.lastStyledLine=nil
             if provider.minimap then
                 local points=self:Points(provider,playerMap)
                 if points then
-                    local previous,lastX,lastY
+                    local previous,lastX,lastY,lastGap,pending,pendX,pendY
                     for _,point in ipairs(points) do
                         local x,y=self:OnMap(point,playerMap,true)
-                        if not x then previous=nil end
+                        if not x then
+                            if pending then lines,arrows=self:MiniSegment(minimap,half,square,provider,pending,lastX,lastY,pendX,pendY,lines,arrows,lastGap) end
+                            previous,pending=nil,nil;self.linePhase=0;self.lastStyledLine=nil
+                        end
                         if x then
                             local east,north=(x-px)*width,-(y-py)*height
                             if rotate then
@@ -572,40 +651,35 @@ function P:PaintMinimap()
                                     lines=lines+1
                                     local line=self:MinimapLine(lines,minimap)
                                     local c=point.leadColor or point.color or {1,1,1}
-                                    line:SetVertexColor(c[1],c[2],c[3],.95*(point.leadAlpha or point.lineAlpha or 1));line:SetThickness(M.ToNative(2.5))
-                                    line.shadow:SetVertexColor(0,0,0,.6*(point.leadAlpha or point.lineAlpha or 1));line.shadow:SetThickness(M.ToNative(5))
-                                    for _,l in ipairs({line,line.shadow}) do
-                                        l:SetStartPoint("CENTER",minimap,x1*half,y1*half);l:SetEndPoint("CENTER",minimap,x2*half,y2*half)
-                                    end
-                                    line:Show()
+                                    local routePhase,routeLine=self.linePhase,self.lastStyledLine;self.linePhase=0;self.lastStyledLine=nil
+                                    self:StyledLine(line,minimap,"CENTER",x1*half,y1*half,x2*half,y2*half,c,
+                                        point.leadAlpha or point.lineAlpha,M.ToNative(.8),0,
+                                        (math.abs(x2-dx)<1e-6 and math.abs(y2-dy)<1e-6) and point.lineEndGap or 0)
+                                    self.linePhase,self.lastStyledLine=provider.continuousArrows and self.linePhase or routePhase,routeLine
                                     if provider.arrows then
                                         arrows=self:Chevrons(self.miniArrows,self.miniOverlay,minimap,"CENTER",x1*half,y1*half,x2*half,y2*half,
-                                            M.ToNative(4),M.ToNative(1.4),M.ToNative(26),arrows,point.leadAlpha or point.lineAlpha)
+                                            M.ToNative(4),M.ToNative(1.4),M.ToNative(26),arrows,point.leadAlpha or point.lineAlpha,provider.continuousArrows and 0 or nil)
                                     end
                                 end
                             end
-                            -- The path between this point and the one before,
-                            -- cut at the minimap's edge (Florian 2026-10-08).
-                            if provider.lines and previous then
-                                local x1,y1,x2,y2=clip(lastX,lastY,dx,dy,square)
-                                if x1 then
-                                    lines=lines+1
-                                    local line=self:MinimapLine(lines,minimap)
-                                    local c=point.lineColor or point.color or {1,.82,.2}
-                                    line:SetVertexColor(c[1],c[2],c[3],.95*(point.lineAlpha or 1));line:SetThickness(M.ToNative(2))
-                                    line.shadow:SetVertexColor(0,0,0,.6*(point.lineAlpha or 1));line.shadow:SetThickness(M.ToNative(4))
-                                    for _,l in ipairs({line,line.shadow}) do
-                                        l:SetStartPoint("CENTER",minimap,x1*half,y1*half);l:SetEndPoint("CENTER",minimap,x2*half,y2*half)
-                                    end
-                                    line:Show()
-                                    if provider.arrows then
-                                        arrows=self:Chevrons(self.miniArrows,self.miniOverlay,minimap,"CENTER",x1*half,y1*half,x2*half,y2*half,
-                                            M.ToNative(4),M.ToNative(1.4),M.ToNative(26),arrows,point.lineAlpha)
-                                    end
+                            -- A point of the line only, closer than MINPX on the minimap to the last one
+                            -- drawn: left out until the line has moved on (Claude 2026-10-25: the navmesh
+                            -- way's points lie a few yards apart; zoomed out, pieces of a fraction of a pixel
+                            -- were not drawn by the client and the line showed gaps).
+                            local skip=provider.lines and previous and point.noPin and not point.lead
+                                and math.abs(dx-lastX)*half<MINPX and math.abs(dy-lastY)*half<MINPX
+                            if skip then
+                                pending,pendX,pendY=point,dx,dy
+                            else
+                                -- The path between this point and the one before,
+                                -- cut at the minimap's edge (Florian 2026-10-08).
+                                if provider.lines and previous then
+                                    lines,arrows=self:MiniSegment(minimap,half,square,provider,point,lastX,lastY,dx,dy,lines,arrows,lastGap)
                                 end
+                                -- No table per point (garbage on every repaint).
+                                previous,lastX,lastY,pending=true,dx,dy,nil
+                                lastGap=point.lineEndGap or 0
                             end
-                            -- No table per point (garbage on every repaint).
-                            previous,lastX,lastY=true,dx,dy
                             local far
                             if square then far=math.max(math.abs(dx),math.abs(dy))>1 else far=dx*dx+dy*dy>1 end
                             if (not far or provider.edge) and not point.noPin then
@@ -628,6 +702,7 @@ function P:PaintMinimap()
                             end
                         end
                     end
+                    if pending then lines,arrows=self:MiniSegment(minimap,half,square,provider,pending,lastX,lastY,pendX,pendY,lines,arrows,lastGap) end
                 end
             end
         end

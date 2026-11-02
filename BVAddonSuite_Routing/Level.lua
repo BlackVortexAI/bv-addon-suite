@@ -23,14 +23,28 @@ function L.Chain(mapID)
     end
     return out
 end
--- A level by its id, and the map it belongs to.
-function L:Find(id)
-    if id==nil then return nil end
-    for mapID,list in pairs(Routing:Data().levels) do
+-- A level by its id, and the map it belongs to. (By an index of the ids, Claude 2026-10-26: Brill to Undercity asked
+-- this some thousand times over Undercity's thousand levels, a third of the plan's time. The index is made again
+-- when the data's view changes, Routing.dataVersion, or the level found no longer stands where it stood.)
+local index,indexData,indexVersion
+local function buildIndex(data)
+    index,indexData,indexVersion={},data,Routing.dataVersion
+    for mapID,list in pairs(data.levels) do
         if type(list)=="table" then
-            for _,level in ipairs(list) do if level.id==id then return level,mapID end end
+            for i,level in ipairs(list) do
+                local id=level.id
+                if id~=nil and index[id]==nil then index[id]={level,mapID,list,i} end
+            end
         end
     end
+end
+function L:Find(id)
+    if id==nil then return nil end
+    local data=Routing:Data()
+    if indexData~=data or indexVersion~=Routing.dataVersion then buildIndex(data) end
+    local e=index[id]
+    if e and (data.levels[e[2]]~=e[3] or e[3][e[4]]~=e[1] or e[1].id~=id) then buildIndex(data);e=index[id] end
+    if e then return e[1],e[2] end
     return nil
 end
 -- Districts (Florian 2026-10-10: riding the lift down, the game names
@@ -55,10 +69,23 @@ local function names(level,texts)
     end
     return false
 end
+-- A level inside a town (Road Studio: its ramp, its tower) on the town's
+-- map: its bounds' middle within the town ground level's bounds. The
+-- town's district names the town, not which of its levels you are on
+-- (Claude 2026-10-20: on the Crossroads tower ramp the subzone is
+-- "The Crossroads" too).
+function L.InTown(level,town)
+    if type(level)~="table" or type(town)~="table" or level==town or not town.townGround then return false end
+    local a,b=level.bounds,town.bounds
+    if type(a)~="table" or type(b)~="table" then return false end
+    local x,y=(a[1]+a[3])/2,(a[2]+a[4])/2
+    return x>=b[1] and x<=b[3] and y>=b[2] and y<=b[4]
+end
 -- The level you are on now (its id), or nil for the ground.
 function L:Current()
-    local mapID=Routing:Position()
+    local mapID,mx,my=Routing:Position()
     if not mapID then return self.id end
+    local cont,cx,cy=Routing:OnContinent(mapID,mx,my)
     local chain=L.Chain(mapID)
     local here=L.Here()
     local cue
@@ -66,6 +93,12 @@ function L:Current()
         for _,level in ipairs(Routing:ReadLevels(map)) do
             if names(level,here) then cue=(cue==nil) and level or false end
         end
+    end
+    -- In a town on one of its own levels: the town's district does not put
+    -- you back on its ground (your height may, below).
+    if cue and cue.townGround and self.id~=nil and self.id~=cue.id then
+        local kept=self:Find(self.id)
+        if L.InTown(kept,cue) then cue=nil end
     end
     -- A transition just taken (or /bv route level) counts until you are in
     -- another district (Florian's probe 2026-10-11: just through the
@@ -92,7 +125,7 @@ function L:Current()
     -- height, else none (unknown is better than a level the height denies).
     local H=Routing.Height
     local voted=false
-    if self.id~=nil and H and H:FitsLevel(self.id)==false then
+    if self.id~=nil and H and H:FitsLevel(self.id,cont,cx,cy)==false then
         local pick=self:ByHeight(mapID) or self:ByHeight(mapID,true)
         if pick~=self.id then
             voted=true
@@ -119,7 +152,7 @@ function L:Current()
         -- (named: "here" is whether you are on its map, the districts are names)
         if level and here and (not listed or #L.Here()==0 or names(level,L.Here()) or self.setWhere) then return self.id end
         -- In a district it does not name, but your height fits it (NPCs near).
-        if level and here and Routing.Height and Routing.Height:FitsLevel(self.id)==true then return self.id end
+        if level and here and Routing.Height and Routing.Height:FitsLevel(self.id,cont,cx,cy)==true then return self.id end
     end
     self.id=nil
     -- None known: the one level near whose height fits yours (Florian's
@@ -180,8 +213,15 @@ function L:CueLevels()
     local here=L.Here()
     if #here==0 then return out end
     for _,map in ipairs(L.Chain(mapID)) do
-        for _,level in ipairs(Routing:ReadLevels(map)) do
-            if names(level,here) then out[level.id]=true end
+        local levels=Routing:ReadLevels(map)
+        for _,level in ipairs(levels) do
+            if names(level,here) then
+                out[level.id]=true
+                -- A town named: its own levels too (the street or your height decides).
+                if level.townGround then
+                    for _,other in ipairs(levels) do if L.InTown(other,level) then out[other.id]=true end end
+                end
+            end
         end
     end
     return out
@@ -225,7 +265,7 @@ function L:Recall()
     local mapID,x,y=Routing:Position()
     if not mapID or not self:Find(kept.level) then return nil end
     local kx,ky=kept.x,kept.y
-    if kept.map~=mapID then kx,ky=Routing.Grid.Convert(kept.map,mapID,kept.x,kept.y) end
+    if kept.map~=mapID then kx,ky=Routing.Geo.Convert(kept.map,mapID,kept.x,kept.y) end
     if not kx then return nil end
     local w,h=Routing.Call("C_Map.GetMapWorldSize",mapID)
     if type(w)~="number" or w<=0 then w,h=1000,1000 end
@@ -284,7 +324,7 @@ function L:SpanAt(id,cont,cx,cy)
     local level,mapID=self:Find(id)
     local list=level and level.heights
     if type(list)=="table" and #list>=4 and cont and mapID and type(cx)=="number" then
-        local mx,my=Routing.Grid.Convert(cont,mapID,cx,cy)
+        local mx,my=Routing.Geo.Convert(cont,mapID,cx,cy)
         if mx then
             local w,h=Routing.Call("C_Map.GetMapWorldSize",mapID)
             if type(w)~="number" or w<=0 then w,h=1000,1000 end
@@ -319,6 +359,11 @@ function L:Height(id)
     if Routing.Height then
         local learned,count=Routing.Height:Learned(id)
         if learned then return learned,"learned",count end
+    end
+    -- From its painted streets and Map Data's NPCs on them, baked with the navmesh's levels (tools/hpa/levels.py).
+    for _,data in pairs(rawget(_G,"BVRoutingNavLevels") or {}) do
+        local z=type(data)=="table" and type(data.z)=="table" and data.z[id]
+        if type(z)=="number" then return z,"npcs",0 end
     end
     local d=rawget(_G,"BVMapData")
     local zi=d and d.fields and field(d.fields.npc,"z")
@@ -357,10 +402,10 @@ function L:Height(id)
         do
             do
                 for _,pt in ipairs(pts) do
-                    local mx,my=Routing.Grid.Convert(pt[1],mapID,pt[2],pt[3])
+                    local mx,my=Routing.Geo.Convert(pt[1],mapID,pt[2],pt[3])
                     if mx and mx>=minX-pad and mx<=maxX+pad and my>=minY-pad and my<=maxY+pad then
                         local on=false
-                        for _,area in ipairs(areas) do if Routing.Grid.Inside(area.poly,mx,my) then on=true;break end end
+                        for _,area in ipairs(areas) do if Routing.Geo.Inside(area.poly,mx,my) then on=true;break end end
                         for _,st in ipairs(strokes) do
                             local dx,dy=(mx-st.x)*w,(my-st.y)*h
                             if dx*dx+dy*dy<=((st.r or 0)+L.NEAR)^2 then on=true;break end

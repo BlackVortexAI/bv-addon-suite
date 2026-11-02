@@ -15,11 +15,20 @@ function P:Changed()
     if self.Terrain then self.Terrain:Apply() end
     if self.Flights then self.Flights:Filter() end
     if self.Zoom then self.Zoom:Apply() end
+    if self.Seamless then self.Seamless:Apply() end
+    if self.Islands then self.Islands:Refresh() end
     if self.Path then self.Path:Refresh() end
 end
 local page
 local function build(parent)
-    page=UI:Panel(parent,880,600,"surface");UI:HideSurface(page)
+    -- Interface opt-in (2026-10-26, Config interfaceSettings): the page is built
+    -- in the captured Interface context like Gather. The page host stays a plain
+    -- ToolStyle container that never paints; without opt-in all is as before.
+    local pageStyle=UI:GetStyle();local interface=pageStyle.materialProfile=="interface"
+    if interface then
+        page=UI:WithStyle(UI:ToolStyle(),function() local host=UI:Panel(parent,880,600,"surface");UI:HideSurface(host);return host end)
+        page.bvStyle=pageStyle
+    else page=UI:Panel(parent,880,600,"surface");UI:HideSurface(page) end
     local g=UI:SettingsGrid(page);page.grid=g
     local controls={}
     page.controls=controls
@@ -55,14 +64,13 @@ local function build(parent)
     switch("forceScale","Scale: use ours anyway","Our scale although another addon scales the map; switch the other addon's option off so the two never fight.")
     switch("rememberZoom","Remember zoom","The map reopens on the same map, zoom and section while you are in the same zone.")
     dropdown("extraZoom","Extra zoom",{{value="off",label="Off"},{value="x2",label="2x closer"},{value="x4",label="4x closer"}},
-        "Zoom in closer than Blizzard allows, on Blizzard's map and the terrain map. The map art only grows, so it gets softer: 2x is fine, 4x clearly blurred.")
-    slider("scale","Scale",50,150,5,"%d %%","Size of the map in its window; maximized it stays Blizzard's. Also Ctrl+mouse wheel on the title bar.")
+        "Adds extra zoom where seamless detail zoom is unavailable. The map art only grows, so it gets softer: 2x is fine, 4x clearly blurred.")
+    slider("scale","UI scale",50,150,5,"%d %%","Size of the interface, including text and controls. Drag the window corner to change its dimensions without scaling the interface. Also Ctrl+mouse wheel on the title bar.")
     switch("movable","Movable","Drag the map's title bar to move it; double-click resets the position.")
+    page.resetSize=g:Row("Window size",UI:Button(g,"Reset size",170,function() P.Window:ResetSize() end),{help="Drag the lower-right corner to resize. Reset restores the preferred window dimensions; the quest panes fit alongside."})
     page.resetPosition=g:Row("Position",UI:Button(g,"Reset position",170,function() P.Window:Reset() end),{help="Back to Blizzard's place."})
     g:Section("content","Map content")
-    row("mapStyle","Map style",UI:Dropdown(g,190,{{value="blizzard",label="Blizzard's map"},{value="terrain",label="Terrain"}},set("mapStyle")),
-        "Zone maps as Blizzard's art or as terrain (the game's own minimap tiles) with our area names. Also the layers button beside the map's search.")
-    slider("terrainAlpha","Terrain opacity",20,100,5,"%d %%","How much of the terrain map covers Blizzard's map: below 100 % Blizzard's map shows through, below 70 % with its own area names instead of ours.")
+    slider("blend","Minimap detail at close zoom",0,100,5,"%d %%","On the seamless map the minimap tiles take over from the painting at the closest zoom levels, fading in over two levels: this is their final strength. 100 replaces the painting, 0 keeps the painting alone.")
     switch("ownFlights","Own flight masters only","Flight masters of the other faction are hidden on the world map and in the search; neutral ones stay.")
     switch("learnFlights","Learn flight times","Your own flights are timed; the flight master's map then shows the time to each destination you have flown to.")
     switch("unexplored","Show unexplored areas","Areas you have not discovered yet show on the world map as if explored.")
@@ -83,18 +91,25 @@ local function build(parent)
         {help="Rename, reorder, sets, import of /way lines (Wowhead lists) and export. /way x y [title], /way Badlands 45 67, /way here, /way next, /way list, /way clear. Also /bv way."})
     g:Row("Arrow position",UI:Button(g,"Open Layout Editor",170,function() ns.LayoutEditor:Open("bv:maparrow") end),{help="The arrow is a movable element."})
     g:Section("path","Travel path")
+    page.lineStyles=ns.RouteLineStyles and ns.RouteLineStyles:Options(g)
     switch("pathPins","Path on the map","Every queued waypoint as a numbered pin on the world map and the minimap, with lines between them. On a pin: left-click makes it next, right-click removes it, drag moves it.")
     switch("pathLead","Line to the next target","A line from you to the next waypoint in its colour, with arrows; the path's lines show the way with arrows too.")
     slider("pathPinAlpha","Path pin opacity",10,100,5,"%d %%","How visible the waypoint pins of the path are.")
     slider("pathLineAlpha","Path line opacity",10,100,5,"%d %%","How visible the lines of the path are.")
     switch("altClick","Alt+click adds","Alt+click on the world map appends a waypoint there: build your own travel path.")
     switch("routeClick","Ctrl+Shift+click routes","With BV Routing: Ctrl+Shift+click on the world map plans Routing's way to that point (roads, bridges, flights). Ctrl+click stays the straight waypoint.")
+    switch("ctrlRoute","Ctrl+click routes instead","With BV Routing: Ctrl+click plans Routing's way and Ctrl+Shift+click sets Blizzard's waypoint, the other way round. Also the route button beside the map's search.")
     switch("neighbors","Arrows to the next zone","Small arrows at the world map's edges: a click shows the zone next to this one in that direction.")
     switch("legend","Click legend","The map's clicks written small at its bottom left (only those that work now).")
-    local function color(key,title,help)
-        return row(key,title,UI:ColorInput(g,190,function(hex) cfg()[key]=hex:sub(1,6):upper();P:Changed();if page then page:Refresh() end end),help)
+    local function color(key,title,help,defaultValue)
+        local field=row(key,title,UI:ColorInput(g,190,function(hex) cfg()[key]=hex:sub(1,6):upper();P:Changed();if page then page:Refresh() end end),help)
+        -- Map persists RGB only. The picker opens later from an ambient context:
+        -- bind this page's context; Default only where "" means the default.
+        if interface then field.bvColorOptions={style=pageStyle,rgb=true,default=defaultValue} end
+        return field
     end
-    color("pathColor","Path colour","Pins and lines of the path. Reset colours goes back to your style's accent.")
+    local function accentHex() local ar,ag,ab=P:Style():Color("accent");return string.format("%02X%02X%02X",ar*255,ag*255,ab*255).."FF" end
+    color("pathColor","Path colour","Pins and lines of the path. Reset colours goes back to your style's accent.",interface and accentHex() or nil)
     color("nextColor","Next target colour","The pin of your next waypoint.")
     g:Row("Colours",UI:Button(g,"Reset colours",170,function() cfg().pathColor="";cfg().nextColor="5FD16B";P:Changed();if page then page:Refresh() end end),
         {help="Path in the style's accent, the next target green."})
@@ -107,10 +122,12 @@ local function build(parent)
     function page:Arrange(width)
         self.width=width
         UI:Place(g,self,0,0)
-        local height=g:Arrange(width)+8
+        -- Interface pages keep the approved 10-unit scroll reserve (as Gather).
+        local height=g:Arrange(interface and math.max(1,width-10) or width)+8
         M.Height(self,height);return height
     end
     function page:Refresh()
+        if page.lineStyles then page.lineStyles:Refresh() end
         local c=P:Config()
         self.enabled:SetValue(ns.Settings:Module(P.ID).enabled==true)
         for key,control in pairs(controls) do if control.SetValue and key~="pathColor" and key~="nextColor" then control:SetValue(c[key]) end end
@@ -152,19 +169,46 @@ local function build(parent)
         g:SetRowEnabled(controls.movable,not (move and not G:Forced("move")))
         g:SetRowEnabled(page.resetPosition,not (move and not G:Forced("move")))
         g:SetRowEnabled(controls.scale,not (scale and not G:Forced("scale")))
+        g:SetRowEnabled(page.resetSize,not G:Owner("move") and not G:Owner("scale"))
         -- Blizzard's own map fade, TomTom's arrow and corpse marker: theirs.
         for _,key in ipairs({"fade","fadeOpacity","fadeScope","fadeMouseover","fadeTime"}) do g:SetRowEnabled(controls[key],not fades) end
         local tomtom=P.Waypoints:TomTom()~=nil
         g:SetRowEnabled(controls.arrow,not tomtom);g:SetRowEnabled(controls.corpse,not tomtom);g:SetRowEnabled(controls.pathPins,not tomtom)
     end
+    if interface then
+        -- Profile change or hide closes only this page's own menus and picker.
+        local function owned(owner)
+            if not owner then return false end
+            for _,item in ipairs(g.items) do if item.control==owner then return true end end
+            return false
+        end
+        local function cancelOwnedMenu()
+            if UI.dropdown and owned(UI.dropdown.owner) then UI:CloseDropdown() end
+            if UI.colorPopup and owned(UI.colorPopup.owner) then UI.colorPopup:Hide() end
+        end
+        local dispose
+        local function watch() if not dispose then dispose=ns.Settings:BeforeProfileChange(page,cancelOwnedMenu) end end
+        page:HookScript("OnShow",watch)
+        page:HookScript("OnHide",function() cancelOwnedMenu();if dispose then dispose();dispose=nil end end)
+        if page:IsVisible() then watch() end
+    end
     select("general");page:Refresh()
     return page
 end
 ns.Config:RegisterPage("map",{title="Map",description="Coordinates, transparency while moving, map size and waypoints.",
+    interfaceSettings=true,
     build=function(parent) return page or build(parent) end,
     refresh=function() if page then page:Refresh() end end})
 ns.Commands:RegisterAction("map",function(action)
     if action=="probe" then return P.Probe:Open() end
+    -- /bv map landmask off|on: the stitched map's base art without the land
+    -- mask (a check in the game, Florian 2026-10-22).
+    local toggle=type(action)=="string" and action:match("^landmask%s+(%a+)")
+    if toggle then
+        P.Terrain.noLandMask=toggle=="off"
+        P.Terrain:Refresh();P:Print("Land mask "..(P.Terrain.noLandMask and "off" or "on"))
+        return
+    end
     if action=="on" or action=="off" then
         ns.Modules:SetEnabled(P.ID,action=="on");P:Print(ns.Modules.records[P.ID].state);if ns.Config then ns.Config:Refresh() end
     else ns.Config:OpenPage("map") end

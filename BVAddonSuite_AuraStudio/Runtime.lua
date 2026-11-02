@@ -407,6 +407,7 @@ local function evaluate(run,id,sample,now,dirty,context)
             return out,"bypass"
         end
     end
+    if def.directDisplay then return A.DirectDisplay.Evaluate(n,def,resolve,run.plan.incoming[id]) end
     if def.flowOperation then return A.FlowValues.Evaluate(run,id,n,def,state,resolve,context,now) end
     if def.formatValues then return formatValues(n.config,resolve) end
     if def.stringFormatter then return stringFormatter(n.config,resolve) end

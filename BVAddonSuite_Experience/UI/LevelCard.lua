@@ -31,7 +31,7 @@ end
 
 function C:Frame()
     if self.frame then return self.frame end
-    UI:WithStyle(UI:GameStyle(nil),function()
+    UI:WithStyle(UI:GameStyle("stage"),function()
         local f=UI:Panel(UIParent,C.WIDTH,200,"panel",14,C.ALPHA)
         f:Hide();f:SetFrameStrata("HIGH");f:SetClampedToScreen(true);f:EnableMouse(true)
         if ns.ExternalFrames then ns.ExternalFrames:MarkOwned(f) end
@@ -41,6 +41,8 @@ function C:Frame()
         f.title=UI:Label(f,"",34,"text",true);f.title:SetJustifyH("CENTER");shadow(f.title)
         f.rule=f:CreateTexture(nil,"ARTWORK");f.rule:SetTexture("Interface\\Buttons\\WHITE8X8")
         f.sub=UI:Label(f,"",15,"muted");f.sub:SetJustifyH("CENTER");shadow(f.sub)
+        f.title.bvAfterFont=function() ns.Stage:ApplyTextEffects(f.title,"title","",true) end
+        f.sub.bvAfterFont=function() ns.Stage:ApplyTextEffects(f.sub,"subtitle","",true) end
         f.section=UI:Label(f,"NEW AT YOUR TRAINER",11,"accent",true);shadow(f.section)
         f.talent=UI:Label(f,"",14,"warning");shadow(f.talent)
         f.questHead=UI:Label(f,"NEW CLASS QUEST",11,"accent",true);shadow(f.questHead)
@@ -54,7 +56,7 @@ function C:Row(i)
     local f=self.frame
     local r=f.rows[i]
     if r then return r end
-    UI:WithStyle(UI:GameStyle(nil),function()
+    UI:WithStyle(UI:GameStyle("stage"),function()
         r=CreateFrame("Frame",nil,f);M.Size(r,(C.WIDTH-2*C.PAD-20)/2,C.ROW)
         r.key=UI:Label(r,"",15,"muted");M.Point(r.key,"LEFT",r,"LEFT",0,0);shadow(r.key)
         r.old=UI:Label(r,"",15,"text");M.Point(r.old,"LEFT",r,"LEFT",78,0);shadow(r.old)
@@ -79,7 +81,7 @@ function C:Icon(i)
     b.tex=p:CreateTexture(nil,"ARTWORK");b.tex:SetAllPoints(p);b.tex:SetTexCoord(.08,.92,.08,.92)
     b.edge=p:CreateTexture(nil,"OVERLAY");b.edge:SetTexture("Interface\\Buttons\\WHITE8X8");b.edge:SetPoint("TOPLEFT",p,"TOPLEFT",-1,1);b.edge:SetPoint("BOTTOMRIGHT",p,"BOTTOMRIGHT",1,-1)
     b.edge:SetVertexColor(1,1,1,.18);b.edge:SetDrawLayer("BACKGROUND")
-    UI:WithStyle(UI:GameStyle(nil),function() b.rank=UI:Label(p,"",10,"text",true);M.Point(b.rank,"BOTTOMRIGHT",p,"BOTTOMRIGHT",-1,1);shadow(b.rank) end)
+    UI:WithStyle(UI:GameStyle("stage"),function() b.rank=UI:Label(p,"",10,"text",true);M.Point(b.rank,"BOTTOMRIGHT",p,"BOTTOMRIGHT",-1,1);shadow(b.rank) end)
     b:SetScript("OnEnter",function(self)
         C.paused=true
         if GameTooltip and self.spell then GameTooltip:SetOwner(self,"ANCHOR_BOTTOM");pcall(GameTooltip.SetSpellByID,GameTooltip,self.spell);GameTooltip:Show() end
@@ -94,7 +96,7 @@ function C:Quest(i)
     local f=self.frame
     local r=f.quests[i]
     if r then return r end
-    UI:WithStyle(UI:GameStyle(nil),function()
+    UI:WithStyle(UI:GameStyle("stage"),function()
         r=CreateFrame("Frame",nil,f);M.Size(r,C.WIDTH-2*C.PAD,24)
         r.slot=CreateFrame("Frame",nil,r);M.Size(r.slot,24,24);M.Point(r.slot,"LEFT",r,"LEFT",0,0)
         r.tex=r.slot:CreateTexture(nil,"ARTWORK");r.tex:SetAllPoints(r.slot);r.tex:SetTexCoord(.08,.92,.08,.92)
@@ -113,7 +115,7 @@ function C:Play(data,hold)
     local y=18
     f.title:ClearAllPoints();M.Point(f.title,"TOP",f,"TOP",0,-y);M.Size(f.title,inner,38)
     y=y+44
-    local ar,ag,ab=UI:GameStyle(nil):Color("accent")
+    local ar,ag,ab=ns.Stage:Accent()
     f.rule:SetVertexColor(ar,ag,ab,.7);f.rule:ClearAllPoints();M.Point(f.rule,"TOP",f,"TOP",0,-y);M.Size(f.rule,0.01,1)
     y=y+8
     f.sub:SetText(data.took and ("Level "..(data.level-1).." took "..data.took) or "A new level")
@@ -178,6 +180,7 @@ function C:Play(data,hold)
     end
     for i=#quests+1,#f.quests do f.quests[i]:Hide() end
     y=y+20
+    self:ApplyColors()
     M.Height(f,y)
     -- The timeline.
     self.data=data;self.clock=0;self.paused=nil
@@ -238,3 +241,16 @@ function C:Hide()
     if self.frame then self.frame:Hide() end
     self.data=nil
 end
+
+-- Shared notification colours, repainted after the style registry on theme/profile changes.
+function C:ApplyColors()
+    local f=self.frame
+    if not f then return end
+    local r,g,b=ns.Stage:Accent()
+    f.rule:SetVertexColor(r,g,b,.7)
+    f.title:SetTextColor(ns.Stage:TextColor("title"));f.sub:SetTextColor(ns.Stage:TextColor("subtitle"))
+    f.title.bvAfterFont();f.sub.bvAfterFont()
+    f.section:SetTextColor(r,g,b,1);f.questHead:SetTextColor(r,g,b,1)
+    for _,row in ipairs(f.quests) do if row.symbol then row.symbol:SetVertexColor(r,g,b,1) end end
+end
+ns.Styles:OnChanged(C,function() C:ApplyColors() end)

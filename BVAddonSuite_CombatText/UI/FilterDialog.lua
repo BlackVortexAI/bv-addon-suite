@@ -20,7 +20,12 @@ function D:Show(accept)
     if InCombatLockdown and InCombatLockdown() then L:Print("Not in combat: set up the Combat Log filter afterwards.");return nil end
     local d=self.dialog
     if not d then
-        d=UI:Dialog("BVCombatTextFilterDialog",460,250)
+        local style=UI:InterfaceStyle();if not style then return end
+        -- Settings and guide callbacks run after their construction context has left.
+        -- Only UI creation is scoped; the secure callback keeps its caller context.
+        UI:WithStyle(style,function()
+        d=UI:Dialog("BVCombatTextFilterDialog",460,250,nil,{escapeScope=style.materialProfile=="interface"})
+        d.bvStyle=style
         self.dialog=d
         d.text=UI:Label(d.content,"",12,"text")
         UI:Place(d.text,d.content,20,14);M.Size(d.text,420,150)
@@ -50,6 +55,7 @@ function D:Show(accept)
         -- Closed as a fight starts (before the lockdown): a secure button
         -- could not be hidden in combat.
         ns.Events:Subscribe(D,"PLAYER_REGEN_DISABLED",function() if d:IsShown() then d:Hide() end end)
+        end)
     end
     d.title:SetText(self.TITLE)
     d.text:SetText(self.TEXT)

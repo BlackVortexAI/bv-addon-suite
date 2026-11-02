@@ -3,10 +3,7 @@ if not G.ready then return end
 -- Gather tracker (Florian 2026-10-09): what this session brought. Start,
 -- pause and stop; nodes gathered and the items looted from them (loot
 -- within a few seconds after a gathering cast, so mob loot stays out unless
--- "count all loot"), their value and gold per hour. Prices: TSM
--- (TSM_API.GetCustomPriceValue "dbmarket"), Auctionator
--- (Auctionator.API.v1.GetAuctionPriceByItemID), else the vendor price; the
--- setting picks one or "auto" (TSM, then Auctionator, then vendor).
+-- "count all loot"), their value and gold per hour.
 -- Stopped sessions are kept (the last 50) with their route.
 local ns=G.ns
 local T={}
@@ -76,14 +73,22 @@ function T.Price(itemID)
             if ok and type(value)=="number" and value>0 then return value end
         end
     end
+    local function blackthornes()
+        local api=rawget(_G,"BlackthornesTS_API")
+        if type(api)=="table" and type(api.GetPrice)=="function" then
+            local ok,value=pcall(api.GetPrice,itemID)
+            if ok and type(value)=="number" and value>0 then return value end
+        end
+    end
     local function vendor()
         local sell=select(11,G.Call("GetItemInfo",itemID))
         return type(sell)=="number" and sell or 0
     end
     if source=="tsm" then return tsm() or 0 end
     if source=="auctionator" then return auctionator() or 0 end
+    if source=="blackthornes" then return blackthornes() or 0 end
     if source=="vendor" then return vendor() end
-    return tsm() or auctionator() or vendor()
+    return tsm() or auctionator() or blackthornes() or vendor()
 end
 function T:Value(s)
     s=s or self:Session()

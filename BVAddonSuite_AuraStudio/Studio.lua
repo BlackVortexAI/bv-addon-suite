@@ -163,6 +163,7 @@ end
 function S:ShareHooks()
     return {
         allowReceive=function(sender)
+            if not ns.UI:InterfaceStyle() then return "disabled" end
             local data=self:Store()
             if self.active~=true or data.shareReceive~=true then return "disabled" end
             if data.shareKnownOnly==true and not A.Share.IsKnown(_G,sender) then return "restricted" end
@@ -175,11 +176,16 @@ function S:ShareHooks()
             local rec=kind=="block" and self:Blocks()[id] or self:Store().graphs[id]
             return text,rec and rec.name
         end,
-        askAccept=function(sender,kind,name,parts,accept,decline) ns.UI:ShareRequest(sender,kind,name,parts,accept,decline) end,
+        askAccept=function(sender,kind,name,parts,accept,decline)
+            local dialog,why=ns.UI:ShareRequest(sender,kind,name,parts,accept,decline)
+            if not dialog then if decline then decline() end;return false,why end
+            return dialog
+        end,
         -- Received data opens in the normal import dialog; nothing is imported
         -- until the player confirms there.
         review=function(text,sender,kind,name)
-            local dialog=self:TransferUI()
+            local dialog,reason=self:TransferUI()
+            if not dialog then return false,reason end
             local ok,why=dialog:OpenReceived(text,sender,kind,name)
             return ok,why
         end,
@@ -192,7 +198,20 @@ function S:StartShare()
     self.share:Start()
 end
 function S:TransferUI(owner)
-    self.transferUI=self.transferUI or ns.UI:TransferDialog(owner,self)
+    if not self.transferUI then
+        -- Asynchronous receive may precede opening the editor. Capture the same
+        -- presentation owner, but never run import/send callbacks under its scope.
+        local UI=ns.UI
+        local style=owner and owner.bvStyle or UI:InterfaceStyle()
+        if not style then return nil,"Interface context is not ready" end
+        self.transferUI=UI:WithStyle(style,UI.TransferDialog,UI,owner,self)
+        self.transferUI.bvStyle=style
+        if style.materialProfile=="interface" then
+            UI:ScopeDialogEscape(self.transferUI)
+            self.transferUI:TrackEscapeInput(self.transferUI.text.input)
+            self.transferUI.text.input.bvGraphEscapeDialog=self.transferUI
+        end
+    end
     return self.transferUI
 end
 function S:SetShareKnownOnly(value) self:Store().shareKnownOnly=value==true;self:Changed();return true end
@@ -335,6 +354,34 @@ function S:GroupAllows(rec)
     local group=rec.groupId and self:Store().groups[rec.groupId]
     return not group or group.enabled~=false
 end
+function S:LoadAllows(rec)
+    if rec.load==nil then return true end
+    return A.LoadConditions.Matches(rec.load,A.LoadConditions.Context())
+end
+function S:SetLoadCondition(id,key,value)
+    local rec=assert(self:Store().graphs[id],"Unknown graph")
+    local nextLoad=G.Copy(rec.load or {});nextLoad[key]=value
+    local ok,why=pcall(A.LoadConditions.Validate,nextLoad)
+    if not ok then self.message=ns.GraphValues.UserError(why);self.messageError=self.message;self:Changed();return false end
+    return self:ChangeActivation(function()rec.load=next(nextLoad) and nextLoad or nil end)
+end
+function S:RefreshLoadConditions()
+    if not self.active then return end
+    local data=self:Store();local changed=false;local combat=InCombatLockdown()
+    for id,run in pairs(self.runs)do
+        local rec=data.graphs[id]
+        if not rec or not self:LoadAllows(rec)then self:DropRun(run);self.runs[id]=nil;changed=true end
+    end
+    if changed then self:Subscriptions()end
+    local start=false
+    for id,rec in pairs(data.graphs)do
+        if not self.runs[id] and rec.enabled and rec.applied and self:GroupAllows(rec) and self:LoadAllows(rec)then start=true;break end
+    end
+    -- Removing observations is immediate. New runs (including secure displays)
+    -- wait for combat to end; explicit activation changes keep their usual guard.
+    if start and not combat then self:ChangeActivation(function()end)
+    else self:Changed()end
+end
 function S:Unsaved(rec)
     rec=rec or self:Graph()
     if not rec then return false end
@@ -344,14 +391,14 @@ function S:Unsaved(rec)
 end
 function S:CopyGraph(id)
     local rec=assert(self:Store().graphs[id],"Unknown graph")
-    self.graphClipboard={name=rec.name,graph=G.Copy(rec.draft),layout=G.Copy(rec.displayLayout)}
+    self.graphClipboard={name=rec.name,graph=G.Copy(rec.draft),layout=G.Copy(rec.displayLayout),load=G.Copy(rec.load)}
 end
 function S:PasteGraph(targetID,after)
     assert(self.graphClipboard,"Copy a graph first")
     local data=self:Store();local target=assert(data.graphs[targetID],"Unknown target")
     local copy=G.Copy(self.graphClipboard)
     local id=self:New(false);local rec=data.graphs[id]
-    rec.name=(copy.name:sub(1,70).." copy");rec.draft=copy.graph;rec.displayLayout=copy.layout
+    rec.name=(copy.name:sub(1,70).." copy");rec.draft=copy.graph;rec.displayLayout=copy.layout;rec.load=copy.load
     local original=G.Copy(rec.draft)
     self:PrepareDisplays(rec.draft,rec)
     local remap={}
@@ -389,13 +436,17 @@ function S:Library(quick)
     roots[#roots+1]=loose
     for _,id in ipairs(data.graphOrder) do
         local rec=data.graphs[id]
-        if not quick or rec.quickInclude==true then
+        if not quick or rec.quickInclude==true and self:LoadAllows(rec) then
         local parent=byID[rec.groupId] or loose
         parent.children[#parent.children+1]={id=id,parentId=rec.groupId,label=rec.name,kind="graph",changed=not quick and self:Unsaved(rec),enabled=rec.enabled==true,
-            blocked=rec.enabled and (not self.active or not self:GroupAllows(rec)),running=self.runs[id]~=nil}
+            blocked=rec.enabled and (not self.active or not self:GroupAllows(rec) or not self:LoadAllows(rec)),running=self.runs[id]~=nil}
         end
     end
-    if quick then for i=#roots,1,-1 do if roots[i].enabled==nil and #roots[i].children==0 then table.remove(roots,i) end end end
+    if quick then for i=#roots,1,-1 do
+        local item=roots[i];local applicable,hasMembers=false,false
+        if item.enabled~=nil then for _,rec in pairs(data.graphs)do if rec.groupId==item.id then hasMembers=true;if self:LoadAllows(rec)then applicable=true end end end end
+        if #item.children==0 and (item.enabled==nil or hasMembers and not applicable)then table.remove(roots,i)end
+    end end
     return roots
 end
 local function libraryName(name)
@@ -427,13 +478,13 @@ end
 function S:ChangeActivation(change)
     if InCombatLockdown() then self.message="Change graph activation after combat"; self:Changed(); return false end
     local data=self:Store(); local before,groupBefore={},{}
-    for id,rec in pairs(data.graphs) do before[id]={enabled=rec.enabled,groupId=rec.groupId} end
+    for id,rec in pairs(data.graphs) do before[id]={enabled=rec.enabled,groupId=rec.groupId,load=G.Copy(rec.load)} end
     for id,group in pairs(data.groups) do groupBefore[id]={enabled=group.enabled} end
     local old=self.runs; local nextRuns,created={},{}; local sample
     local ok,why=pcall(function()
         change()
         for id,rec in pairs(data.graphs) do
-            if self.active and rec.enabled and rec.applied and self:GroupAllows(rec) then
+            if self.active and rec.enabled and rec.applied and self:GroupAllows(rec) and self:LoadAllows(rec) then
                 if old[id] and not old[id].stopped then nextRuns[id]=old[id]
                 else
                     local plan,err=G.Compile(rec.applied,A.catalog); assert(plan,err and err.message)
@@ -445,7 +496,7 @@ function S:ChangeActivation(change)
         if #created>0 then sample=self:Sample() end
     end)
     if not ok then
-        for id,values in pairs(before) do data.graphs[id].enabled=values.enabled; data.graphs[id].groupId=values.groupId end
+        for id,values in pairs(before) do data.graphs[id].enabled=values.enabled; data.graphs[id].groupId=values.groupId;data.graphs[id].load=values.load end
         for id,values in pairs(groupBefore) do data.groups[id].enabled=values.enabled end
         self.runs=old; for _,run in ipairs(created) do self:DropRun(run) end
         pcall(self.Subscriptions,self); self.message="Activation unchanged: "..ns.GraphValues.Error(why); self:Changed(); return false
@@ -481,11 +532,14 @@ function S:SetQuickIncluded(kind,id,value)
     self:Changed()
 end
 function S:SetQuickShown(value)
+    if not ns.UI:InterfaceStyle() then return false,"Interface context is not ready" end
     self:Store().quick.shown=value==true; self:RefreshQuick(); self:Changed()
 end
 function S:RefreshQuick()
+    if not ns.UI:InterfaceStyle() then return end
     if self:Store().quick.shown then
-        self.quick=self.quick or ns.UI:QuickAccess(self); self.quick:Refresh(); self.quick:Show()
+        self.quick=self.quick or ns.UI:QuickAccess(self)
+        if self.quick then self.quick:Refresh(); self.quick:Show() end
     elseif self.quick then self.quick:Hide() end
 end
 -- Sections: draft edits like node settings (Save applies them).
@@ -679,10 +733,11 @@ function S:SetValue(id,key,value,config)
         local n=assert(g.nodes[id]); local def=assert(G.Definition(A.catalog[n.type],n)); local p
         if not config then p=G.Ports(def)[key] end
         if p then assert(not G.Binding(g,id,key),"Disconnect this input before editing its local value"); assert(G.Accepts(p.type,value),"Invalid "..key) end
+        if config and n.type=="display_visual" then A.DirectDisplay.ChangeConfig(n,key,value) end
         if config and n.type=="media_graphic" and key=="source" then
             local paths=n.config.pathsBySource or {};n.config.pathsBySource=paths
             paths[n.config.source or "file"]=n.config.path
-            if value=="file" then n.config.path=paths.file or "Interface\\AddOns\\BVAddonSuite\\Media\\Brand\\bv-logo-small.tga"
+            if value=="file" then n.config.path=paths.file or "Interface\\AddOns\\BVAddonSuite\\Media\\Interface\\Brand\\LogoNeutral.tga"
             elseif value=="game" then n.config.path=paths.game or "Interface\\Buttons\\WHITE8X8" end
             n.config.atlas=n.config.atlas or "UI-LFG-RoleIcon-Tank";n.config.fileID=n.config.fileID or 134400
         end
@@ -2138,7 +2193,7 @@ function S:Apply()
         if not template then self.message=why;self:Changed();return false end
     end end
     local old=self.runs[rec.id]; local candidate
-    if self.active and rec.enabled and self:GroupAllows(rec) then
+    if self.active and rec.enabled and self:GroupAllows(rec) and self:LoadAllows(rec) then
         local made,value=pcall(self.MakeRun,self,rec,plan,false)
         if not made then self.message="Save unchanged: "..ns.GraphValues.Error(value); self:Changed(); return false end
         candidate=value
@@ -2216,6 +2271,7 @@ function S:Changed(full)
     if self.quick and self.quick:IsShown() then self.quick:Refresh() end
 end
 function S:Stop()
+    if self.loadOwner then ns.Events:Release(self.loadOwner)end
     self:CancelCDMAuraRefresh()
     if self.source and self.source.ResetTargetEstimates then self.source:ResetTargetEstimates() end
     if A.infoDiagnostics then A.infoDiagnostics:Stop() end
@@ -2246,7 +2302,7 @@ function S:Start(ctx)
     if ns.NameplateBounds then ns.NameplateBounds:SetEnabled(self:Store().nameplateBoundsExperiment==true) end
     self:RestoreLayouts()
     for _,rec in pairs(self:Store().graphs) do
-        if rec.enabled and rec.applied and self:GroupAllows(rec) then
+        if rec.enabled and rec.applied and self:GroupAllows(rec) and self:LoadAllows(rec) then
             local ok,plan,err=pcall(G.Compile,rec.applied,A.catalog)
             if ok and plan then
                 local made,run=pcall(self.MakeRun,self,rec,plan,false)
@@ -2257,12 +2313,21 @@ function S:Start(ctx)
     local ok,why=pcall(self.Subscriptions,self)
     if not ok then ns.Events:Release(self); self:Diagnostic("sources","registration",ns.GraphValues.Error(why)); for _,r in pairs(self.runs) do self:DropRun(r) end; self.runs={} end
     local sample=self:Sample(); for _,run in pairs(self.runs) do self:Schedule(run,sample,"initial") end
+    self.loadOwner=self.loadOwner or {}
+    ns.Events:Release(self.loadOwner)
+    for _,event in ipairs({"PLAYER_ENTERING_WORLD","ZONE_CHANGED","ZONE_CHANGED_INDOORS","ZONE_CHANGED_NEW_AREA","PLAYER_REGEN_ENABLED"})do
+        ns.Events:Subscribe(self.loadOwner,event,function()self:RefreshLoadConditions()end)
+    end
     self:RefreshQuick()
 end
 function S:Open()
+    local style=ns.UI:InterfaceStyle();if not style then return end
     self:RestoreLayouts()
     if not self:Graph() then self:New(false) end
-    self.editor=self.editor or ns.UI:GraphEditor(self)
+    if not self.editor then
+        self.editor=ns.UI:GraphEditor(self,{style=style})
+        ns.UI:WindowReadingSurface(self.editor.window,style)
+    end
     self.editor:Open()
 end
 -- The shared editor can preview disabled drafts without enabling their graphs.
@@ -2285,9 +2350,14 @@ ns.DisplayAnchors.previewProvider=function()
         if plan then
             local run=R.New(plan,function() end,function() end)
             R.Run(run,{},0,"initial") -- Pure preview: no native observations or side effects.
-            for id,node in pairs(rec.draft.nodes) do if (node.type=="display" or A.catalog[node.type].actionDisplay) and node.config.layoutId then
-                local e=plan.incoming[id].media; local value=e and run.values[e.from]
-                if value and value[e.output] then out[node.config.layoutId]={media=value[e.output]} end
+            for id,node in pairs(rec.draft.nodes) do if (node.type=="display" or A.catalog[node.type].directDisplay or A.catalog[node.type].actionDisplay) and node.config.layoutId then
+                if A.catalog[node.type].directDisplay then
+                    local value=run.values[id]
+                    if value and value.media then out[node.config.layoutId]={media=value.media} end
+                else
+                    local e=plan.incoming[id].media; local value=e and run.values[e.from]
+                    if value and value[e.output] then out[node.config.layoutId]={media=value[e.output]} end
+                end
             end end
         end
     end
@@ -2303,7 +2373,7 @@ function S:RestoreLayouts()
 end
 ns.Layout:AfterSave(S,function() S:CaptureLayouts() end)
 ns.Modules:Register({id="aura_studio",OnEnable=function(ctx) S:Start(ctx) end,OnDisable=function() S:Stop() end})
-ns.Config:RegisterPage("aurastudio",{title="AuraStudio",description="Build and test reactive graphs in game.",
+ns.Config:RegisterPage("aurastudio",{interfaceSettings=true,title="AuraStudio",description="Build and test reactive graphs in game.",
     build=function(parent) return ns.UI:AuraStudioPage(parent,S) end,
     refresh=function() if S.page then S.page:Refresh() end end})
 ns.Commands:Register("aura","aura_studio","aurastudio",function() S:Open() end)

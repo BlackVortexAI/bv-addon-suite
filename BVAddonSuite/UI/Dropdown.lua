@@ -10,6 +10,11 @@ local function previewFont(region,font,style)
 end
 local function label(text) return type(text)=="string" and text:gsub("|","||") or "—" end
 
+local function previewInset(option)
+    if not option.texture then return 26 end
+    return option.squarePreview and 36 or 84
+end
+
 function UI:CloseDropdown()
     if self.dropdown then self.dropdown:Hide(); self.dropdown.owner = nil end
 end
@@ -17,7 +22,7 @@ end
 -- One pooled popup per style: the tool style keeps its global name; lists of
 -- in-game controls open in their family (UI.dropdown = the current popup).
 local function createPopup(style)
-    local tools = style == UI:ToolStyle()
+    local tools = style == UI:InterfaceStyle()
     local root = CreateFrame("Frame", tools and "BVAddonSuiteDropdown" or nil, UIParent)
     root.style = style
     root:Hide()
@@ -31,7 +36,8 @@ local function createPopup(style)
         UI:SetKeyboardPropagation(self,key ~= "ESCAPE")
         if key == "ESCAPE" then UI:CloseDropdown() end
     end)
-    root.menu = UI:Panel(root, 300, 280, "raised")
+    root.menu = UI:Panel(root,300,280,style.materialProfile=="interface" and "bg" or "raised",nil,style.materialProfile=="interface" and .98 or nil)
+    ns.InterfaceSurfaces:AttachMenu(style,root.menu)
     -- Floating over the window: the soft shadow (Florian 2026-10-11, finer).
     local DS=ns.DesignSystem
     if DS.Slice and DS.SHADOW then DS.Slice(root.menu,DS.SHADOW,DS.SHADOWCORNER*.6,"BACKGROUND",-2,DS.SHADOWEXPAND*.6) end
@@ -41,6 +47,28 @@ local function createPopup(style)
     root.rows = {}
     root.hint = UI:Label(root.menu, "", 12, "muted")
     D.Point(root.hint,"BOTTOM", 0, 6)
+    root.measureLabel = root.menu:CreateFontString(nil,"OVERLAY")
+    root.measureLabel:Hide()
+    function root:FitTextureWidth(owner)
+        local width = owner.menuWidth or D.GetWidth(owner)
+        local hasTexture = false
+        for _,option in ipairs(owner.options) do
+            if option.texture then hasTexture = true; break end
+        end
+        if not hasTexture then return width end
+        -- Fit the entire list once on open: scrolling must not move the right
+        -- edge, and a narrow settings field need not truncate every variant.
+        for _,option in ipairs(owner.options) do
+            previewFont(self.measureLabel,option.font,not tools and style or nil)
+            self.measureLabel:SetText(label(option.label))
+            local textWidth = D.ToDesign(self.measureLabel:GetUnboundedStringWidth())
+            width = math.max(width,math.ceil(textWidth)+10+previewInset(option)+8)
+        end
+        -- The popup inherits the host's effective scale. Screen clamping moves
+        -- it into view; this bound also makes oversized lists fit the viewport.
+        local available = D.ToDesign(UIParent:GetWidth()/self.menu:GetScale())-16
+        return math.max(1,math.min(width,available))
+    end
     -- Command menus show up to 16 entries so nothing hides below a silent
     -- scroll; value dropdowns keep 8 rows plus the scroll hint.
     for index = 1, 16 do
@@ -69,7 +97,7 @@ local function createPopup(style)
         if not owner then return end
         local visible = owner.menuRows or 8
         local count = math.min(visible, #owner.options)
-        local width = owner.menuWidth or D.GetWidth(owner)
+        local width = self.fittedWidth
         -- Compact list (0.8.73): 26-unit rows in a 4-unit frame, no per-row borders.
         local step=26
         local overflow=#owner.options>visible
@@ -83,14 +111,18 @@ local function createPopup(style)
             row:SetShown(option ~= nil)
             if option then
                 D.Width(row,width - 8)
-                row:SetLabelInsets(10,option.texture and 84 or 26,"LEFT")
+                row:SetLabelInsets(10,previewInset(option),"LEFT")
                 row:SetLabelText(label(option.label))
                 previewFont(row.label,option.font,not tools and style or nil)
                 row.sample:SetShown(option.texture ~= nil)
-                if option.texture then local ok,ready=pcall(row.sample.SetTexture,row.sample,option.texture);row.sample:SetShown(ok and ready~=false) else row.sample:SetTexture(nil) end
+                if option.texture then
+                    if option.squarePreview then D.Size(row.sample,20,20) else D.Size(row.sample,54,12) end
+                    local ok,ready=pcall(row.sample.SetTexture,row.sample,option.texture)
+                    row.sample:SetShown(ok and ready~=false)
+                else row.sample:SetTexture(nil) end
                 -- A context menu's option may be marked checked (a setting's choice).
                 local current=(owner.contextMenu and option.checked==true) or (not owner.contextMenu and option.value == owner.value)
-                row:SetSelected(current); row.mark:SetColorTexture(style:Color("accent")); row.mark:SetShown(current)
+                row:SetSelected(current); row.mark:SetColorTexture(style:Color("accent")); row.mark:SetShown(current and style.materialProfile~="interface")
             end
         end
         self.hint:SetText("Scroll for more")
@@ -138,6 +170,7 @@ function UI:OpenDropdown(host)
         popup.owner = host
         popup.offset = math.max(0, math.min((host.index or 1) - 1, #host.options - (host.menuRows or 8)))
         popup.menu:SetScale(host:GetEffectiveScale() / UIParent:GetEffectiveScale())
+        popup.fittedWidth = popup:FitTextureWidth(host)
         popup.menu:ClearAllPoints()
         D.Point(popup.menu,"TOPLEFT", host.anchor or host, "BOTTOMLEFT", 0, -4)
         popup:RefreshRows()
@@ -184,9 +217,11 @@ function UI:Dropdown(parent, width, options, callback)
                     -- Narrow fields (node cards): a thin preview strip along the
                     -- bottom keeps the full width for long names such as
                     -- "Alu One Soft Light Bevel"; wide fields keep the swatch.
-                    if D.GetWidth(self)<300 then
+                    if option.squarePreview then
+                        D.Point(self.sample,"RIGHT",-29,0);D.Size(self.sample,18,18);self:SetLabelInsets(12,52,"LEFT")
+                    elseif D.GetWidth(self)<300 then
                         D.Point(self.sample,"BOTTOMLEFT",10,4);D.Point(self.sample,"BOTTOMRIGHT",-26,4);D.Height(self.sample,3);self:SetLabelInsets(10,24,"LEFT")
-                        UI:GetStyle():Font(self.label,12);self:SetLabelText(label(option.label))
+                        local style=self.bvStyle or UI:ToolStyle();style:Font(self.label,12);self:SetLabelText(label(option.label))
                     else
                         D.Point(self.sample,"RIGHT",-29,0);D.Size(self.sample,48,10);self:SetLabelInsets(12,86,"LEFT")
                     end

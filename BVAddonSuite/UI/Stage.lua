@@ -10,7 +10,15 @@ local Stage={types={},order={},queue={},seq=0,MAX=5,FADE_IN=.3,FADE_OUT=.5}
 ns.Stage=Stage
 Stage.ID="stage"
 local ANIMATIONS={fade=true,slide=true,reveal=true,zoom=true,lowerthird=true,none=true}
-local DEFAULTS={styleFamily="inherit",titleSize=30,subtitleSize=15,animation="reveal",line=true}
+local DEFAULTS={styleFamily="inherit",titleSize=30,subtitleSize=15,animation="reveal",line=true,
+    accentMode="theme",accentColor="",titleColorMode="theme",titleColor="",subtitleColorMode="theme",subtitleColor="",messageStatusColors=true}
+local ACCENT_MODES={theme=true,family=true,custom=true}
+local TEXT_MODES={theme=true,accent=true,custom=true}
+local OUTLINES={default=true,none=true,normal=true,thick=true}
+local SHADOWS={default=true,on=true,off=true}
+local function validHex(value) return type(value)=="string" and value:match("^%x%x%x%x%x%x%x%x$") end
+local function fromHex(hex) return tonumber(hex:sub(1,2),16)/255,tonumber(hex:sub(3,4),16)/255,tonumber(hex:sub(5,6),16)/255,1 end
+local function toHex(r,g,b) return string.format("%02X%02X%02XFF",math.floor(r*255+.5),math.floor(g*255+.5),math.floor(b*255+.5)) end
 
 local function num(value,default,low,high)
     if type(value)~="number" or value~=value then value=default end
@@ -22,9 +30,62 @@ function Stage:Config()
     if cfg.styleFamily~="inherit" and not ns.Styles.families[cfg.styleFamily] then cfg.styleFamily="inherit" end
     cfg.titleSize=num(cfg.titleSize,30,16,60);cfg.subtitleSize=num(cfg.subtitleSize,15,10,30)
     if not ANIMATIONS[cfg.animation] then cfg.animation="reveal" end
+    if not ACCENT_MODES[cfg.accentMode] then cfg.accentMode="theme" end
+    if not validHex(cfg.accentColor) then cfg.accentColor="" end
+    for _,role in ipairs({"title","subtitle"}) do
+        if not TEXT_MODES[cfg[role.."ColorMode"]] then cfg[role.."ColorMode"]="theme" end
+        if not validHex(cfg[role.."Color"]) then cfg[role.."Color"]="" end
+        if not OUTLINES[cfg[role.."Outline"]] then cfg[role.."Outline"]="default" end
+        if not SHADOWS[cfg[role.."Shadow"]] then cfg[role.."Shadow"]="default" end
+        if not validHex(cfg[role.."ShadowColor"]) then cfg[role.."ShadowColor"]="000000D9" end
+        cfg[role.."ShadowX"]=num(cfg[role.."ShadowX"],1,-8,8)
+        cfg[role.."ShadowY"]=num(cfg[role.."ShadowY"],-1,-8,8)
+    end
+    cfg.messageStatusColors=cfg.messageStatusColors~=false
     cfg.line=cfg.line~=false
     if type(cfg.types)~="table" then cfg.types={} end
     return cfg
+end
+-- Shared notification colour contract, including the Experience level-up card.
+-- Interface colours are automatic; explicit message status colours are optional.
+-- Spell/item artwork is never tinted.
+function Stage:Accent()
+    local cfg=self:Config()
+    if cfg.accentMode=="custom" and cfg.accentColor~="" then
+        return fromHex(cfg.accentColor)
+    end
+    return (cfg.accentMode=="family" and UI:GameStyle(self.ID) or UI:InterfaceStyle()):Color("accent")
+end
+function Stage:AccentHex() return toHex(self:Accent()) end
+function Stage:TextColor(role,messageColor)
+    local cfg=self:Config()
+    if role=="title" and cfg.messageStatusColors and messageColor then
+        return messageColor[1],messageColor[2],messageColor[3],1
+    end
+    local mode,color=cfg[role.."ColorMode"],cfg[role.."Color"]
+    if mode=="accent" then return self:Accent() end
+    if mode=="custom" and color~="" then return fromHex(color) end
+    return UI:InterfaceStyle():Color(role=="title" and "text" or "muted")
+end
+function Stage:TextHex(role) return toHex(self:TextColor(role)) end
+-- Applied after the style's font painter: changing themes must not erase these
+-- choices. Default preserves each renderer's existing outline/shadow appearance.
+function Stage:ApplyTextEffects(label,role,defaultOutline,defaultShadow)
+    local cfg=self:Config()
+    local outline=cfg[role.."Outline"]
+    local flags=outline=="default" and (defaultOutline or "") or outline=="normal" and "OUTLINE" or outline=="thick" and "THICKOUTLINE" or ""
+    local path,size=label:GetFont()
+    if path then label:SetFont(path,size,flags) end
+    local mode=cfg[role.."Shadow"]
+    local enabled=mode=="on" or (mode=="default" and defaultShadow)
+    if enabled then
+        local color=cfg[role.."ShadowColor"]
+        local r,g,b=fromHex(color)
+        label:SetShadowColor(r,g,b,tonumber(color:sub(7,8),16)/255)
+        label:SetShadowOffset(M.ToNative(cfg[role.."ShadowX"]),M.ToNative(cfg[role.."ShadowY"]))
+    else
+        label:SetShadowColor(0,0,0,0);label:SetShadowOffset(0,0)
+    end
 end
 function Stage:TypeConfig(id)
     local types=self:Config().types
@@ -131,15 +192,20 @@ function Stage:Apply()
     local style=UI:GameStyle(self.ID)
     ns.Styles:Font(family,f.title,M.ToNative(cfg.titleSize),"display","OUTLINE")
     ns.Styles:Font(family,f.subtitle,M.ToNative(cfg.subtitleSize),"regular","OUTLINE")
+    self:ApplyTextEffects(f.title,"title","OUTLINE",false)
+    self:ApplyTextEffects(f.subtitle,"subtitle","OUTLINE",false)
     local width=M.GetWidth(f)
     local titleH,subH=cfg.titleSize*1.4,cfg.subtitleSize*1.5
     f.titleBox:ClearAllPoints();M.Point(f.titleBox,"TOP",f,"TOP",0,0);M.Size(f.titleBox,width,titleH)
-    f.lineBox:ClearAllPoints();M.Point(f.lineBox,"TOP",f.titleBox,"BOTTOM",0,-2);M.Size(f.lineBox,width*.45,1)
-    f.subBox:ClearAllPoints();M.Point(f.subBox,"TOP",f.lineBox,"BOTTOM",0,-6);M.Size(f.subBox,width,subH)
+    -- Each part has its own animation timeline. Anchor them to the stationary
+    -- stage, never to another animated part: otherwise the subtitle inherits
+    -- the title/line transforms and their completion resets.
+    f.lineBox:ClearAllPoints();M.Point(f.lineBox,"TOP",f,"TOP",0,-(titleH+2));M.Size(f.lineBox,width*.45,1)
+    f.subBox:ClearAllPoints();M.Point(f.subBox,"TOP",f,"TOP",0,-(titleH+9));M.Size(f.subBox,width,subH)
     -- Lower third: a band behind both lines, an accent stripe at its left.
-    f.bandBox:ClearAllPoints();M.Point(f.bandBox,"TOP",f.titleBox,"TOP",0,6);M.Size(f.bandBox,width*.7,titleH+subH+21)
+    f.bandBox:ClearAllPoints();M.Point(f.bandBox,"TOP",f,"TOP",0,6);M.Size(f.bandBox,width*.7,titleH+subH+21)
     f.stripe:SetWidth(M.ToNative(3))
-    local r,g,b=style:Color("accent")
+    local r,g,b=self:Accent()
     f.line:SetVertexColor(r,g,b,.7);f.lineBox:SetShown(cfg.line)
     local br,bg,bb,ba=style:Color("bg");f.band:SetVertexColor(br,bg,bb,(ba or 1)*.7);f.stripe:SetVertexColor(r,g,b,1)
     f.bandBox:SetShown(cfg.animation=="lowerthird")
@@ -147,10 +213,9 @@ function Stage:Apply()
 end
 function Stage:Paint(entry)
     local f=self:Frame()
-    local style=UI:GameStyle(self.ID)
     f.title:SetText(entry.title)
-    if entry.color then f.title:SetTextColor(entry.color[1],entry.color[2],entry.color[3],1) else f.title:SetTextColor(style:Color("text")) end
-    f.subtitle:SetText(entry.subtitle or "");f.subtitle:SetTextColor(style:Color("muted"))
+    f.title:SetTextColor(self:TextColor("title",entry.color))
+    f.subtitle:SetText(entry.subtitle or "");f.subtitle:SetTextColor(self:TextColor("subtitle"))
 end
 function Stage:Cancel()
     for _,key in ipairs({"holdTimer","doneTimer"}) do if self[key] then self[key]:Cancel();self[key]=nil end end
@@ -295,16 +360,51 @@ function Stage:Page()
     self.pageRegistered=true
     local page
     local function build(parent)
-        page=UI:Panel(parent,880,600,"surface");UI:HideSurface(page)
+        local pageStyle=UI:GetStyle();local interface=pageStyle.materialProfile=="interface"
+        -- A page host owns layout/context only; it allocates no hidden material.
+        page=UI:Container(parent,880,600,pageStyle)
         local g=UI:SettingsGrid(page);page.grid=g
         local controls={}
-        local function changed() Stage:Apply();if page then page:Refresh() end end
+        local function changed() ns.Styles:Changed();if page then page:Refresh() end end
         local function set(key) return function(value) Stage:Config()[key]=value;changed() end end
         local function row(key,title,control,help) controls[key]=g:Row(title,control,{help=help});return controls[key] end
         g:Section("stage","Notifications")
         row("styleFamily","Style family",UI:Dropdown(g,190,ns.Styles:Choices(true),function(value) Stage:Config().styleFamily=value;ns.Styles:Changed() end),
-            "The suite's in-game style or an own one: fonts and the accent line. WoW uses the Morpheus title font.")
+            "The suite's in-game style or an own one: fonts and background. WoW uses the Morpheus title font. Accent colour is selected below.")
         controls.styleFamily:SetOptionsProvider(function() return ns.Styles:Choices(true) end)
+        row("accentMode","Accent color",UI:Dropdown(g,190,{{value="theme",label="Interface theme"},{value="family",label="Style family"},{value="custom",label="Custom color"}},function(value)
+            local cfg=Stage:Config()
+            if value=="custom" and cfg.accentColor=="" then cfg.accentColor=Stage:AccentHex() end
+            cfg.accentMode=value;changed()
+        end),"Colour of accent lines, level-up headings and monochrome symbols. Quest status, warning colours and spell/item artwork keep their meaning.")
+        row("accentColor","Custom color",UI:ColorField(g,190,function(value)
+            Stage:Config().accentColor=value:sub(1,6).."FF";changed()
+        end),"Used with Custom color. Select Interface theme to restore automatic colours.")
+        controls.accentColor.OpenPicker=function(self) UI:OpenColorPicker(self,nil,{rgb=true}) end
+        local function textColor(role,title)
+            g:Section(role,title)
+            local modeKey,colorKey=role.."ColorMode",role.."Color"
+            row(modeKey,title.." color",UI:Dropdown(g,190,{{value="theme",label="Interface theme"},{value="accent",label="Notification accent"},{value="custom",label="Custom color"}},function(value)
+                local cfg=Stage:Config()
+                if value=="custom" and cfg[colorKey]=="" then cfg[colorKey]=Stage:TextHex(role) end
+                cfg[modeKey]=value;changed()
+            end),"Colour of the "..role.." in notifications and the level-up card. Interface theme uses its readable text colour; Notification accent follows the accent selected above.")
+            row(colorKey,"Custom "..role.." color",UI:ColorField(g,190,function(value)
+                Stage:Config()[colorKey]=value:sub(1,6).."FF";changed()
+            end),"Used when the "..role.." colour is set to Custom color.")
+            controls[colorKey].OpenPicker=function(self) UI:OpenColorPicker(self,nil,{rgb=true}) end
+            row(role.."Outline",title.." outline",UI:Dropdown(g,190,{{value="default",label="Default"},{value="none",label="None"},{value="normal",label="Normal"},{value="thick",label="Thick"}},set(role.."Outline")),
+                "Text edge for this element. Default keeps the notification's original outline; None removes it.")
+            row(role.."Shadow",title.." shadow",UI:Dropdown(g,190,{{value="default",label="Default"},{value="on",label="On"},{value="off",label="Off"}},set(role.."Shadow")),
+                "Default keeps the original shadow of each notification. On and Off explicitly override it.")
+            row(role.."ShadowColor","Shadow color",UI:ColorField(g,190,set(role.."ShadowColor")),"Shadow colour and opacity for this element. Applied when its shadow is active.")
+            row(role.."ShadowX","Shadow horizontal offset",UI:InlineSlider(g,190,-8,8,1,"%d",set(role.."ShadowX")),"Negative: left. Positive: right. Applied when the shadow is active.")
+            row(role.."ShadowY","Shadow vertical offset",UI:InlineSlider(g,190,-8,8,1,"%d",set(role.."ShadowY")),"Negative: down. Positive: up. Applied when the shadow is active.")
+        end
+        textColor("title","Title");textColor("subtitle","Subtitle")
+        g:Section("presentation","Presentation")
+        row("messageStatusColors","Message status colors",UI:Switch(g,true,set("messageStatusColors")),
+            "Allow a message's status colour, such as a friendly or hostile zone, to override the title colour. Off: your selected title colour applies to every notification. Status text is unchanged.")
         row("titleSize","Title size",UI:InlineSlider(g,190,16,60,1,"%d",set("titleSize")),"Size of the large first line.")
         row("subtitleSize","Subtitle size",UI:InlineSlider(g,190,10,30,1,"%d",set("subtitleSize")),"Size of the second line.")
         row("animation","Animation",UI:Dropdown(g,190,ANIMATION_CHOICES,function(value) Stage:Config().animation=value;changed();Stage:Preview() end),
@@ -322,18 +422,37 @@ function Stage:Page()
         end
         function page:Arrange(width)
             UI:Place(g,self,0,0)
-            local height=g:Arrange(width)+8
+            local height=g:Arrange(interface and math.max(1,width-10) or width)+8
             M.Height(self,height);return height
         end
         function page:Refresh()
             local c=Stage:Config()
             for key,control in pairs(controls) do if control.SetValue then control:SetValue(c[key]) end end
+            controls.accentColor:SetValue(c.accentMode=="custom" and c.accentColor~="" and c.accentColor or Stage:AccentHex())
+            controls.accentColor:SetLocked(c.accentMode~="custom")
+            for _,role in ipairs({"title","subtitle"}) do
+                local mode,color=c[role.."ColorMode"],c[role.."Color"]
+                controls[role.."Color"]:SetValue(mode=="custom" and color~="" and color or Stage:TextHex(role))
+                controls[role.."Color"]:SetLocked(mode~="custom")
+            end
             for id,rows in pairs(self.types) do local t=Stage:TypeConfig(id);rows.enabled:SetValue(t.enabled);rows.hold:SetValue(t.hold) end
+        end
+        if interface then
+            local function cancelOwnedMenu()
+                local owner=UI.dropdown and UI.dropdown.owner
+                if not owner then return end
+                for _,item in ipairs(g.items) do if item.control==owner then UI:CloseDropdown();return end end
+            end
+            local dispose
+            local function watch() if not dispose then dispose=ns.Settings:BeforeProfileChange(page,cancelOwnedMenu) end end
+            page:HookScript("OnShow",watch)
+            page:HookScript("OnHide",function() cancelOwnedMenu();if dispose then dispose();dispose=nil end end)
+            if page:IsVisible() then watch() end
         end
         page:Arrange(880);page:Refresh()
         return page
     end
-    ns.Config:RegisterPage("stage",{title="Notifications",description="Cinematic notifications from your modules: level-ups and more.",
+    ns.Config:RegisterPage("stage",{interfaceSettings=true,title="Notifications",description="Cinematic notifications from your modules: level-ups and more.",
         category="core",build=function(parent) return page or build(parent) end,
         refresh=function() if page then page:Refresh() end end})
 end

@@ -1,99 +1,315 @@
 local _,P=...
 if not P.ready then return end
--- The map in its window: an own scale (50-150 %) and, when movable, an own
--- position: drag the map's title bar, double-click resets, Ctrl+wheel there
--- scales. Blizzard's panel manager places the map again on every layout
--- change (opening, the side panel, other windows; Florian 2026-10-08: it
--- jumped back), so ours follows each of Blizzard's SetPoint calls at once.
--- Maximized, the map stays Blizzard's. Another addon moving or scaling the
--- map (P.Guard) keeps that part; ours stays out. Map 0.2: the map reopens
--- on the same map, zoom and section while you are still in the same zone. Our quest log beside the
--- map is parented to it and follows.
+-- Own window geometry around the native WorldMapFrame. Canvas objects, pins,
+-- data providers and the native map lifecycle remain owned by the client.
 local ns=P.ns
 local UI,M=ns.UI,ns.DesignSystem.Metrics
 local W={}
 P.Window=W
-
+local function points(frame)
+    local out={};for i=1,frame:GetNumPoints() do out[i]={frame:GetPoint(i)} end;return out
+end
+local function anchor(frame,saved)
+    frame:ClearAllPoints();for _,point in ipairs(saved) do frame:SetPoint(unpack(point)) end
+end
+local function clamp(v,a,b) return math.max(a,math.min(math.max(a,b),v)) end
+local function finite(v) return type(v)=="number" and v==v and v>-math.huge and v<math.huge end
+local function canvasReady(scroll)
+    local levels=scroll and scroll.zoomLevels
+    if type(levels)~="table" or #levels==0 then return false end
+    local first,last=levels[1],levels[#levels]
+    return type(first)=="table" and type(last)=="table" and finite(first.scale) and first.scale>0
+        and finite(last.scale) and last.scale>=first.scale
+end
+function W:Combat() return InCombatLockdown and InCombatLockdown() or false end
 function W:Maximized()
     local map=P:WorldMap()
-    return map and map.IsMaximized and map:IsMaximized()==true or false
+    return self.maximized or map and map.IsMaximized and map:IsMaximized()==true or false
 end
-function W:Handle()
-    local map=P:WorldMap()
-    if self.handle or not map then return self.handle end
-    -- Over the title bar, leaving Blizzard's buttons at the right free.
-    local h=CreateFrame("Button",nil,map);h:RegisterForDrag("LeftButton");h:RegisterForClicks("LeftButtonUp")
-    h:SetPoint("TOPLEFT",map,"TOPLEFT",M.ToNative(60),0);h:SetPoint("TOPRIGHT",map,"TOPRIGHT",-M.ToNative(90),0);h:SetHeight(M.ToNative(22))
-    h:SetFrameLevel(map:GetFrameLevel()+15)
-    h:SetScript("OnDragStart",function() W:StartMove() end)
-    h:SetScript("OnDragStop",function() W:StopMove() end)
-    h:SetScript("OnDoubleClick",function() W:Reset() end)
-    h:EnableMouseWheel(true)
-    h:SetScript("OnMouseWheel",function(_,delta)
-        if IsControlKeyDown and IsControlKeyDown() then W:Scale(P:Config().scale+delta*5) end
-    end)
-    UI:AttachTooltip(h,"Move the map","Drag to move. Double-click resets the position. Ctrl+mouse wheel scales.")
-    self.handle=h
-    return h
-end
--- Ours only while no other addon moves or scales the map.
 function W:Movable() return P:Config().movable and not P.Guard:Owner("move") end
 function W:Scaling() return not P.Guard:Owner("scale") end
+function W:CanResize()
+    local map=P:WorldMap();local sc=map and map.ScrollContainer
+    return P:Active() and self:Scaling() and not P.Guard:Owner("move") and sc
+        and (type(map.OnFrameSizeChanged)=="function" or type(sc.OnCanvasSizeChanged)=="function") and true or false
+end
+function W:Handle()
+    if P.WindowSkin:Build() then self.handle=P.WindowSkin.handle end
+    return self.handle
+end
+function W:Capture()
+    local map=P:WorldMap()
+    if self.saved or not map then return end
+    self.saved={width=map:GetWidth(),height=map:GetHeight(),scale=map:GetScale(),points=points(map),
+        movable=map.IsMovable and map:IsMovable(),clamped=map.IsClampedToScreen and map:IsClampedToScreen(),
+        maximized=map.IsMaximized and map:IsMaximized()}
+    local sc=map.ScrollContainer
+    if sc then self.saved.scroll={points=points(sc),width=sc:GetWidth(),height=sc:GetHeight()} end
+end
+function W:SavePosition()
+    local map=P:WorldMap();local left,top=map:GetLeft(),map:GetTop()
+    local ratio=map:GetEffectiveScale()/UIParent:GetEffectiveScale()
+    if left and top then P:Config().position={x=left*ratio,y=top*ratio} end
+end
 function W:StartMove()
     local map=P:WorldMap()
-    if not (map and self:Movable()) or self:Maximized() then return end
-    self.moving=true
-    map:SetMovable(true);map:SetClampedToScreen(true);map:StartMoving()
+    if not (P:Active() and map and self:Movable()) or self:Maximized() or self:Combat() then return end
+    self.moving=true;map:SetMovable(true);map:SetClampedToScreen(true);map:StartMoving()
 end
 function W:StopMove()
+    local map=P:WorldMap();if not (self.moving and map) then return end
+    if self:Combat() then self.pendingCombat=true;return end
+    self.moving=false;map:StopMovingOrSizing();self:SavePosition();self:Apply()
+end
+function W:CloseMenus()
+    P.WindowSkin:CloseFilterMenu()
+    local owner=UI.dropdown and UI.dropdown.owner
     local map=P:WorldMap()
-    if not (self.moving and map) then return end
-    self.moving=false
-    map:StopMovingOrSizing()
-    -- Stored as the top-left corner in UIParent coordinates (scale-free).
-    local left,top=map:GetLeft(),map:GetTop()
-    local scale=map:GetScale() or 1
-    if left and top then P:Config().position={x=left*scale,y=top*scale} end
-    self:Apply()
+    for _=1,20 do
+        if not owner then return end
+        if owner==map then UI:CloseDropdown();return end
+        owner=owner.GetParent and owner:GetParent()
+    end
 end
 function W:Reset()
+    if self:Combat() then return end
     P:Config().position=nil
     local map=P:WorldMap()
-    if map and map:IsShown() and not self:Maximized() then
-        -- Blizzard's own place: hide and show through the panel manager.
-        if HideUIPanel and ShowUIPanel then pcall(HideUIPanel,map);pcall(ShowUIPanel,map) end
+    if map and self.saved and not self:Maximized() then
+        self.applying=true;anchor(map,self.saved.points);self.applying=false
     end
+    self:Apply()
+end
+function W:ResetSize()
+    if self:Combat() then return end
+    local c=P:Config();c.windowWidth=P.DEFAULTS.windowWidth;c.windowHeight=P.DEFAULTS.windowHeight
     self:Apply()
 end
 function W:Scale(value)
-    local c=P:Config()
-    c.scale=math.max(50,math.min(150,math.floor((value or 100)+.5)))
-    self:Apply()
-    if ns.Config then ns.Config:Refresh() end
+    if self:Combat() or not self:Scaling() then return end
+    P:Config().scale=clamp(math.floor((value or 100)+.5),50,150)
+    self:Apply();if ns.Config then ns.Config:Refresh() end
 end
--- Scale and position onto the map (window mode only).
-function W:Apply()
+function W:Navigate(id)
     local map=P:WorldMap()
-    if not map then return end
-    local c=P:Config()
-    local on=P:Active() and not self:Maximized()
-    local handle=self:Handle()
-    local movable=self:Movable()
-    if handle then handle:SetShown(on and movable) end
-    if not on then
-        if self.applied then map:SetScale(1);self.applied=false end
-        return
+    if not self:Combat() and P:Active() and type(id)=="number" and map and map.SetMapID then map:SetMapID(id) end
+end
+function W:Up()
+    local map=P:WorldMap();local info=map and map.GetMapID and P.Call("C_Map.GetMapInfo",map:GetMapID())
+    if type(info)=="table" and type(info.parentMapID)=="number" and info.parentMapID>0 then self:Navigate(info.parentMapID) end
+end
+function W:ToggleMaximize()
+    if self:Combat() or not self:CanResize() then return end
+    local map=P:WorldMap();local max=self:Maximized()
+    local action
+    if max then action=map.HandleUserActionMinimizeSelf or map.Minimize
+    else action=map.HandleUserActionMaximizeSelf or map.Maximize end
+    if type(action)=="function" then action(map)
+    else self.maximized=not max end
+    self:Apply()
+end
+-- The quest module can run without Map. It asks for this optional docking
+-- contract instead of inheriting knowledge of our chrome or sizing rules.
+function W:DockAnchor()
+    local skin=P.WindowSkin
+    return P:Active() and skin.active and skin.dock or P:WorldMap()
+end
+function W:QuestPanes()
+    local q=ns.Quest
+    return q and q:Active() and q.Panes and q.Panes.frame and q.Panes.frame:IsShown() and q.Panes or nil
+end
+function W:Screen()
+    local map=P:WorldMap();local ratio=UIParent:GetEffectiveScale()/map:GetEffectiveScale()
+    return UIParent:GetWidth()*ratio,UIParent:GetHeight()*ratio
+end
+function W:NativePanelWidth()
+    local panel=rawget(_G,"QuestMapFrame")
+    if not (panel and panel:IsShown()) then return 0 end
+    local owner=panel:GetParent();local map=P:WorldMap()
+    for _=1,10 do if owner==map then return panel:GetWidth() end;if not owner then break end;owner=owner:GetParent() end
+    return 0
+end
+-- Widths are transient fit results, never written over the user's pane sizes.
+function W:DockLayout()
+    return self.dockLayout
+end
+function W:Geometry()
+    local c=P:Config();local sw,sh=self:Screen();local q=self:QuestPanes()
+    local layout=q and q:Measure() or {left=0,right=0,widths={}}
+    local native=self:NativePanelWidth()
+    local margin=M.ToNative(12);local maxWidth=math.max(240,sw-2*margin)
+    local minMap=M.ToNative(360)+native
+    local extra=layout.left+layout.right
+    if extra>0 and extra>maxWidth-minMap then
+        local rail=M.ToNative(34)
+        local factor=math.max(.1,(maxWidth-minMap-rail)/math.max(1,extra-rail))
+        layout=q:Measure(factor);extra=layout.left+layout.right
     end
+    local available=math.max(240,maxWidth-extra)
+    local width=self:Maximized() and available or math.min(M.ToNative(c.windowWidth)+native,available)
+    local height=self:Maximized() and sh-2*margin or math.min(M.ToNative(c.windowHeight),sh-2*margin)
+    self.dockLayout=layout
+    return math.max(240,width),math.max(200,height),layout.left,layout.right,native
+end
+function W:RefreshCanvas(view)
+    local map=P:WorldMap();local sc=map and map.ScrollContainer
+    -- A hidden, never-opened native map has no zoom levels yet. Its resize
+    -- callback can return without initializing them; panning afterwards calls
+    -- native layer selection, which iterates the missing table. Let the native
+    -- first OnShow/SetMapID establish the canvas instead of manufacturing data.
+    if not canvasReady(sc) then return end
+    -- Native resize recalculates zoom levels and resets zoom. Restore the old
+    -- center/scale, clamped to the newly available range, after that callback.
+    if type(map.OnFrameSizeChanged)=="function" then map:OnFrameSizeChanged()
+    elseif type(sc.OnCanvasSizeChanged)=="function" then sc:OnCanvasSizeChanged() end
+    if not canvasReady(sc) then return end
+    if view and sc.InstantPanAndZoom then
+        local levels=sc.zoomLevels
+        local scale=view.scale
+        if type(levels)=="table" and #levels>0 then scale=clamp(scale,levels[1].scale,levels[#levels].scale) end
+        sc:InstantPanAndZoom(scale,view.h,view.v)
+    end
+    if ns.MapPins then ns.MapPins:Refresh() end
+    if P.Terrain then P.Terrain:Refresh() end
+end
+function W:CurrentView()
+    local map=P:WorldMap();local sc=map and map.ScrollContainer
+    if not (canvasReady(sc) and sc.GetCanvasScale and sc.GetNormalizedHorizontalScroll and sc.GetNormalizedVerticalScroll) then return end
+    local scale,h,v=sc:GetCanvasScale(),sc:GetNormalizedHorizontalScroll(),sc:GetNormalizedVerticalScroll()
+    if finite(scale) and scale>0 and finite(h) and finite(v) then return {scale=scale,h=h,v=v} end
+end
+function W:Clamp(left,right)
+    local map=P:WorldMap();local sw,sh=self:Screen()
+    local x,y=map:GetLeft(),map:GetTop()
+    if not (x and y) then return end
+    local nx=clamp(x,left,sw-map:GetWidth()-right)
+    local ny=clamp(y,map:GetHeight(),sh)
+    if math.abs(x-nx)>.5 or math.abs(y-ny)>.5 then
+        map:ClearAllPoints();map:SetPoint("TOPLEFT",UIParent,"BOTTOMLEFT",nx,ny)
+    end
+end
+function W:Apply()
+    if self.applying then return end
+    if self:Combat() then self.pendingCombat=true;return end
+    local map=P:WorldMap();if not map then return end
+    if not P:Active() then return self:Release() end
+    self:Capture()
+    local skin=P.WindowSkin
+    if not skin:Build() then return end
+    self.handle=skin.handle
     self.applying=true
-    local scale=map:GetScale() or 1
-    if self:Scaling() then scale=c.scale/100;map:SetScale(scale);self.applied=true end
-    if movable and c.position and not self.moving then
-        map:ClearAllPoints()
-        map:SetPoint("TOPLEFT",UIParent,"BOTTOMLEFT",c.position.x/scale,c.position.y/scale)
+    local c=P:Config();local resizing=self:CanResize()
+    if self:Scaling() then
+        map:SetScale(self:Maximized() and 1 or c.scale/100);self.applied=true
     end
+    local left,right=0,0
+    if resizing then
+        local view=self.resizeView or self:CurrentView()
+        local width,height,native
+        width,height,left,right,native=self:Geometry()
+        local sc=map.ScrollContainer
+        local changed=not self.geometry or math.abs(map:GetWidth()-width)>.1 or math.abs(map:GetHeight()-height)>.1
+            or self.geometry.native~=native
+        map:SetSize(width,height)
+        sc:ClearAllPoints()
+        M.Point(sc,"TOPLEFT",map,"TOPLEFT",skin.EDGE,-skin.TOP)
+        sc:SetPoint("BOTTOMRIGHT",map,"BOTTOMRIGHT",-M.ToNative(skin.EDGE)-native,M.ToNative(skin.BOTTOM))
+        self.geometry={native=native};self.ownedGeometry=true
+        if self:Maximized() then map:ClearAllPoints();map:SetPoint("TOPLEFT",UIParent,"BOTTOMLEFT",left+M.ToNative(12),select(2,self:Screen())-M.ToNative(12))
+        elseif self:Movable() and c.position and not self.moving then
+            local ratio=map:GetEffectiveScale()/UIParent:GetEffectiveScale()
+            map:ClearAllPoints();map:SetPoint("TOPLEFT",UIParent,"BOTTOMLEFT",c.position.x/ratio,c.position.y/ratio)
+        end
+        if not self.moving then self:Clamp(left,right) end
+        if changed then self:RefreshCanvas(view) end
+    else
+        self.dockLayout=nil
+        -- Honor external geometry owners; a native maximized canvas also stays
+        -- native on clients without the supported resize callback.
+        if self.ownedGeometry then self:RestoreGeometry() end
+        local q=self:QuestPanes();local layout=q and q:Measure()
+        if layout then left,right=layout.left,layout.right end
+        if self:Movable() and c.position and not self:Maximized() and not self.moving then
+            local ratio=map:GetEffectiveScale()/UIParent:GetEffectiveScale()
+            map:ClearAllPoints();map:SetPoint("TOPLEFT",UIParent,"BOTTOMLEFT",c.position.x/ratio,c.position.y/ratio)
+        end
+    end
+    skin:Apply(left,right)
+    local q=self:QuestPanes();if q then q:Layout() end
     self.applying=false
 end
-
+function W:RestoreGeometry()
+    local map=P:WorldMap();local saved=self.saved
+    if not (map and saved and self.ownedGeometry) then return end
+    map:SetSize(saved.width,saved.height)
+    if saved.scroll and map.ScrollContainer then
+        local sc=map.ScrollContainer;sc:SetSize(saved.scroll.width,saved.scroll.height);anchor(sc,saved.scroll.points)
+    end
+    self.ownedGeometry=false;self.geometry=nil
+    self:RefreshCanvas(self:CurrentView())
+end
+function W:Release()
+    if self:Combat() then self.pendingRelease=true;return end
+    self.applying=true
+    self:StopResize(true)
+    local map=P:WorldMap()
+    if self.moving and map then map:StopMovingOrSizing();self.moving=false end
+    self:CloseMenus()
+    -- Cleanup must finish even when a native callback fails. Preserve the first
+    -- error for Modules/cleanup after relinquishing all our visible state.
+    local failure
+    local function restore(fn,...)
+        local good,reason=pcall(fn,...);if not good then failure=failure or reason end
+    end
+    if map and self.saved and self.saved.maximized~=nil and map.IsMaximized
+        and map:IsMaximized()~=self.saved.maximized and self.ownedGeometry then
+        local action
+        if self.saved.maximized then action=map.HandleUserActionMaximizeSelf or map.Maximize
+        else action=map.HandleUserActionMinimizeSelf or map.Minimize end
+        if type(action)=="function" then restore(action,map) end
+    end
+    restore(self.RestoreGeometry,self)
+    if map and self.saved then
+        if self.applied then restore(map.SetScale,map,self.saved.scale) end
+        if self:Movable() then restore(anchor,map,self.saved.points) end
+        if self.saved.movable~=nil then restore(map.SetMovable,map,self.saved.movable) end
+        if self.saved.clamped~=nil then restore(map.SetClampedToScreen,map,self.saved.clamped) end
+    end
+    restore(P.WindowSkin.Release,P.WindowSkin)
+    self.applied,self.maximized,self.saved,self.dockLayout=nil,nil,nil,nil
+    self.ownedGeometry,self.geometry=nil,nil
+    local q=self:QuestPanes();if q then restore(q.Layout,q) end
+    self.applying=false
+    if failure then error(failure,0) end
+end
+function W:StartResize()
+    if self:Combat() or not self:CanResize() or self:Maximized() then return end
+    local x,y=GetCursorPosition();local map=P:WorldMap()
+    self.resize={x=x,y=y,width=map:GetWidth()-self:NativePanelWidth(),height=map:GetHeight(),scale=map:GetEffectiveScale()}
+    self.resizeView=self:CurrentView()
+    if self.resizeTicker then self.resizeTicker:Cancel() end
+    self.resizeTicker=C_Timer.NewTicker(.03,function()
+        if W:Combat() or not P:Active() then W:StopResize(true);return end
+        if IsMouseButtonDown and not IsMouseButtonDown("LeftButton") then W:StopResize();return end
+        W:ResizeStep()
+    end)
+end
+function W:ResizeStep()
+    local d=self.resize;if not d or self:Combat() then return end
+    local x,y=GetCursorPosition();local c=P:Config()
+    c.windowWidth=clamp(math.floor(M.ToDesign(d.width+(x-d.x)/d.scale)+.5),360,2400)
+    c.windowHeight=clamp(math.floor(M.ToDesign(d.height+(d.y-y)/d.scale)+.5),240,1600)
+    self:Apply()
+end
+function W:StopResize(cancel)
+    if self.resize and not cancel then self:ResizeStep();self:SavePosition() end
+    self.resize=nil;self.resizeView=nil
+    if self.resizeTicker then self.resizeTicker:Cancel();self.resizeTicker=nil end
+end
+function W:Schedule()
+    if self.applying or self.moving or self.pending or not P:Active() then return end
+    self.pending=C_Timer.NewTimer(0,function() W.pending=nil;W:Apply() end)
+end
 -- Zoom and section: remembered on close, restored on open in the same zone
 -- (a zone change opens on your map as Blizzard does).
 function W:Remember()
@@ -119,31 +335,34 @@ function W:Restore()
     if map:GetMapID()~=view.mapID then pcall(map.SetMapID,map,view.mapID) end
     local scroll=map.ScrollContainer
     if view.scale and scroll and scroll.InstantPanAndZoom then pcall(scroll.InstantPanAndZoom,scroll,view.scale,view.h,view.v) end
+    -- The seamless map's zoom onto the zone just opened gives way to this view.
+    if P.Seamless then P.Seamless.focus=nil end
 end
 function W:Enable(context)
     local map=P:WorldMap()
     if map and not self.hooked then
         self.hooked=true
-        -- Blizzard places the map on show; ours follows a moment later.
-        map:HookScript("OnShow",function() if P:Active() then W:Apply();C_Timer.NewTimer(0,function() W:Apply();W:Restore() end) end end)
-        map:HookScript("OnHide",function() if P:Active() then W:Remember() end end)
-        -- Blizzard placed the map: ours again (not while dragging, not our own
-        -- call). Once per frame, after Blizzard's last anchor of the batch, so
-        -- a second anchor of theirs never stretches ours.
-        hooksecurefunc(map,"SetPoint",function()
-            if W.applying or W.moving or W.pending or not P:Active() then return end
-            local c=P:Config()
-            if not (W:Movable() and c.position) or W:Maximized() then return end
-            W.pending=C_Timer.NewTimer(0,function() W.pending=nil;W:Apply() end)
+        map:HookScript("OnShow",function() if P:Active() then W:Apply();C_Timer.NewTimer(0,function() if P:Active() then W:Apply();W:Restore() end end) end end)
+        map:HookScript("OnHide",function() W:StopResize(true);W:StopMove();W:CloseMenus();if P:Active() then W:Remember() end end)
+        map:HookScript("OnSizeChanged",function() W:Schedule() end)
+        hooksecurefunc(map,"SetPoint",function() W:Schedule() end)
+        for _,name in ipairs({"SetMaximized","SetMinimized","Maximize","Minimize","SynchronizeDisplayState","OnMapChanged","AddOverlayFrame"}) do
+            if type(map[name])=="function" then hooksecurefunc(map,name,function() W:Schedule() end) end
+        end
+        local panel=rawget(_G,"QuestMapFrame")
+        if panel then panel:HookScript("OnShow",function() W:Schedule() end);panel:HookScript("OnHide",function() W:Schedule() end) end
+        -- Restoration must survive disabling the module during combat.
+        self.events=CreateFrame("Frame");self.events:RegisterEvent("PLAYER_REGEN_ENABLED")
+        self.events:RegisterEvent("DISPLAY_SIZE_CHANGED");self.events:RegisterEvent("UI_SCALE_CHANGED")
+        self.events:SetScript("OnEvent",function(_,event)
+            if event~="PLAYER_REGEN_ENABLED" then W:Schedule();return end
+            if W.pendingRelease then W.pendingRelease=nil;W:Release() end
+            if W.pendingCombat then W.pendingCombat=nil;if P:Active() then W:StopMove();W:Apply() end end
         end)
-        if map.SetMaximized then hooksecurefunc(map,"SetMaximized",function() W:Apply() end) end
-        if map.SetMinimized then hooksecurefunc(map,"SetMinimized",function() W:Apply() end) end
     end
     context:Defer(function()
-        local m=P:WorldMap()
-        if m and W.applied then m:SetScale(1);W.applied=false end
-        if W.handle then W.handle:Hide() end
         if W.pending then W.pending:Cancel();W.pending=nil end
+        W:Release()
     end)
     self:Apply()
 end

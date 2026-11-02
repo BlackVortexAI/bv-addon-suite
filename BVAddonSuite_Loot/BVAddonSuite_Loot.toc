@@ -2,8 +2,8 @@
 ## Title: BV Addon Suite - Loot
 ## Notes: Loot roll bars, loot monitor, roll results and a master loot window with roll requests. Requires BV Core.
 ## Author: BV
-## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.8.92
+## IconTexture: Interface\AddOns\BVAddonSuite_Loot\Media\Brand\module-icon
+## Version: 0.8.97
 ## Dependencies: BVAddonSuite
 
 Loot.lua

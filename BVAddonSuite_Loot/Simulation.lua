@@ -171,6 +171,34 @@ function Sim:ResolveNative(id)
     end)
 end
 
+-- Many rolls at once (Florian's beta raids, 20-30 items): staggered expiry,
+-- some fake answers. Tests the stable rows, the queue and scrolling. At its
+-- end the client cancels the roll (CANCEL_LOOT_ROLL), then the result comes.
+function Sim:ManyRolls(count)
+    if not self:Install() then return end
+    count=math.max(1,math.min(tonumber(count) or 25,40))
+    for index=1,count do
+        local item=self.ITEMS[(index-1)%#self.ITEMS+1]
+        local id=self.nextID;self.nextID=self.nextID+1
+        -- 20 s for the first, then 3 s more per item, slightly shuffled.
+        local duration=17+index*3+math.random()*2
+        local s={item=item,link=Sim.Link(item),bop=item[3]>=4,de=item[3]>=2,ends=GetTime()+duration,choices={}}
+        self.native[id]=s
+        R:StartNative(id,duration*1000)
+        for _,player in ipairs(pick(self.ROSTER,3)) do
+            local name,r=player[1],math.random()
+            local option=r<.4 and "need" or r<.8 and "greed" or "pass"
+            s.choices[name]=option
+            self:After(1+math.random()*(duration-2),function()
+                local roll=R:Get("native",id)
+                if roll and not roll.done then self:Chat(SELECTED[option],function() R:SetChoice(roll,name,option) end,name,s.link) end
+            end)
+        end
+        self:After(duration,function() R:Cancel(id);self:ResolveNative(id) end)
+    end
+    L:Print("Simulating "..count.." group loot rolls at once with staggered timers. Rows keep their place; scroll with the mouse wheel or the \"+N more\" line.")
+end
+
 -- Loot monitor: own loot, stacks, group loot and money.
 function Sim:Monitor()
     if not self:Install() then return end
@@ -270,10 +298,12 @@ end
 function Sim:Run(what)
     what=what or ""
     if what=="stop" then self:Stop();L:Print("Simulation stopped.");return end
-    if what=="" or what=="roll" or what=="rolls" then self:NativeRolls(3)
+    local many=what:match("^many%s*(%d*)$")
+    if many then self:ManyRolls(tonumber(many) or 25)
+    elseif what=="" or what=="roll" or what=="rolls" then self:NativeRolls(3)
     elseif what=="monitor" or what=="loot" then self:Monitor()
     elseif what=="request" then self:Request()
     elseif what=="master" or what=="ml" then self:Master()
     elseif what=="all" then self:NativeRolls(2);self:Monitor();self:After(3,function() Sim:Request() end)
-    else L:Print("/bv loot test [roll|monitor|request|master|all|stop]") end
+    else L:Print("/bv loot test [roll|many [n]|monitor|request|master|all|stop]") end
 end

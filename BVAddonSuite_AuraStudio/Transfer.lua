@@ -170,7 +170,7 @@ function T.Validate(packet)
     array(packet.graphs,32); assert(#packet.graphs>0,"Nothing to import")
     local owned={}
     for _,rec in ipairs(packet.graphs) do
-        fields(rec,"name graph inGroup quickInclude"); name(rec.name); flag(rec.inGroup); flag(rec.quickInclude)
+        fields(rec,"name graph inGroup quickInclude load"); name(rec.name); flag(rec.inGroup); flag(rec.quickInclude);A.LoadConditions.Validate(rec.load)
         assert(not rec.inGroup or packet.kind=="group","Missing transfer group")
         local ok,err=pcall(validateGraph,rec.graph,owned)
         if not ok then error("Graph '"..tostring(rec.name):gsub("|","||").."': "..ns.GraphValues.UserError(err),0) end
@@ -246,7 +246,7 @@ function T.Export(store,layout,kind,id)
     local initial={}; for gid in pairs(selected) do initial[#initial+1]=gid end
     for _,gid in ipairs(initial) do includeGraph(gid) end
     for _,gid in ipairs(store.graphOrder) do if selected[gid] then
-        local rec=store.graphs[gid]; packet.graphs[#packet.graphs+1]={name=rec.name,graph=G.Copy(rec.draft),quickInclude=rec.quickInclude,inGroup=kind=="group" and rec.groupId==id or nil}
+        local rec=store.graphs[gid]; packet.graphs[#packet.graphs+1]={name=rec.name,graph=G.Copy(rec.draft),quickInclude=rec.quickInclude,inGroup=kind=="group" and rec.groupId==id or nil,load=G.Copy(rec.load)}
     end end
     local entries={}
     for ref in pairs(frameReferences(packet)) do entries[ref]=ns.FrameLibrary:Lookup(ref) or {reference=ref,label=ref:sub(1,96)} end
@@ -386,7 +386,7 @@ function S:ImportTransfer(token,policy)
                 element.layoutId=map[element.layoutId];layouts[element.layoutId].label=label.." / "..(node.title or node.id).." / "..element.label
             end end
         end end
-        graphs[id]={id=id,name=label,draft=draft,enabled=false,revision=0,draftRevision=0,quickInclude=source.quickInclude,groupId=source.inGroup and groupID or nil}
+        graphs[id]={id=id,name=label,draft=draft,enabled=false,revision=0,draftRevision=0,quickInclude=source.quickInclude,groupId=source.inGroup and groupID or nil,load=G.Copy(source.load)}
         local snapshot={version=1,elements={},dependencies={},anchorRefs={}}
         for _,node in pairs(draft.nodes) do for _,key in ipairs(displayIDs(node))do snapshot.elements[key]=G.Copy(layouts[key])end end
         local seen={}

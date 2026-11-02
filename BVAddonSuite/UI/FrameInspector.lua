@@ -94,38 +94,51 @@ function I:Key(key)
 end
 function I:Build()
  if self.host then return end
+ local style=UI:InterfaceStyle();if not style then return end
+ local function make(method,...)
+  local args,n={...},select('#',...)
+  return UI:WithStyle(style,function()return UI[method](UI,unpack(args,1,n))end)
+ end
+ self.style=style
  self.host=CreateFrame("Frame","BVAddonSuiteFrameInspection",UIParent);self.host:SetAllPoints(UIParent);self.host:SetFrameStrata("FULLSCREEN_DIALOG");self.host:SetFrameLevel(100);self.host:EnableMouse(false);X:MarkOwned(self.host);self.host:Hide()
  self.host:SetScript("OnKeyDown",function(_,key)UI:SetKeyboardPropagation(self.host,not self:Key(key))end)
  self.host:SetScript("OnKeyUp",function()if not InCombatLockdown()then UI:SetKeyboardPropagation(self.host,true)end end)
- self.help=UI:Panel(self.host,800,42,"surface");D.Point(self.help,"TOP",UIParent,"TOP",0,-24);self.help:EnableMouse(false)
- self.helpText=at(UI:Label(self.help,"",13,"text"),self.help,16,12);D.Size(self.helpText,768,24)
- self.info=UI:Panel(self.host,360,136,"surface");self.info:EnableMouse(false);self.info:SetFrameLevel(110);self.help:SetFrameLevel(110)
- self.infoTitle=at(UI:Label(self.info,"",14,"accent",true),self.info,12,10);D.Size(self.infoTitle,336,20)
- self.infoText=at(UI:Label(self.info,"",11,"text"),self.info,12,38);D.Size(self.infoText,336,66)
- self.count=at(UI:Label(self.info,"",10,"muted"),self.info,12,112);D.Size(self.count,336,18)
- self.highlight=UI:Panel(self.host,1,1,"accent");self.highlight:EnableMouse(false);self.highlight:SetAlpha(.20);self.highlight:SetFrameLevel(101);self.highlight:Hide();X:MarkOwned(self.highlight)
- local w=UI:Dialog("BVAddonSuiteFrameCapture",660,640,self.host);self.popup=w;X:MarkOwned(w);w.title:SetText("Captured frames")
- local p=w.content;self.captureStatus=at(UI:Label(p,"",12,"muted"),p,18,10);D.Size(self.captureStatus,624,42)
+ self.help=make("Panel",self.host,800,42,"surface");D.Point(self.help,"TOP",UIParent,"TOP",0,-24);self.help:EnableMouse(false)
+ self.helpText=at(make("Label",self.help,"",13,"text"),self.help,16,12);D.Size(self.helpText,768,24)
+ self.info=make("Panel",self.host,360,136,"surface");self.info:EnableMouse(false);self.info:SetFrameLevel(110);self.help:SetFrameLevel(110)
+ self.infoTitle=at(make("Label",self.info,"",14,style.materialProfile=="interface" and "accentText" or "accent",true),self.info,12,10);D.Size(self.infoTitle,336,20)
+ self.infoText=at(make("Label",self.info,"",11,"text"),self.info,12,38);D.Size(self.infoText,336,66)
+ self.count=at(make("Label",self.info,"",10,"muted"),self.info,12,112);D.Size(self.count,336,18)
+ if style.materialProfile=="interface" then
+  -- A world-space selection marker is a flat tint, not a decorated panel.
+  -- Keep opacity on its owner so material repaint cannot make it opaque.
+  self.highlight=CreateFrame("Frame",nil,self.host);D.Size(self.highlight,1,1)
+  local tint=self.highlight:CreateTexture(nil,"BACKGROUND");tint:SetAllPoints()
+  style:Bind(function()tint:SetColorTexture(style:Color("accent"))end,self.highlight)
+ else self.highlight=make("Panel",self.host,1,1,"accent")end
+ self.highlight:EnableMouse(false);self.highlight:SetAlpha(.20);self.highlight:SetFrameLevel(101);self.highlight:Hide();X:MarkOwned(self.highlight)
+ local w=make("Dialog","BVAddonSuiteFrameCapture",660,640,self.host);self.popup=w;X:MarkOwned(w);w.title:SetText("Captured frames")
+ local p=w.content;self.captureStatus=at(make("Label",p,"",12,"muted"),p,18,10);D.Size(self.captureStatus,624,42)
  self.rows={}
  for index=1,6 do
-  local row=UI:Button(p,"",624,function(control)
+  local row=make("Button",p,"",624,function(control)
    if control.candidate and control.candidate.persistable then self.selection[control.index]=not self.selection[control.index]and true or nil;self:RefreshCapture()end
   end);D.Height(row,66);at(row,p,18,62+(index-1)*68)
-  row.toggle=at(UI:Switch(row,false,function(value)self.selection[row.index]=value and true or nil;self:RefreshCapture()end),row,10,21)
-  row.title=at(UI:Label(row,"",13,"text",true),row,58,5);D.Size(row.title,550,19)
-  row.detail=at(UI:Label(row,"",10,"muted"),row,58,25);D.Size(row.detail,550,16)
-  row.reference=at(UI:Label(row,"",10,"muted"),row,58,44);D.Size(row.reference,550,16)
+  row.toggle=at(make("Switch",row,false,function(value)self.selection[row.index]=value and true or nil;self:RefreshCapture()end),row,10,21)
+  row.title=at(make("Label",row,"",13,"text",true),row,58,5);D.Size(row.title,550,19)
+  row.detail=at(make("Label",row,"",10,"muted"),row,58,25);D.Size(row.detail,550,16)
+  row.reference=at(make("Label",row,"",10,"muted"),row,58,44);D.Size(row.reference,550,16)
   row:HookScript("OnEnter",function()if row.candidate then self:Highlight(self:Describe(row.candidate.frame))end end)
   row:HookScript("OnLeave",function()self:Highlight(nil)end)
   row.toggle:HookScript("OnEnter",function()if row.candidate then self:Highlight(self:Describe(row.candidate.frame))end end)
   row.toggle:HookScript("OnLeave",function()self:Highlight(nil)end);self.rows[index]=row
  end
- self.previous=at(UI:Button(p,"Previous",100,function()self.page=self.page-1;self:RefreshCapture()end),p,18,478)
- self.pages=at(UI:Label(p,"",12,"text"),p,138,486)
- self.next=at(UI:Button(p,"Next",100,function()self.page=self.page+1;self:RefreshCapture()end),p,190,478)
- self.save=at(UI:Button(p,"Save selected",170,function()self:SaveSelected()end,true),p,472,478)
- self.resume=at(UI:Button(p,"Continue inspecting",180,function()self:Live()end),p,18,524)
- self.exit=at(UI:Button(p,"Exit inspector",140,function()self:Stop(true)end),p,502,524)
+ self.previous=at(make("Button",p,"Previous",100,function()self.page=self.page-1;self:RefreshCapture()end),p,18,478)
+ self.pages=at(make("Label",p,"",12,"text"),p,138,486)
+ self.next=at(make("Button",p,"Next",100,function()self.page=self.page+1;self:RefreshCapture()end),p,190,478)
+ self.save=at(make("Button",p,"Save selected",170,function()self:SaveSelected()end,true),p,472,478)
+ self.resume=at(make("Button",p,"Continue inspecting",180,function()self:Live()end),p,18,524)
+ self.exit=at(make("Button",p,"Exit inspector",140,function()self:Stop(true)end),p,502,524)
  w:HookScript("OnHide",function()self:Highlight(nil);if self.active and self.frozen and not self.closing then self:Live()end end)
 end
 function I:HideEditors()
@@ -147,7 +160,7 @@ end
 function I:Start()
  if InCombatLockdown()then ns:Print("Start frame inspection outside combat.");return end
  if self.active then return end
- self:Build();self.profile=ns.Settings:Profile();self:HideEditors();self.active=true;self.host:Show();self.host:EnableKeyboard(true);UI:SetKeyboardPropagation(self.host,true)
+ self:Build();if not self.host then return end;self.profile=ns.Settings:Profile();self:HideEditors();self.active=true;self.host:Show();self.host:EnableKeyboard(true);UI:SetKeyboardPropagation(self.host,true)
  self.generation=(self.generation or 0)+1;local generation=self.generation
  self:Live();self.timer=C_Timer.NewTicker(.1,function()if self.active and self.generation==generation then self:Tick()end end)
  ns.Events:Subscribe(self,"PLAYER_REGEN_DISABLED",function()self:Stop(false)end)

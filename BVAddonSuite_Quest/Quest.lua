@@ -1,11 +1,11 @@
 local package,Q=...
 local ns=BVAddonSuiteCore
 if not ns or not ns.RequireCore then
-    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.95 or newer. Update Core; saved data is preserved.") end
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.113 or newer. Update Core; saved data is preserved.") end
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.1.4","0.8.96",1) then return end
+if not ns:RequireCore(package,"0.1.6","0.8.113",1) then return end
 -- Quest package (docs/map-quest-concept.md): the quest log beside the world
 -- map. Files fill Q (package-private): Data (quest log model, sorting),
 -- Panes (docking beside the map, splitters), List, Details, Options.
@@ -16,6 +16,8 @@ Q.ID="quest"
 
 -- Display switches (Florian: every element its own switch), look, sorting.
 Q.DEFAULTS={enabled=false,
+    -- Optional actions in the quest dialog; never enabled by the factory layout.
+    autoAccept=false,autoTurnIn=false,
     -- Order of the three panes, left to right; widths of the own panes.
     -- Default Map · List · Details (Florian 2026-10-07).
     order="map,list,details",listWidth=300,detailsWidth=320,
@@ -57,7 +59,7 @@ function Q:Config()
     -- 0.1.0 started with List · Map · Details; the old default moves over once.
     if cfg.orderDefault~=2 then if cfg.order=="list,map,details" then cfg.order="map,list,details" end;cfg.orderDefault=2 end
     for key,valid in pairs(CHOICES) do if not valid[cfg[key]] then cfg[key]=self.DEFAULTS[key] end end
-    for _,key in ipairs({"hideBlizzard","showDistance","showHeaders","showTags","showFooter","detailsText","detailsRewards",
+    for _,key in ipairs({"autoAccept","autoTurnIn","hideBlizzard","showDistance","showHeaders","showTags","showFooter","detailsText","detailsRewards",
         "tracker","trackerMouseover","trackerBackground","trackerHideBlizzard","trackerUnlocked","autoFocus","banner","trackerGroupDungeons","dungeonColor"}) do cfg[key]=cfg[key]==true end
     cfg.trackerCount=num(cfg.trackerCount,6,1,20);cfg.trackerOpacity=num(cfg.trackerOpacity,60,0,100);cfg.trackerMaxHeight=num(cfg.trackerMaxHeight,480,120,1000)
     cfg.listWidth=num(cfg.listWidth,300,200,600);cfg.detailsWidth=num(cfg.detailsWidth,320,220,600)
@@ -203,4 +205,6 @@ ns.Modules:Register({id=Q.ID,OnEnable=function(context)
     Q.Panes:Enable(context)
     Q.Run:Enable(context)
     Q.Tracker:Enable(context)
+    Q.TrackerChoice:Enable(context)
+    Q.AutoQuest:Enable(context)
 end})

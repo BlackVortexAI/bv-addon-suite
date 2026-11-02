@@ -2,10 +2,11 @@ local _, ns = ...
 local Settings = { profileListeners = {}, afterProfileListeners={} }
 ns.Settings = Settings
 
-local defaults = { font = "alegreyaSansBold", themeKey = "violet", accent = "verdant", scale = 1, tooltips = true, statusbar = "softLightBevel", inspectorGap = 100, gridSize = 16, snapToGrid = true, snapToElements = true,
-    -- In-game style family (UI/StyleFamilies.lua, 0.8.95); tool windows keep themeKey.
+local defaults = { font = "alegreyaSansBold", themeKey = "violet", accent = "verdant", scale = 1, tooltips = true, statusbar = "softLightBevel", inspectorGap = 100, gridSize = 16, snapToGrid = true, snapToElements = false,
+    -- Gameplay family uses themeKey for its BV palette; tools use interfaceTheme.
     -- gameMatchUI: only read once to move an old switch to the family "match".
-    gameFamily = "bv", gameMatchUI = false }
+    gameFamily = "bv", gameMatchUI = false,
+    interfaceTheme="clean", interfaceAccent="", interfaceSurface="atlas", interfaceSurfaceArea="full", interfaceSurfaceStrength=15 }
 local choices = {
     themeKey = { violet=true, ember=true, tide=true },
     gameFamily = { bv=true, wow=true, clean=true, match=true },
@@ -16,6 +17,11 @@ local choices = {
 }
 
 local function valid(key, value)
+    if key=="interfaceTheme" then return type(value)=="string" and ns.ThemeTokens and ns.ThemeTokens.themes[value]~=nil end
+    if key=="interfaceAccent" then return type(value)=="string" and (value=="" or value:match("^%x%x%x%x%x%x$")~=nil) end
+    if key=="interfaceSurface" then return type(value)=="string" and ({none=true,relief=true,atlas=true,mist=true,patina=true,horde=true,alliance=true})[value]==true end
+    if key=="interfaceSurfaceArea" then return value=="casing" or value=="full" end
+    if key=="interfaceSurfaceStrength" then return type(value)=="number" and value>=0 and value<=50 and value%5==0 end
     if key == "font" or key == "statusbar" then return ns.Media:Reference(key, value) == true end
     if key == "inspectorGap" then return type(value)=="number" and value>=20 and value<=400 end
     if key == "gridSize" then return type(value)=="number" and choices.gridSize[value]==true end
@@ -25,13 +31,35 @@ local function valid(key, value)
     return false
 end
 
+-- Release cutover: only profiles that still use the former interface (including
+-- pre-interface profiles) adopt the new bundle. Chosen families and all gameplay
+-- preferences remain untouched; once clean is stored this operation is idempotent.
+local function migrateInterface(profile)
+    local ui=profile.ui
+    if type(ui)~="table" then ui={};profile.ui=ui end
+    if ui.interfaceTheme==nil or ui.interfaceTheme=="legacy" then
+        ui.interfaceTheme=defaults.interfaceTheme
+        ui.interfaceAccent=defaults.interfaceAccent
+        ui.interfaceSurface=defaults.interfaceSurface
+        ui.interfaceSurfaceArea=defaults.interfaceSurfaceArea
+        ui.interfaceSurfaceStrength=defaults.interfaceSurfaceStrength
+    end
+    -- Former valid strengths above the new slider limit keep the closest
+    -- available value. Invalid data still follows ordinary normalization.
+    local strength=ui.interfaceSurfaceStrength
+    if type(strength)=="number" and strength>50 and strength<=70 and strength%5==0 then
+        ui.interfaceSurfaceStrength=50
+    end
+end
+
 local function normalize(profile)
     if type(profile) ~= "table" then profile = {} end
-    if type(profile.ui) ~= "table" then profile.ui = {} end
+    migrateInterface(profile)
     if type(profile.modules) ~= "table" then profile.modules = {} end
     for key, value in pairs(defaults) do
         if not valid(key, profile.ui[key]) then profile.ui[key] = value end
     end
+    profile.ui.interfaceAccent=profile.ui.interfaceAccent:upper()
     return profile
 end
 
@@ -49,12 +77,26 @@ function Settings:Initialize(db)
     end
     db.schema = 1
     if type(db.profiles) ~= "table" then db.profiles = {} end
+    -- Migrate inactive selectable profiles too, without normalizing unrelated fields.
+    for name,profile in pairs(db.profiles) do
+        if type(name)=="string" and type(profile)=="table" then migrateInterface(profile) end
+    end
+    -- Only a missing default profile receives the curated shipping preset.
+    -- Existing profiles (including intentional empty/disabled configurations)
+    -- keep their choices. A new named profile still copies the active profile.
+    if type(db.profiles.Default) ~= "table" then
+        db.profiles.Default = copy(ns.FactoryDefaults.profile)
+        if db.windowPositions == nil then
+            db.windowPositions = copy(ns.FactoryDefaults.windowPositions)
+        end
+    end
     db.profiles.Default = normalize(db.profiles.Default)
     if type(db.activeProfile) ~= "string" or type(db.profiles[db.activeProfile]) ~= "table" then
         db.activeProfile = "Default"
     end
     db.profiles[db.activeProfile] = normalize(db.profiles[db.activeProfile])
     self.db = db
+    if ns.Config then ns.Config:EnsureShellStyle() end
     return db
 end
 
@@ -74,11 +116,13 @@ function Settings:ListProfiles()
 end
 
 function Settings:Changed()
+    if ns.Config then ns.Config:SyncInterfaceSettings() end
     if ns.Layout then ns.Layout:Refresh() end
     if ns.UI and ns.UI.Refresh then ns.UI:Refresh() end
 end
 
 function Settings:Set(key, value)
+    if key=="interfaceAccent" and type(value)=="string" then value=value:upper() end
     assert(valid(key, value), "Invalid UI setting: " .. tostring(key))
     if self:Get(key) == value then return end
     self:Profile().ui[key] = value
@@ -96,26 +140,46 @@ end
 
 function Settings:BeforeProfileChange(owner,callback)
     assert(owner and type(callback)=="function","Invalid profile listener")
-    self.profileListeners[owner]=callback
+    -- A registration token distinct even when the same owner/callback is reused.
+    local registration=function(...)return callback(...)end
+    self.profileListeners[owner]=registration
+    return function()
+        if self.profileListeners[owner]==registration then self.profileListeners[owner]=nil end
+    end
 end
 function Settings:AfterProfileChange(owner,callback)
     assert(owner and type(callback)=="function","Invalid profile listener")
     self.afterProfileListeners[owner]=callback
 end
 
-function Settings:SelectProfile(name)
-    assert(type(name) == "string" and type(self.db.profiles[name]) == "table", "Unknown profile")
-    if name == self.db.activeProfile then return end
-    assert(not (ns.Layout and ns.Layout.draft), "Save or discard the layout editor before switching profiles")
+local function activateProfile(self,name,profile)
     for _,callback in pairs(self.profileListeners) do ns:Call("profile/leave",callback) end
     -- Tear down old-profile resources before exposing the new profile.
     if ns.ProgressBars then ns.ProgressBars:ClosePreviews() end
     ns.Modules:StopAll()
     self.db.activeProfile = name
-    self.db.profiles[name] = normalize(self.db.profiles[name])
+    self.db.profiles[name] = normalize(profile)
     ns.Modules:Reconcile()
     self:Changed()
     for _,callback in pairs(self.afterProfileListeners) do ns:Call("profile/enter",callback) end
+end
+
+function Settings:SelectProfile(name)
+    assert(type(name) == "string" and type(self.db.profiles[name]) == "table", "Unknown profile")
+    if name == self.db.activeProfile then return end
+    assert(not (ns.Layout and ns.Layout.draft), "Save or discard the layout editor before switching profiles")
+    activateProfile(self,name,self.db.profiles[name])
+end
+
+function Settings:CopyFromProfile(source)
+    assert(type(source)=="string" and type(self.db.profiles[source])=="table", "Unknown source profile")
+    assert(source~=self.db.activeProfile, "Choose another source profile")
+    assert(not InCombatLockdown(), "Leave combat before copying a profile")
+    assert(not (ns.Layout and ns.Layout.draft), "Save or discard the layout editor before copying a profile")
+    -- Snapshot before teardown: listeners still see the old target while they
+    -- release its resources. Neither profile shares nested configuration tables.
+    local replacement=copy(self.db.profiles[source])
+    activateProfile(self,self.db.activeProfile,replacement)
 end
 
 function Settings:ResetAppearance()

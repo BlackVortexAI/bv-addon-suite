@@ -12,25 +12,32 @@ local function at(w,p,x,y) M.Point(w,"TOPLEFT",p,"TOPLEFT",x,-y); return w end
 local function locked() return InCombatLockdown and InCombatLockdown() end
 
 local function build()
-    local dialog=UI:Dialog("BVAddonSuiteTutorial",W,H)
+ local style=UI:InterfaceStyle();if not style then return end
+ local function make(method,...)
+  local args,n={...},select('#',...)
+  return UI:WithStyle(style,function()return UI[method](UI,unpack(args,1,n))end)
+ end
+
+    local dialog=make("Dialog","BVAddonSuiteTutorial",W,H,nil,{escapeScope=style.materialProfile=="interface"})
+    dialog.bvStyle=style
     local p=dialog.content
     dialog.rows={}
     for i=1,8 do
-        local row=at(UI:Label(p,"",13,"text",false),p,18,14+(i-1)*26);M.Size(row,LIST-24,22)
+        local row=at(make("Label",p,"",13,"text",false),p,18,14+(i-1)*26);M.Size(row,LIST-24,22)
         dialog.rows[i]=row
     end
     local x=LIST+12
     dialog.icon=at(p:CreateTexture(nil,"ARTWORK"),p,x,16);M.Size(dialog.icon,40,40)
-    dialog.stepTitle=at(UI:Label(p,"",16,"text",true),p,x+52,16);M.Size(dialog.stepTitle,W-x-70,22)
-    dialog.counter=at(UI:Label(p,"",11,"muted",false),p,x+52,38);M.Size(dialog.counter,W-x-70,18)
-    dialog.text=at(UI:Label(p,"",13,"text",false),p,x,68);M.Size(dialog.text,W-x-20,190)
+    dialog.stepTitle=at(make("Label",p,"",16,"text",true),p,x+52,16);M.Size(dialog.stepTitle,W-x-70,22)
+    dialog.counter=at(make("Label",p,"",11,"muted",false),p,x+52,38);M.Size(dialog.counter,W-x-70,18)
+    dialog.text=at(make("Label",p,"",13,"text",false),p,x,68);M.Size(dialog.text,W-x-20,190)
     dialog.text:SetJustifyH("LEFT");dialog.text:SetJustifyV("TOP")
-    dialog.state=at(UI:Label(p,"",13,"text",true),p,x,268);M.Size(dialog.state,W-x-20,40)
+    dialog.state=at(make("Label",p,"",13,"text",true),p,x,268);M.Size(dialog.state,W-x-20,40)
     dialog.state:SetJustifyH("LEFT");dialog.state:SetJustifyV("TOP")
-    dialog.action=at(UI:Button(p,"",220,function() dialog:RunAction() end),p,x,314)
-    dialog.back=at(UI:Button(p,"Back",100,function() dialog:GoTo(dialog.step-1) end),p,x,360)
-    dialog.next=at(UI:Button(p,"Next",100,function() dialog:Next() end,true),p,x+110,360)
-    dialog.later=at(UI:Button(p,"Later",100,function() dialog:Hide() end,"ghost"),p,W-120,360)
+    dialog.action=at(make("Button",p,"",220,function() dialog:RunAction() end),p,x,314)
+    dialog.back=at(make("Button",p,"Back",100,function() dialog:GoTo(dialog.step-1) end),p,x,360)
+    dialog.next=at(make("Button",p,"Next",100,function() dialog:Next() end,true),p,x+110,360)
+    dialog.later=at(make("Button",p,"Later",100,function() dialog:Hide() end,"ghost"),p,W-120,360)
     UI:AttachTooltip(dialog.later,"Later","Closes the guide. It comes back at the next login until you finish it; /bv guide opens it at any time.")
 
     -- Secure macro button over the action button (created out of combat).
@@ -111,7 +118,7 @@ local function build()
 end
 
 function UI:TutorialWindow(guide,steps)
-    local dialog=self.tutorialWindow or build()
+    local dialog=self.tutorialWindow or build();if not dialog then return end
     self.tutorialWindow=dialog
     dialog.guide,dialog.steps,dialog.finished=guide,steps or guide.steps,nil
     dialog.title:SetText(guide.title.." - Guide")

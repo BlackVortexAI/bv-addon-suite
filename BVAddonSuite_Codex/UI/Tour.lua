@@ -14,23 +14,27 @@ W.ROWS=8
 local ROW,WIDTH,TOP=52,500,64
 local WHITE="Interface\\Buttons\\WHITE8X8"
 local function color(key,alpha)
-    local r,g,b=UI:GameStyle(nil):Color(key)
+    local r,g,b=W.style:Color(key)
     return r,g,b,alpha or 1
 end
 function W:Build()
     if self.window then return self.window end
-    UI:WithStyle(UI:GameStyle(nil),function()
-        local w=UI:Window("BVCodexTour",WIDTH,TOP+W.ROWS*ROW+120,{title="Tour"})
-        self.window=w
+    local style=UI:InterfaceStyle();if not style then return nil end
+    self.style=style
+    UI:WithStyle(style,function()
+        local w=UI:Window("BVCodexTour",WIDTH,TOP+W.ROWS*ROW+120,{title="Tour",gameplaySurface=true})
+        self.window=w;w.bvStyle=style
+        if style.materialProfile=="interface" then UI:ScopeDialogEscape(w) end
         local c=w.content
         -- You: where the tour begins.
         self.you=UI:Panel(c,30,30,"raised",15,.95);M.Point(self.you,"TOPLEFT",c,"TOPLEFT",20,-12)
-        self.youIcon=UI:Icon(self.you,"locate",16,"accent");self.youIcon:ClearAllPoints();M.Point(self.youIcon,"CENTER",self.you,"CENTER",0,0)
+        self.youIcon=UI:Icon(self.you,"locate",16,style.materialProfile=="interface" and "accentText" or "accent");self.youIcon:ClearAllPoints();M.Point(self.youIcon,"CENTER",self.you,"CENTER",0,0)
         self.youText=UI:Label(c,"You",13,"text",true);M.Point(self.youText,"LEFT",self.you,"RIGHT",12,6)
         self.note=UI:Label(c,"",11,"muted");M.Point(self.note,"TOPLEFT",self.you,"TOPRIGHT",12,-17);M.Size(self.note,WIDTH-90,14)
         -- The line through the circles.
         self.line=c:CreateTexture(nil,"ARTWORK");self.line:SetTexture(WHITE);self.line:SetVertexColor(color("accent",.5))
         M.Width(self.line,2)
+        if style.materialProfile=="interface" then style:Bind(function() self.line:SetVertexColor(color("accent",.5)) end,self.line) end
         for i=1,W.ROWS do self:Row(c,i) end
         -- The whole way, large.
         self.total=UI:Label(c,"",18,"text",true);M.Point(self.total,"BOTTOMLEFT",c,"BOTTOMLEFT",20,62)
@@ -62,6 +66,8 @@ function W:Build()
     return self.window
 end
 function W:Row(c,i)
+    if not self.style then return nil end
+    return UI:WithStyle(self.style,function()
     local row=CreateFrame("Frame",nil,c)
     M.Size(row,WIDTH-36,ROW-6);M.Point(row,"TOPLEFT",c,"TOPLEFT",18,-(TOP-8+(i-1)*ROW))
     -- The card behind the stop; lit while leading to it.
@@ -70,7 +76,7 @@ function W:Row(c,i)
     row.circle=UI:Panel(row,30,30,"raised",15,1);M.Point(row.circle,"LEFT",row,"LEFT",2,0)
     row.ring=row.circle:CreateTexture(nil,"OVERLAY");row.ring:SetTexture(WHITE);row.ring:SetVertexColor(color("accent"))
     M.Point(row.ring,"BOTTOMLEFT",row.circle,"BOTTOMLEFT",6,2);M.Point(row.ring,"BOTTOMRIGHT",row.circle,"BOTTOMRIGHT",-6,2);M.Height(row.ring,2)
-    row.index=UI:Label(row.circle,"",13,"accent",true);M.Point(row.index,"CENTER",row.circle,"CENTER",0,1)
+    row.index=UI:Label(row.circle,"",13,self.style.materialProfile=="interface" and "accentText" or "accent",true);M.Point(row.index,"CENTER",row.circle,"CENTER",0,1)
     -- Its number switches it on or off (done ones are off).
     row.circle:EnableMouse(true)
     row.circle:SetScript("OnMouseUp",function() if row.stop then T:Toggle(row.stopIndex) end end)
@@ -92,15 +98,23 @@ function W:Row(c,i)
     UI:AttachTooltip(row.down,"Later","This stop one place later.")
     UI:AttachTooltip(row.remove,"Take away","Takes this stop out of the tour.")
     self.rows[i]=row
+    if self.style.materialProfile=="interface" then
+        self.style:Bind(function() row.ring:SetVertexColor(color("accent")) end,row.ring)
+        -- Material repaint must retain the controller's off/done opacity.
+        self.style:Bind(function() row.card:SetAlpha(row.cardAlpha or 1) end,row.card)
+        self.style:Bind(function() row.circle:SetAlpha(row.circleAlpha or 1) end,row.circle)
+    end
+    end)
 end
 function W:Open()
+    if not self.window and not UI:InterfaceStyle() then return nil end
     T:Ensure()
-    local w=self:Build()
+    local w=self:Build();if not w then return nil end
     w:Show()
     self:Refresh()
 end
 function W:Toggle()
-    local w=self:Build()
+    local w=self:Build();if not w then return nil end
     if w:IsShown() then w:Hide() else self:Open() end
 end
 function W:Refresh()
@@ -140,8 +154,10 @@ function W:Refresh()
             row.badge:SetShown(k~=nil)
             row.time:SetText(k and ("+"..T.Clock(plan.legs[k])) or "")
             local lit=running and k and running.at==k
-            row.card:SetAlpha((stop.off or (running and k and running.at>k)) and .45 or 1)
-            row.circle:SetAlpha(stop.off and .5 or 1)
+            row.cardAlpha=(stop.off or (running and k and running.at>k)) and .45 or 1
+            row.circleAlpha=stop.off and .5 or 1
+            row.card:SetAlpha(row.cardAlpha)
+            row.circle:SetAlpha(row.circleAlpha)
             row.ring:SetShown(lit or false)
             row.up:SetShown(row.stopIndex>1);row.down:SetShown(row.stopIndex<#stops)
             row.on:SetValue(not stop.off)

@@ -1,14 +1,14 @@
 local _,Q=...
 if not Q.ready then return end
 -- The panes: our rail, list and details beside Blizzard's world map. The map
--- itself is never replaced or resized (Questie, HereBeDragons pins and other
--- map addons keep working); our panes are frames parented to WorldMapFrame,
+-- itself is not replaced by Quest; the optional Map module manages the shared
+-- window geometry. Our panes remain frames parented to WorldMapFrame,
 -- docked flush outside its left or right edge in the configured order
 -- (default Map · List · Details, Florian 2026-10-07). A full-height rail sits
 -- directly at the map on the list's side and carries the switches that were
 -- Blizzard's tabs (quest log, events, map legend), so no gap shows.
 -- Splitters between neighbours change the width of our panes. Details appear
--- only for a selected quest and widen the whole (the map does not move).
+-- only for a selected quest. Map can fit the combined window to the screen.
 local ns=Q.ns
 local UI,M=ns.UI,ns.DesignSystem.Metrics
 local P={}
@@ -120,23 +120,34 @@ function P:Build()
     if self.frame then return self.frame end
     local map=self:Map()
     if not map then return nil end
-    -- Built in the module's in-game style: panes, controls and lists follow it.
-    return UI:WithStyle(Q:Style(),function()
+    -- Capture only the map-side tool panes. Q:Style and HUD consumers stay in-game.
+    local style=UI:InterfaceStyle();if not style then return nil end
+    self.style=style
+    return UI:WithStyle(self.style,function()
         local f=CreateFrame("Frame",nil,map);f:SetAllPoints(map);f:EnableMouse(false)
         if ns.ExternalFrames then ns.ExternalFrames:MarkOwned(f) end
         self.frame=f
         local function opacity() return Q:Config().opacity/100 end
-        self.rail=UI:GamePanel(Q.ID,f,RAIL,400,"bg",2,opacity);self.rail:EnableMouse(true)
+        local function panel(width)
+            if self.style.materialProfile=="interface" then return UI:Panel(f,width,400,"bg",2,opacity) end
+            return UI:GamePanel(Q.ID,f,width,400,"bg",2,opacity)
+        end
+        self.rail=panel(RAIL);self.rail:EnableMouse(true)
         self.railButtons={
             self:RailButton("quests","scroll-text","Quest log","Shows or hides the quest list; from Blizzard's side panel back to ours."),
             self:RailButton("blizzard","book-open","Blizzard's side panel","Blizzard's panel beside the map with its own tabs (map legend and others); our list makes room."),
         }
-        self.list=UI:GamePanel(Q.ID,f,300,400,"bg",2,opacity);self.list:EnableMouse(true)
-        self.details=UI:GamePanel(Q.ID,f,320,400,"bg",2,opacity);self.details:EnableMouse(true);self.details:Hide()
+        self.list=panel(300);self.list:EnableMouse(true)
+        self.details=panel(320);self.details:EnableMouse(true);self.details:Hide()
+        if ns.InterfaceSurfaces and ns.InterfaceSurfaces.AttachHUD then
+            ns.InterfaceSurfaces:AttachHUD(style,self.list,opacity)
+            ns.InterfaceSurfaces:AttachHUD(style,self.details,opacity)
+        end
         self.splitters={}
         for i=1,2 do self.splitters[i]=self:Splitter() end
         Q.List:Build(self.list)
         Q.Details:Build(self.details)
+        if self.style.materialProfile=="interface" then self.style:Bind(function() P:PaintRail() end,f) end
         map:HookScript("OnShow",function() if Q:Active() then P:Show() end end)
         map:HookScript("OnHide",function() P:Hide() end)
         local panel=self:Panel()
@@ -159,6 +170,7 @@ function P:RailButton(id,symbol,title,help)
     local path,l,r,t,bb=ns.Symbols:Coords(symbol,64)
     if path then b.icon:SetTexture(path);b.icon:SetTexCoord(l,r,t,bb) end
     b.id=id
+    if self.style.materialProfile=="interface" then b.bvStyle=self.style end
     b:SetScript("OnClick",function() P:Rail(id) end)
     b:SetScript("OnEnter",function() b.hovered=true;P:PaintRail();UI:ShowTooltip(b,title,help) end)
     b:SetScript("OnLeave",function() b.hovered=false;P:PaintRail();UI:HideTooltip(b) end)
@@ -173,12 +185,12 @@ function P:Rail(id)
     else self:OpenBlizzard(id) end
 end
 function P:PaintRail()
-    local s=Q:Style()
+    local s=self.style;if not s then return end
     local ar,ag,ab=s:Color("accent")
     for _,b in ipairs(self.railButtons or {}) do
         local active=(b.id=="quests" and not self.listHidden and not self.blizzardMode) or (b.id=="blizzard" and self.blizzardMode~=nil)
         b.band:SetVertexColor(ar,ag,ab,active and .22 or b.hovered and .1 or 0)
-        local r,g,bl=s:Color(active and "accent" or "muted")
+        local r,g,bl=s:Color(active and (s.materialProfile=="interface" and "accentText" or "accent") or "muted")
         b.icon:SetVertexColor(r,g,bl,1)
     end
 end
@@ -191,8 +203,9 @@ function P:Splitter()
     M.Width(s,6);s:EnableMouse(true)
     s.line=s:CreateTexture(nil,"OVERLAY");s.line:SetPoint("TOP");s.line:SetPoint("BOTTOM");M.Width(s.line,2)
     s.line:SetTexture("Interface\\Buttons\\WHITE8X8");s.line:SetVertexColor(1,1,1,0)
-    s:SetScript("OnEnter",function() local r,g,b=Q:Style():Color("accent");s.line:SetVertexColor(r,g,b,.8) end)
-    s:SetScript("OnLeave",function() if not s.dragging then s.line:SetVertexColor(1,1,1,0) end end)
+    local function paint() local r,g,b=P.style:Color("accent");s.line:SetVertexColor(r,g,b,(s.hovered or s.dragging) and .8 or 0) end
+    s:SetScript("OnEnter",function() s.hovered=true;paint() end)
+    s:SetScript("OnLeave",function() s.hovered=false;if not s.dragging then s.line:SetVertexColor(1,1,1,0) end end)
     s:SetScript("OnMouseDown",function(_,button)
         if button~="LeftButton" or not s.pane then return end
         local x=GetCursorPosition()
@@ -203,6 +216,7 @@ function P:Splitter()
     s:SetScript("OnMouseUp",function() P:EndDrag(s) end)
     -- Double-click: the pane's default width.
     s:SetScript("OnDoubleClick",function() if s.key then Q:Config()[s.key]=Q.DEFAULTS[s.key];P:Layout() end end)
+    if self.style and self.style.materialProfile=="interface" then self.style:Bind(paint,s) end
     return s
 end
 function P:Drag(s)
@@ -218,6 +232,23 @@ end
 function P:EndDrag(s)
     s.dragging=nil;if s.ticker then s.ticker:Cancel();s.ticker=nil end;s.line:SetVertexColor(1,1,1,0)
 end
+-- Optional Map docking contract. Quest remains independent when Map is absent.
+function P:Measure(factor)
+    local cfg=Q:Config();local order=self:Order();local mapAt,listAt
+    for i,id in ipairs(order) do if id=="map" then mapAt=i elseif id=="list" then listAt=i end end
+    local side=listAt<mapAt and "left" or "right"
+    local out={left=0,right=0,widths={list=M.ToNative(cfg.listWidth)*(factor or 1),details=M.ToNative(cfg.detailsWidth)*(factor or 1)}}
+    out[side]=M.ToNative(RAIL)
+    for i,id in ipairs(order) do
+        if id=="list" and not self.listHidden and not self.blizzardMode or id=="details" and Q.Details.questID~=nil then
+            local target=i<mapAt and "left" or "right";out[target]=out[target]+out.widths[id]
+        end
+    end
+    return out
+end
+local function mapWindow()
+    local map=ns.Map;return map and map:Active() and map.Window or nil
+end
 -- Places rail and panes in order around the map, flush (no gap); hidden
 -- panes take no room. The rail sits at the map on the list's side.
 function P:Layout()
@@ -228,7 +259,11 @@ function P:Layout()
     for i,id in ipairs(order) do if id=="map" then mapAt=i elseif id=="list" then listAt=i end end
     local railSide=listAt<mapAt and "left" or "right"
     local panes={list=self.list,details=self.details}
-    local widths={list=cfg.listWidth,details=cfg.detailsWidth}
+    for _,pane in pairs(panes) do if pane.hudSurface then pane.hudSurface:Refresh() end end
+    local window=mapWindow()
+    local fitted=window and window:DockLayout()
+    local widths=fitted and fitted.widths.list and fitted.widths or self:Measure().widths
+    local dock=window and window:DockAnchor() or map
     local shown={list=not self.listHidden and not self.blizzardMode,details=Q.Details.questID~=nil}
     for _,s in ipairs(self.splitters) do s:Hide();s.pane=nil end
     local used=0
@@ -239,7 +274,7 @@ function P:Layout()
     end
     local function place(id,side,previous)
         local pane=panes[id]
-        attach(pane,side,previous);M.Width(pane,widths[id])
+        attach(pane,side,previous);pane:SetWidth(widths[id])
         used=used+1
         local s=self.splitters[used]
         if s then
@@ -251,19 +286,20 @@ function P:Layout()
         end
         return pane
     end
-    attach(self.rail,railSide,map);M.Width(self.rail,RAIL)
+    attach(self.rail,railSide,dock);M.Width(self.rail,RAIL)
     -- Blizzard's panel open: its tabs into the rail (right of the map, where they sit).
     local panel=self:Panel()
     if railSide=="right" and panel and panel:IsShown() then self:AdoptTabs() elseif self.adopted then self:ReleaseTabs() end
     for i,b in ipairs(self.railButtons) do b:ClearAllPoints();M.Point(b,"TOP",self.rail,"TOP",0,-6-(i-1)*(RAIL-2)) end
     self:PaintRail()
     -- Each side walks outwards from the map; the rail comes first on its side.
-    local previous=railSide=="left" and self.rail or map
+    local previous=railSide=="left" and self.rail or dock
     for i=mapAt-1,1,-1 do local id=order[i];if shown[id] then previous=place(id,"left",previous) else panes[id]:Hide() end end
-    previous=railSide=="right" and self.rail or map
+    previous=railSide=="right" and self.rail or dock
     for i=mapAt+1,#order do local id=order[i];if shown[id] then previous=place(id,"right",previous) else panes[id]:Hide() end end
     self.list:SetShown(shown.list);self.details:SetShown(shown.details)
     Q.List:Layout();Q.Details:Layout()
+    if window then window:Schedule() end
 end
 function P:Show()
     local f=self:Build()
@@ -280,12 +316,13 @@ function P:Hide()
     self:ReleaseTabs()
     if self.frame then self.frame:Hide() end
     self.blizzardMode=nil
+    local window=mapWindow();if window then window:Schedule() end
     if self.clock then self.clock:Cancel();self.clock=nil end
 end
 function P:Enable(context)
     local map=self:Map()
     if not map then Q:Print("No world map frame found; the quest log stays off.");return end
-    self:Build()
+    if not self:Build() then return nil end
     Q:On("Changed",self,function() if P:Visible() then Q.List:Refresh();Q.Details:Refresh() end end)
     context:Defer(function()
         Q.Details:Select(nil)

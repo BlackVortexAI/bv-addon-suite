@@ -11,21 +11,60 @@ local UI,M=ns.UI,ns.DesignSystem.Metrics
 local L={rows={}}
 P.WaypointList=L
 local ROWS,ROW=12,24
+-- Management windows capture the Interface factory when settings are ready.
+-- Each window retains its first owner; the map/arrow gameplay style is separate.
+local function windowStyle()
+    local style=UI:InterfaceStyle()
+    return style,style and style.materialProfile=="interface" or false
+end
+-- Interface: buttons as wide as their label needs, left to right, wrapping
+-- inside the content width. Returns the height used.
+local function flow(parent,buttons,left,top,width,gap)
+    local x,y,line=0,0,0
+    for _,b in ipairs(buttons) do
+        local need=math.ceil(M.ToDesign(b.label:GetUnboundedStringWidth()))+24
+        if M.GetWidth(b)<need then M.Width(b,need) end
+        local w=M.GetWidth(b)
+        if x>0 and x+w>width then x=0;y=y+line+gap;line=0 end
+        b:ClearAllPoints();M.Point(b,"TOPLEFT",parent,"TOPLEFT",left+x,-(top+y))
+        x=x+w+gap;line=math.max(line,M.GetHeight(b))
+    end
+    return y+line
+end
 
 function L:Build()
     if self.dialog then return self.dialog end
-    UI:WithStyle(P:Style(),function()
-        local d=UI:Dialog("BVMapWaypoints",440,ROWS*ROW+150)
+    local style,interface=windowStyle();if not style then return nil end
+    self.style,self.interface=style,interface
+    -- Interface: wider, so the five list actions fit on one line in all fonts.
+    local width=interface and 540 or 440;local inner=width-36
+    UI:WithStyle(style,function()
+        -- Interface: the shared scoped Escape (focus first, then this window).
+        local d=interface and UI:Dialog("BVMapWaypoints",width,ROWS*ROW+150,nil,{escapeScope=true}) or UI:Dialog("BVMapWaypoints",width,ROWS*ROW+150)
         d.title:SetText("Waypoints")
         local c=d.content
-        self.empty=UI:Label(c,"",12,"muted");M.Point(self.empty,"TOPLEFT",c,"TOPLEFT",18,-14);M.Size(self.empty,400,40)
+        self.empty=UI:Label(c,"",12,"muted");M.Point(self.empty,"TOPLEFT",c,"TOPLEFT",18,-14);M.Size(self.empty,interface and inner-4 or 400,40)
         self.empty:SetWordWrap(true)
+        -- Interface: index and name colours belong to Refresh (accentText for
+        -- the active one); no generic repaint may overwrite them (role false).
+        local indexRole,nameRole="muted","text"
+        if interface then indexRole,nameRole=false,false end
         for i=1,ROWS do
-            local row=CreateFrame("Button",nil,c);M.Size(row,404,ROW);M.Point(row,"TOPLEFT",c,"TOPLEFT",18,-10-(i-1)*ROW)
-            row.index=UI:Label(row,"",11,"muted");M.Point(row.index,"LEFT",row,"LEFT",0,0);M.Size(row.index,22,ROW)
-            row.name=UI:Label(row,"",12,"text");M.Point(row.name,"LEFT",row,"LEFT",22,0);M.Size(row.name,190,ROW);row.name:SetWordWrap(false)
+            local row=CreateFrame("Button",nil,c);M.Size(row,inner,ROW);M.Point(row,"TOPLEFT",c,"TOPLEFT",18,-10-(i-1)*ROW)
+            row.index=UI:Label(row,"",11,indexRole);M.Point(row.index,"LEFT",row,"LEFT",0,0);M.Size(row.index,22,ROW)
+            row.name=UI:Label(row,"",12,nameRole);M.Point(row.name,"LEFT",row,"LEFT",22,0);M.Size(row.name,190,ROW);row.name:SetWordWrap(false)
+            if interface then
+                -- The row's own colour paint: active row accentText, others
+                -- muted/text, from the captured style on every repaint (accent
+                -- or theme change). It never refreshes the list itself.
+                style:Bind(function()
+                    row.index:SetTextColor(style:Color(row.bvActive and "accentText" or "muted"))
+                    row.name:SetTextColor(style:Color(row.bvActive and "accentText" or "text"))
+                end,row.name)
+            end
             row.where=UI:Label(row,"",11,"muted");M.Point(row.where,"LEFT",row,"LEFT",214,0);M.Size(row.where,100,ROW);row.where:SetWordWrap(false)
             row.edit=UI:Input(row,190,function(text) L:Rename(row,text) end);M.Point(row.edit,"LEFT",row,"LEFT",22,0);row.edit:Hide()
+            if d.escapeController then d:TrackEscapeInput(row.edit) end
             row.up=UI:Button(row,"Up",40,function() P.Waypoints:Move(row.slot,-1) end,"ghost");M.Point(row.up,"RIGHT",row,"RIGHT",-62,0)
             row.rename=UI:IconButton(row,"edit",function() L:Edit(row) end,"ghost");M.Point(row.rename,"RIGHT",row,"RIGHT",-30,0)
             row.delete=UI:IconButton(row,"close",function() P.Waypoints:Remove(row.slot) end,"ghost");M.Point(row.delete,"RIGHT",row,"RIGHT",-2,0)
@@ -34,21 +73,27 @@ function L:Build()
             self.rows[i]=row
         end
         local y=-14-ROWS*ROW
-        self.more=UI:Label(c,"",11,"muted");M.Point(self.more,"TOPLEFT",c,"TOPLEFT",18,y);M.Size(self.more,400,16)
+        self.more=UI:Label(c,"",11,"muted");M.Point(self.more,"TOPLEFT",c,"TOPLEFT",18,y);M.Size(self.more,interface and inner-4 or 400,16)
         self.import=UI:Button(c,"Import",96,function() L:Transfer("import") end);M.Point(self.import,"TOPLEFT",c,"TOPLEFT",18,y-22)
         self.export=UI:Button(c,"Export",96,function() L:Transfer("export") end);M.Point(self.export,"LEFT",self.import,"RIGHT",8,0)
         self.save=UI:Button(c,"Save as set",110,function() L:Transfer("save") end);M.Point(self.save,"LEFT",self.export,"RIGHT",8,0)
         self.clear=UI:Button(c,"Clear",80,function() P.Waypoints:Clear() end);M.Point(self.clear,"LEFT",self.save,"RIGHT",8,0)
         self.share=UI:Button(c,"Share",80,function() L:ShareMenu(self.share) end);M.Point(self.share,"LEFT",self.clear,"RIGHT",8,0)
         UI:AttachTooltip(self.share,"Share the path","With your group, your guild or one player. They see a preview and decide.")
-        self.sets=UI:Dropdown(c,404,{},function(value) L:Set(value) end);M.Point(self.sets,"TOPLEFT",c,"TOPLEFT",18,y-56)
+        self.sets=UI:Dropdown(c,inner,{},function(value) L:Set(value) end);M.Point(self.sets,"TOPLEFT",c,"TOPLEFT",18,y-56)
+        if interface then
+            local used=flow(c,{self.import,self.export,self.save,self.clear,self.share},18,-y+22,inner,8)
+            self.sets:ClearAllPoints();M.Point(self.sets,"TOPLEFT",c,"TOPLEFT",18,y-22-used-10)
+            -- Grow the window by any wrapped line so the sets selector stays inside.
+            M.Height(d,ROWS*ROW+150+math.max(0,used-M.GetHeight(self.import)))
+        end
         d:Hide()
         self.dialog=d
     end)
     return self.dialog
 end
 function L:Toggle()
-    local d=self:Build()
+    local d=self:Build();if not d then return nil end
     if d:IsShown() then d:Hide() else d:Show();self:Refresh() end
 end
 function L:Edit(row)
@@ -72,8 +117,16 @@ function L:Refresh()
         local point=not tomtom and list[i]
         row.slot=i
         if point then
-            row.index:SetText(tostring(i));row.index:SetTextColor(P:Style():Color(i==1 and "accent" or "muted"))
-            row.name:SetText(W:Label(point));row.name:SetTextColor(P:Style():Color(i==1 and "accent" or "text"))
+            row.index:SetText(tostring(i));row.name:SetText(W:Label(point))
+            if self.interface then
+                -- Interface: the row's bound paint (Build) sets the colours.
+                row.bvActive=i==1
+                row.index:SetTextColor(self.style:Color(row.bvActive and "accentText" or "muted"))
+                row.name:SetTextColor(self.style:Color(row.bvActive and "accentText" or "text"))
+            else
+                row.index:SetTextColor(self.style:Color(i==1 and "accent" or "muted"))
+                row.name:SetTextColor(self.style:Color(i==1 and "accent" or "text"))
+            end
             row.where:SetText(W:MapName(point.mapID).." "..P:Format(point.x,point.y))
             row.up:SetShown(i>1);row.edit:Hide();row.name:Show()
             row:Show()
@@ -101,7 +154,8 @@ function L:Set(value)
 end
 -- Share: group, guild or a player (name asked in the text dialog).
 function L:ShareMenu(anchor)
-    anchor.bvMenuStyle=P:Style()
+    local style=self.style or UI:InterfaceStyle();if not style then return nil end
+    anchor.bvMenuStyle=style
     UI:ContextMenu(anchor,{{value="GROUP",label="Share with your group"},{value="GUILD",label="Share with your guild"},{value="WHISPER",label="Share with a player…"}},function(value)
         if value=="WHISPER" then L:Transfer("share") else P.Share:Send(value,nil,L:PathName()) end
     end)
@@ -113,17 +167,27 @@ end
 -- A path someone shares: preview, then replace your queue, add to it, keep
 -- it only as a set, or decline.
 function L:ShowOffer(offer)
-    UI:WithStyle(P:Style(),function()
+    local style,interface=self.offerStyle,self.offerInterface
+    if not self.offer then style,interface=windowStyle() end
+    if not style then return nil end
+    UI:WithStyle(style,function()
         if not self.offer then
-            local d=UI:Dialog("BVMapPathOffer",440,340)
-            d.text=UI:Label(d.content,"",12,"text");M.Point(d.text,"TOPLEFT",d.content,"TOPLEFT",18,-14);M.Size(d.text,404,40);d.text:SetWordWrap(true)
-            d.list=UI:Label(d.content,"",11,"muted");M.Point(d.list,"TOPLEFT",d.content,"TOPLEFT",18,-60);M.Size(d.list,404,180);d.list:SetWordWrap(true);d.list:SetJustifyV("TOP")
+            local width=interface and 480 or 440;local inner=width-36
+            local d=interface and UI:Dialog("BVMapPathOffer",width,340,nil,{escapeScope=true}) or UI:Dialog("BVMapPathOffer",width,340)
+            d.text=UI:Label(d.content,"",12,"text");M.Point(d.text,"TOPLEFT",d.content,"TOPLEFT",18,-14);M.Size(d.text,inner,40);d.text:SetWordWrap(true)
+            d.list=UI:Label(d.content,"",11,"muted");M.Point(d.list,"TOPLEFT",d.content,"TOPLEFT",18,-60);M.Size(d.list,inner,180);d.list:SetWordWrap(true);d.list:SetJustifyV("TOP")
             d.replace=UI:Button(d.content,"Use it",96,function() d:Hide();P.Share:Answer(true,"replace") end,true);M.Point(d.replace,"BOTTOMLEFT",d.content,"BOTTOMLEFT",18,14)
             d.append=UI:Button(d.content,"Add to mine",110,function() d:Hide();P.Share:Answer(true,"append") end);M.Point(d.append,"LEFT",d.replace,"RIGHT",8,0)
             d.keep=UI:Button(d.content,"Save as set",104,function() d:Hide();P.Share:Answer(true,"set") end);M.Point(d.keep,"LEFT",d.append,"RIGHT",8,0)
             d.decline=UI:Button(d.content,"Decline",80,function() d:Hide();P.Share:Answer(false) end);M.Point(d.decline,"LEFT",d.keep,"RIGHT",8,0)
+            if interface then
+                -- Above the bottom margin, wrapping inside the content width.
+                local buttons={d.replace,d.append,d.keep,d.decline}
+                local used=flow(d.content,buttons,18,0,inner,8)
+                flow(d.content,buttons,18,340-36-14-used,inner,8)
+            end
             d:Hide()
-            self.offer=d
+            self.offer=d;self.offerStyle,self.offerInterface=style,interface
         end
     end)
     local d=self.offer
@@ -140,14 +204,17 @@ function L:ShowOffer(offer)
 end
 -- Import / export / save-as dialog with one text field.
 function L:Transfer(mode)
-    UI:WithStyle(P:Style(),function()
+    local style=self.transfer and self.transferStyle or windowStyle()
+    if not style then return nil end
+    UI:WithStyle(style,function()
         if not self.transfer then
-            local t=UI:Dialog("BVMapWaypointText",460,330,self.dialog)
+            local t=style.materialProfile=="interface" and UI:Dialog("BVMapWaypointText",460,330,self.dialog,{escapeScope=true}) or UI:Dialog("BVMapWaypointText",460,330,self.dialog)
             t.text=UI:TransferText(t.content,430,200,20000)
+            if t.escapeController then t:TrackEscapeInput(t.text.input) end
             M.Point(t.text,"TOPLEFT",t.content,"TOPLEFT",16,-12)
             t.note=UI:Label(t.content,"",11,"muted");M.Point(t.note,"TOPLEFT",t.content,"TOPLEFT",16,-220);M.Size(t.note,420,30);t.note:SetWordWrap(true)
             t.ok=UI:Button(t.content,"OK",110,function() L:Confirm() end);M.Point(t.ok,"BOTTOMRIGHT",t.content,"BOTTOMRIGHT",-16,12)
-            self.transfer=t
+            self.transfer=t;self.transferStyle=style
         end
     end)
     local t=self.transfer

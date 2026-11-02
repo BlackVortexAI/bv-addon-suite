@@ -2,8 +2,8 @@
 ## Title: BV Addon Suite - Gather
 ## Notes: Herbs, ore, fishing pools and treasure on the world map and the minimap; GatherMate2 import. Requires BV Core and BV Routing.
 ## Author: BV
-## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.2.1
+## IconTexture: Interface\AddOns\BVAddonSuite_Gather\Media\Brand\module-icon
+## Version: 0.2.5
 ## Dependencies: BVAddonSuite, BVAddonSuite_Routing
 ## OptionalDeps: GatherMate2
 ## SavedVariables: BVGatherDB
@@ -16,11 +16,15 @@ Pins.lua
 Import.lua
 Share.lua
 Route.lua
+Space.lua
 RoutePlan.lua
+RoutePlanNav.lua
 Trace.lua
 Follow.lua
 Tracker.lua
 Scanner.lua
+Interaction.lua
+UI\Interaction.lua
 UI\Exchange.lua
 UI\Editor.lua
 UI\Mode.lua

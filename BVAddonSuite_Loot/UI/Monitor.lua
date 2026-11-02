@@ -63,11 +63,13 @@ function M:Toast()
     local t=table.remove(self.pool)
     if t then return t end
     t={}
-    local f=W.Owned(UI:GamePanel(L.ID,self.anchor.frame,270,HEIGHT,"canvas",nil,function() return L:Config().panelOpacity/100 end));t.frame=f;f:Hide();f:EnableMouse(true)
+    local captured=W:Style()
+    local f=captured and W:Surface(self.anchor.frame,270,HEIGHT,"panel",captured) or W.Owned(UI:GamePanel(L.ID,self.anchor.frame,270,HEIGHT,"canvas",nil,function() return L:Config().panelOpacity/100 end));t.frame=f;f:Hide();f:EnableMouse(true)
+    local content=f.content or f
     t.stripe=f:CreateTexture(nil,"ARTWORK");D.Point(t.stripe,"TOPLEFT",f,"TOPLEFT",0,0);D.Point(t.stripe,"BOTTOMLEFT",f,"BOTTOMLEFT",0,0);D.Width(t.stripe,3)
-    t.item=W:ItemIcon(f,32,true);UI:Place(t.item,f,7,4);t.item:EnableMouse(false)
-    t.name=UI:GameLabel(L.ID,f,"",13,false,true);t.name:SetWordWrap(false)
-    t.sub=UI:GameLabel(L.ID,f,"",11,false);t.sub:SetWordWrap(false);t.sub:SetTextColor(.82,.8,.78)
+    t.item=W:ItemIcon(content,32,not captured,captured);UI:Place(t.item,f,7,4);t.item:EnableMouse(false)
+    t.name=W:Label(captured,content,"",13,false,true);t.name:SetWordWrap(false)
+    t.sub=W:Label(captured,content,"",11,false);t.sub:SetWordWrap(false);t.sub:SetTextColor(.82,.8,.78)
     t.fader=W:Fader(f)
     f:SetScript("OnEnter",function(owner) if t.data and t.data.link then W:ItemTooltip(owner,{link=t.data.link,itemID=t.data.itemID,source="monitor",player=t.data.looter}) end end)
     f:SetScript("OnLeave",function(owner) W:HideTooltip(owner) end)
@@ -80,23 +82,25 @@ end
 function M:Paint(t)
     local data,w=t.data,self.anchor:Width()
     local familyID,family=L:Family()
+    if t.frame.bvStyle then familyID="bv";family=ns.Styles.families.bv end
     -- The quality stripe belongs to the BV look; WoW and Clean show quality by the icon border.
-    t.stripe:SetShown(family.stripe==true)
+    t.stripe:SetShown(not t.frame.bvStyle and family.stripe==true)
     D.Size(t.frame,w,HEIGHT)
     UI:Place(t.name,t.frame,46,5);D.Size(t.name,w-52,16)
     UI:Place(t.sub,t.frame,46,22);D.Size(t.sub,w-52,14)
     if data.kind=="money" then
         t.item:SetItem("Interface\\Icons\\INV_Misc_Coin_01",1)
-        t.name:SetText(data.text);t.name:SetTextColor(1,.82,.2)
+        W:Caption(t.frame.bvStyle,t.name,data.text or "");t.name:SetTextColor(1,.82,.2)
         t.sub:SetText(MONEY_LOOT or MONEY or "Money")
         t.stripe:SetColorTexture(1,.82,.2,1)
+        W:Quality(t.frame,1,.82,.2);W:RememberColors(t.name,t.sub)
         return
     end
     local info=L.Item(data.link)
     local quality=info.quality or data.quality or 1
     local r,g,b=L.QualityColor(quality)
     t.item:SetItem(info.icon,quality,nil,data.count)
-    t.name:SetText((info.name or linkName(data.link) or "?")..(data.count>1 and ("  x"..data.count) or ""));t.name:SetTextColor(r,g,b)
+    W:Caption(t.frame.bvStyle,t.name,(info.name or linkName(data.link) or "?")..(data.count>1 and ("  x"..data.count) or ""));t.name:SetTextColor(r,g,b)
     t.stripe:SetColorTexture(r,g,b,1)
     local parts={}
     if data.self and family.receive then parts[#parts+1]="You receive loot" end
@@ -105,6 +109,8 @@ function M:Paint(t)
     local kind=L.ItemKind(info)
     if kind then parts[#parts+1]=kind end
     t.sub:SetText(table.concat(parts,"  ·  "))
+    if t.frame.bvStyle then t.sub:SetTextColor(t.frame.bvStyle:Color("muted"))end
+    W:Quality(t.frame,r,g,b);W:RememberColors(t.name,t.sub)
 end
 function M:Release(t)
     if t.timer then t.timer:Cancel();t.timer=nil end

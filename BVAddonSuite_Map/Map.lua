@@ -5,7 +5,7 @@ if not ns or not ns.RequireCore then
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.2.7","0.8.96",1) then return end
+if not ns:RequireCore(package,"0.2.10","0.8.96",1) then return end
 -- Map package (docs/map-quest-concept.md, own package by Florian's choice on
 -- 2026-10-08): coordinates, transparency while moving, map size and position,
 -- waypoints. Blizzard's map is never replaced; other map addons keep working.
@@ -24,8 +24,8 @@ P.DEFAULTS={enabled=false,
     coords=true,coordsPlayer=true,coordsCursor=true,coordsDecimals=1,
     -- Transparency while moving: opacity, scope, full on mouseover, fade time.
     fade=true,fadeOpacity=45,fadeScope="all",fadeMouseover=true,fadeTime=3,
-    -- The map in its window: scale and an own position (maximized: untouched).
-    scale=100,movable=true,
+    -- BV shell: independent window dimensions, UI scale and saved position.
+    scale=100,movable=true,windowWidth=900,windowHeight=600,
     -- Waypoints: /way when no other addon has it; queue, arrival distance,
     -- named sets, corpse waypoint; our arrow (only without TomTom).
     waypoints={},arrival=10,sets={},corpse=true,arrow=true,
@@ -52,20 +52,21 @@ P.DEFAULTS={enabled=false,
     pathPinAlpha=100,pathLineAlpha=95,
     -- Unexplored areas shown on the world map (Leatrix Maps' reveal wins).
     unexplored=true,forceReveal=false,
-    -- Map style on zone maps: Blizzard's art or the terrain (the client's
-    -- minimap tiles, Florian 2026-10-08).
-    mapStyle="blizzard",
-    -- Opacity of the terrain map in percent: below 100 Blizzard's map shows
-    -- through (Florian 2026-10-09).
-    terrainAlpha=100,
+    -- Blizzard's map on the seamless continent (Florian 2026-10-22, after
+    -- OpenMap): at the closest zoom levels the minimap tiles take over from
+    -- the painting, up to this opacity (100 = the painting gone, 0 = never).
+    blend=100,
     -- Flight masters of your own faction only (and neutral ones).
     ownFlights=true,
     -- Flight times learned from your own flights, shown at the flight master.
     learnFlights=true,
     -- Closer than Blizzard's closest zoom (Florian 2026-10-09): off, x2, x4.
     extraZoom="off",
+    -- With Routing: Ctrl+click plans its way and Ctrl+Shift+click sets
+    -- Blizzard's waypoint, instead of the other way round (Florian 2026-10-22).
+    ctrlRoute=false,
     styleFamily="inherit"}
-local CHOICES={fadeScope={all=true,map=true,panes=true},mapStyle={blizzard=true,terrain=true},extraZoom={off=true,x2=true,x4=true}}
+local CHOICES={fadeScope={all=true,map=true,panes=true},extraZoom={off=true,x2=true,x4=true}}
 local function num(value,default,low,high)
     if type(value)~="number" or value~=value then value=default end
     return math.max(low,math.min(high,math.floor(value+.5)))
@@ -83,10 +84,12 @@ function P:Config()
     end
     for key,value in pairs(self.DEFAULTS) do if cfg[key]==nil then cfg[key]=type(value)=="table" and {} or value end end
     for key,valid in pairs(CHOICES) do if not valid[cfg[key]] then cfg[key]=self.DEFAULTS[key] end end
-    for _,key in ipairs({"coords","coordsPlayer","coordsCursor","fade","fadeMouseover","movable","corpse","arrow","rememberZoom","search","forceMove","forceScale","forceCoords","zoneQuests","zoneDiscovered","pathPins","altClick","routeClick","legend","neighbors","shareReceive","unexplored","forceReveal","ownFlights","pathLead","learnFlights"}) do cfg[key]=cfg[key]==true end
+    for _,key in ipairs({"coords","coordsPlayer","coordsCursor","fade","fadeMouseover","movable","corpse","arrow","rememberZoom","search","forceMove","forceScale","forceCoords","zoneQuests","zoneDiscovered","pathPins","altClick","routeClick","legend","neighbors","shareReceive","unexplored","forceReveal","ownFlights","pathLead","learnFlights","ctrlRoute"}) do cfg[key]=cfg[key]==true end
     cfg.coordsDecimals=num(cfg.coordsDecimals,1,0,2);cfg.fadeOpacity=num(cfg.fadeOpacity,45,10,100)
     -- Fade time in tenths of a second (0.1 .. 1.0 s).
-    cfg.terrainAlpha=num(cfg.terrainAlpha,100,20,100)
+    -- The blend became a crossfade on 2026-10-22 (Florian: the painting under the tiles looked odd); once to the new default.
+    if cfg.blendMoved~=1 then cfg.blend=nil;cfg.blendMoved=1 end
+    cfg.blend=num(cfg.blend,100,0,100)
     cfg.pathPinAlpha=num(cfg.pathPinAlpha,100,10,100);cfg.pathLineAlpha=num(cfg.pathLineAlpha,95,10,100)
     cfg.fadeTime=num(cfg.fadeTime,3,1,10);cfg.scale=num(cfg.scale,100,50,150);cfg.arrival=num(cfg.arrival,10,3,50)
     if cfg.styleFamily~="inherit" and not ns.Styles.families[cfg.styleFamily] then cfg.styleFamily="inherit" end
@@ -96,15 +99,21 @@ function P:Config()
         if type(cfg[key])~="string" or not (cfg[key]=="" or cfg[key]:match("^%x%x%x%x%x%x")) then cfg[key]=default end
     end
     if cfg.position~=nil and type(cfg.position)~="table" then cfg.position=nil end
+    -- Retired map modes (2026-10-29): old profiles always use the seamless painted map.
+    cfg.mapStyle=nil;cfg.seamless=nil;cfg.terrainAlpha=nil
+    cfg.windowWidth=num(cfg.windowWidth,900,360,2400);cfg.windowHeight=num(cfg.windowHeight,600,240,1600)
     cfg.coordsMinimap=nil
     return cfg
 end
 function P:Active() return self.context~=nil end
 function P:Style() return ns.UI:GameStyle(self.ID) end
--- Our buttons on the world map (search, map style): a solid surface, above
+-- Our buttons on the world map (search and navigation): a solid surface, above
 -- every pin and Blizzard's quest areas (Florian 2026-10-08: the map style
 -- button lay under the quest highlights and was hard to see).
-P.BUTTONLEVEL=9600
+-- AbovePins is capped at 9000. Leave headroom below WoW's 10000 limit:
+-- native dropdowns add 500 to their owner, then raise rows another 20.
+-- 9600 collapsed the filter's backdrop and text onto the same capped level.
+P.BUTTONLEVEL=9100
 -- Back to where you are (Florian 2026-10-08): your zone, zoom reset.
 function P:Locate()
     local map=self:WorldMap()
@@ -112,13 +121,16 @@ function P:Locate()
     if not (map and map.SetMapID) then return false end
     if type(mapID)~="number" then self:Print("No map for your position here.");return false end
     if self.Window then self.Window.view=nil end
+    -- The seamless map: the continent zoomed onto your zone.
+    if self.Seamless and self.Seamless:Focus(mapID) then return true end
     if map:GetMapID()~=mapID then pcall(map.SetMapID,map,mapID) end
     if map.ResetZoom then pcall(map.ResetZoom,map)
     elseif map.ScrollContainer and map.ScrollContainer.ResetZoom then pcall(map.ScrollContainer.ResetZoom,map.ScrollContainer) end
     return true
 end
-function P:MapButton(parent,icon,callback)
-    local button=ns.UI:IconButton(parent,icon,callback)
+function P:MapButton(parent,icon,callback,capturedStyle)
+    local function build() return ns.UI:IconButton(parent,icon,callback) end
+    local button=capturedStyle and ns.UI:WithStyle(capturedStyle,build) or build()
     local strata=self:MapStrata()
     if strata then button:SetFrameStrata(strata) end
     button:SetFrameLevel(self.BUTTONLEVEL)
@@ -127,12 +139,16 @@ function P:MapButton(parent,icon,callback)
     if button.icon then ns.DesignSystem.Metrics.Size(button.icon,18,18) end
     -- On: the icon in the accent colour.
     -- The icon is a frame with a glyph (DesignSystem Icon): its colour role
-    -- also survives a theme refresh.
+    -- also survives a theme refresh. The button repaints its icon on hover,
+    -- click and leave from iconRole (Florian 2026-10-23: the seamless switch
+    -- went white again as the mouse left it, its state never showed).
     function button:SetActive(on)
         local icon=self.icon
         if not icon then return end
-        icon.colorRole=on and "accent" or "text"
-        if icon.SetColor then icon:SetColor(P:Style():Color(icon.colorRole)) end
+        local role=capturedStyle and capturedStyle.materialProfile=="interface" and "accentText" or "accent"
+        self.iconRole=on and role or nil
+        icon.colorRole=on and role or "text"
+        if icon.SetColor then icon:SetColor((capturedStyle or P:Style()):Color(icon.colorRole)) end
     end
     return button
 end
@@ -181,6 +197,22 @@ function P:PlayerPosition(mapID)
     if not ok or type(x)~="number" or type(y)~="number" or self.Secret(x) or (x==0 and y==0) then return nil end
     return x,y,mapID
 end
+-- A point on a continent map as the point of the zone there: the seamless
+-- map shows the continent, but waypoints, routes and coordinates stay the
+-- zone's. Any other map, or no zone there: unchanged.
+function P:ZoneAt(mapID,x,y)
+    local info=self.Call("C_Map.GetMapInfo",mapID)
+    if not (type(info)=="table" and info.mapType==2 and ns.MapPins and type(x)=="number") then return mapID,x,y end
+    local at=self.Call("C_Map.GetMapInfoAtPosition",mapID,x,y)
+    local guard=0
+    while type(at)=="table" and at.mapType and at.mapType>3 and at.parentMapID and guard<4 do
+        at=self.Call("C_Map.GetMapInfo",at.parentMapID);guard=guard+1
+    end
+    if not (type(at)=="table" and at.mapType==3 and type(at.mapID)=="number" and at.mapID~=mapID) then return mapID,x,y end
+    local zx,zy=ns.MapPins:OnMap({mapID=mapID,x=x,y=y},at.mapID)
+    if not zx then return mapID,x,y end
+    return at.mapID,zx,zy
+end
 -- "45.2, 67.8" in the chosen precision.
 function P:Format(x,y)
     if not x then return "—" end
@@ -208,4 +240,6 @@ ns.Modules:Register({id=P.ID,OnEnable=function(context)
     P.Terrain:Enable(context)
     P.Flights:Enable(context)
     P.Zoom:Enable(context)
+    P.Seamless:Enable(context)
+    P.Islands:Enable(context)
 end})

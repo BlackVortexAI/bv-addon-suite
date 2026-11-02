@@ -26,7 +26,8 @@ local function grouped(n)
     end
 end
 function L:Build(parent,changed)
-    local f=CreateFrame("Frame",nil,parent);f.rows={}
+    local f=CreateFrame("Frame",nil,parent);f.rows={};f.bvStyle=UI:GetStyle()
+    local interface=f.bvStyle.materialProfile=="interface"
     f.headName=UI:Label(f,"Source",11,"muted");f.headCount=UI:Label(f,"Nodes",11,"muted");f.headCount:SetJustifyH("RIGHT")
     for i,def in ipairs(L.ROWS) do
         local row=CreateFrame("Frame",nil,f);row.def=def
@@ -34,6 +35,7 @@ function L:Build(parent,changed)
             G.Data:SetSourceOn(def.id,value)
             if changed then changed() end
         end)
+        if interface then row.check.label:Hide()end
         row.name=UI:Label(row,def.label,12,"text")
         row.count=UI:Label(row,"",12,"muted");row.count:SetJustifyH("RIGHT")
         UI:AttachTooltip(row.check,def.label,def.help.." Off: kept, but not shown and not used for routes.")
@@ -46,17 +48,26 @@ function L:Build(parent,changed)
         end
     end
     function f:Resize(width)
+        local rowHeight,checkWidth=L.ROW,24
+        if interface then
+            rowHeight=28
+            for _,row in ipairs(self.rows)do
+                rowHeight=math.max(rowHeight,M.GetHeight(row.check))
+                checkWidth=math.max(checkWidth,M.GetWidth(row.check.mark))
+            end
+        end
         M.Width(self,width)
         local count=110
-        M.Point(self.headName,"TOPLEFT",self,"TOPLEFT",40,-4);M.Size(self.headName,width-count-56,16)
+        local nameLeft=interface and math.max(40,8+checkWidth+8)or 40
+        M.Point(self.headName,"TOPLEFT",self,"TOPLEFT",nameLeft,-4);M.Size(self.headName,width-count-nameLeft-16,16)
         M.Point(self.headCount,"TOPRIGHT",self,"TOPRIGHT",-8,-4);M.Size(self.headCount,count,16)
         for i,row in ipairs(self.rows) do
-            row:ClearAllPoints();M.Point(row,"TOPLEFT",self,"TOPLEFT",0,-i*L.ROW);M.Size(row,width,L.ROW)
-            row.check:ClearAllPoints();M.Point(row.check,"LEFT",row,"LEFT",8,0);M.Size(row.check,24,L.ROW)
-            row.name:ClearAllPoints();M.Point(row.name,"LEFT",row,"LEFT",40,0);M.Size(row.name,width-count-56,L.ROW)
-            row.count:ClearAllPoints();M.Point(row.count,"RIGHT",row,"RIGHT",-8,0);M.Size(row.count,count,L.ROW)
+            row:ClearAllPoints();M.Point(row,"TOPLEFT",self,"TOPLEFT",0,-i*rowHeight);M.Size(row,width,rowHeight)
+            row.check:ClearAllPoints();M.Point(row.check,"LEFT",row,"LEFT",8,0);M.Size(row.check,checkWidth,rowHeight)
+            row.name:ClearAllPoints();M.Point(row.name,"LEFT",row,"LEFT",nameLeft,0);M.Size(row.name,width-count-nameLeft-16,rowHeight)
+            row.count:ClearAllPoints();M.Point(row.count,"RIGHT",row,"RIGHT",-8,0);M.Size(row.count,count,rowHeight)
         end
-        local height=(#self.rows+1)*L.ROW
+        local height=(#self.rows+1)*rowHeight
         M.Height(self,height)
         return height
     end

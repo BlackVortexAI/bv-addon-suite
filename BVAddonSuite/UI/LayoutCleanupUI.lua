@@ -51,9 +51,14 @@ function E:ConfirmCleanup()
 end
 function E:BuildCleanup()
     if self.cleanupDialog then return end
-    local shield=UI:Panel(self.root,1,1,"surface");shield:SetAllPoints(self.root);UI:HideSurface(shield)
+    if not self.root or not self.style then return end
+    local style=self.style;local interface=style.materialProfile=="interface"
+    return UI:WithStyle(style,function()
+    local shield
+    if interface then shield=CreateFrame("Frame",nil,self.root)else shield=UI:Panel(self.root,1,1,"surface");UI:HideSurface(shield)end
+    shield:SetAllPoints(self.root)
     shield:SetFrameLevel(self.root:GetFrameLevel()+69);shield:EnableMouse(true);shield:Hide();self.cleanupShield=shield
-    local dialog=UI:Panel(shield,560,454,"raised");dialog:SetPoint("CENTER");dialog:SetFrameLevel(self.root:GetFrameLevel()+70);dialog:EnableMouse(true);dialog:Hide()
+    local dialog=UI:Panel(shield,560,454,interface and "dialog" or "raised");dialog:SetPoint("CENTER");dialog:SetFrameLevel(self.root:GetFrameLevel()+70);dialog:EnableMouse(true);dialog:Hide()
     self.cleanupDialog=dialog
     at(UI:Label(dialog,"Clean up unused displays",18,"text",true),dialog,18,16)
     self.cleanupInfo=at(UI:Label(dialog,"",12,"muted"),dialog,18,50);D.Size(self.cleanupInfo,524,56)
@@ -73,4 +78,5 @@ function E:BuildCleanup()
     self.cleanupNext=at(UI:Button(dialog,"Next",96,function()self.cleanupPage=self.cleanupPage+1;self:RefreshCleanup()end),dialog,446,356)
     at(UI:Button(dialog,"Cancel",120,function()self:CancelCleanup()end),dialog,18,406)
     self.cleanupAccept=at(UI:Button(dialog,"Remove selected",166,function()self:ConfirmCleanup()end),dialog,376,406)
+    end)
 end

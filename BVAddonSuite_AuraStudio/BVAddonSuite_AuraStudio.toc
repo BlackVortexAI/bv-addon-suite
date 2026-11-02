@@ -2,15 +2,17 @@
 ## Title: BV Addon Suite - AuraStudio
 ## Notes: In-game node editor, typed graphs and isolated aura tests. Requires BV Core.
 ## Author: BV
-## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.8.91
+## IconTexture: Interface\AddOns\BVAddonSuite_AuraStudio\Media\Brand\module-icon
+## Version: 0.8.94
 ## Dependencies: BVAddonSuite
 ## SavedVariables: BVSpellIndexTestDB, BVSpellIndexTestMetrics, BVUnitDiagnosticsDB
 
 UnitDataCatalog.lua
 Catalog.lua
+DirectDisplay.lua
 UnitData.lua
 UnitSource.lua
+UnitInformation.lua
 GroupSources.lua
 ActionCatalog.lua
 SoundCatalog.lua
@@ -43,12 +45,14 @@ FlowRuntime.lua
 Runtime.lua
 InstanceRuntime.lua
 GraphMigrations.lua
+LoadConditions.lua
 Studio.lua
 NodeTesting.lua
 Transfer.lua
 Blocks.lua
 Share.lua
 Examples.lua
+ReagentExamples.lua
 WikiText.lua
 Wiki.lua
 Guide.lua

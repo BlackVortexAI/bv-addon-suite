@@ -80,10 +80,14 @@ local function origin(node,graph,depth)
         return root,path.."."..c.field,projection.nestedSchema,token,options
     end
     local meta=D.nodes[kind];local port=meta and meta.outputs[edge.output];local f=port and D.fields[port.fieldId]
-    if f and not port.implementationOverride then return f,f.key,f.schema,unit(upstream,base,c),c end
+    if f and not port.implementationOverride then
+        local schema=f.schema or ((f.type=="calculator" or f.type=="duration") and f.type)
+        return f,f.key,schema,unit(upstream,base,c),c
+    end
 end
 
 local purposes={
+    unit_information="Choose whose data you need and one typed information field. Protected values keep their restrictions; unavailable data stays unknown.",
  macro_exists="Check is optional: unconnected nodes observe saved macros on activation and macro changes without polling; connected nodes check only on fresh events. Exists retains the last boolean result. Startup establishes state without pulses; later automatic result changes emit Found, Missing or Failed. Explicit checks emit an event each time. Failed never means missing. This node does not write or execute macros.",
  play_sound="Play a local SoundKit or exact SharedMedia sound on a fresh event. Preview and Stop preview are in node details. Choose a game channel; SoundKits also support per-playback volume. Stop, Mute and graph retirement release this node's playback. Initial evaluation and Graph Test stay silent.",
  frame_state="Observe a saved shared Frame library reference. Found and Visible report readable current state; Shown and Hidden fire only on an observed visibility transition. Initial resolution, an unavailable frame or a replaced frame never invents a transition. References travel with graph exports, even when the recipient has not loaded the target window yet. Inspection and library management are available through /bv inspect and /bv frames.",
@@ -248,6 +252,20 @@ local function combined(contexts)
 end
 local function source(node,base,c,key,graph)
     local meta=D.nodes[node.type];local ref=meta and meta.outputs[key]
+    if node.type=="unit_information" then
+        -- The generated default page cannot stand in for the user's selected
+        -- information. Resolve static evidence through the same registered
+        -- root/projection as UnitSource, without evaluating the native object.
+        if key~=c.information or not A.UnitInformation.fields[key] then return end
+        local projection=A.UnitSource.projections[key]
+        if projection then
+            local root=D.fields["unit."..projection.source]
+            if root then return root,root.key.."."..projection.field,unit(node,base,c),c end
+            return
+        end
+        local unitMeta=D.nodes.unit
+        ref=unitMeta and unitMeta.outputs[key]
+    end
     if ref and ref.implementationOverride then return nil,nil,nil,nil,ref.implementationOverride end
     if base.auraSource then return nil,nil,nil,nil,{kind="aura-observation"}end
     local f=ref and ref.fieldId and D.fields[ref.fieldId]
@@ -346,6 +364,9 @@ local function rowFor(node,base,def,c,key,port,graph)
         end
     else a,s=localStatus(node.type,key,def,override) end
     local text=meaning(f,port,key)
+    if node.type=="unit_information" and A.UnitSource.projections[key] then
+        text=(port.label or key)..". Direct known-field projection; missing values remain unknown."
+    end
     if dataMeanings[node.type] then text=dataMeanings[node.type][key] or text end
     if base.interactionProducer and key=="media"then text="Clickable media with optional local mouse-state feedback. Named payload values still come from the latest rendered element."end
     if key=="instance"then text=meanings.instance end

@@ -37,9 +37,9 @@ function M.ResizeBounds(region,...)
     local args,count=scaledArgs(...); region:SetResizeBounds(unpack(args,1,count))
 end
 local media = "Interface\\AddOns\\BVAddonSuite\\Media\\"
-DesignSystem.logoTexture=media.."Brand\\bv-logo.tga"
+DesignSystem.logoTexture=media.."Interface\\Brand\\LogoNeutral.tga"
 DesignSystem.smallLogoTexture=media.."Brand\\bv-logo-small.tga"
-DesignSystem.minimapLogoTexture=media.."Brand\\bv-logo-minimap.tga"
+DesignSystem.minimapLogoTexture=media.."Brand\\bv-logo-minimap-neutral.tga"
 local fonts = {
     regular = media .. "Fonts\\AlegreyaSans-Regular.ttf",
     bold = media .. "Fonts\\AlegreyaSans-Bold.ttf",
@@ -65,21 +65,42 @@ DesignSystem.signals={
 }
 local Factory = {}
 Factory.__index = Factory
-function DesignSystem:New(owner)
-    return setmetatable({ owner=owner, theme="violet", opacity=.94, paints={}, edits={} }, Factory)
+function DesignSystem:New(owner,options)
+    local factory=setmetatable({ owner=owner, theme="violet", opacity=.94, paints={}, edits={} }, Factory)
+    if options and options.materialProfile then factory:SetMaterialProfile(options.materialProfile,options.themeKey,options.accent,options.mediaRoot) end
+    return factory
+end
+function Factory:SetMaterialProfile(profile,key,accent,mediaRoot)
+    assert(profile=="interface","Unknown material profile")
+    assert(not self.hasBoundWidgets,"Select material profile before constructing controls")
+    self.materialProfile=profile;self.materialMediaRoot=mediaRoot or media.."Interface\\"
+    self.materialWidgets=setmetatable({},{__mode="k"});return self:SetInterfaceTheme(key,accent)
+end
+function Factory:SetInterfaceTheme(key,accent)
+    assert(self.materialProfile=="interface","Interface theme needs interface material profile")
+    local colors,resolved=ns.ThemeTokens.Resolve(key,accent)
+    assert(not self.shellPresentation or not self.interfaceThemeKey or resolved==self.interfaceThemeKey,
+        "Shell family is fixed after binding; reload before choosing a different shell.")
+    self.interfaceColors,self.interfaceThemeKey=colors,resolved;self.interfaceAccent=accent
+    self:Refresh();return self
 end
 local aliases={surface="panel",canvas="bg",ink="bg",hover="raised"}
 function Factory:Color(key, alpha)
     key=aliases[key] or key
+    if self.materialProfile=="interface" then local c=self.interfaceColors[key] or self.interfaceColors.text;return c[1],c[2],c[3],alpha or c[4] or 1 end
     if self.colorResolver then return self.colorResolver(key,alpha) end
     local c = self.palette and self.palette[key] or DesignSystem.palettes[self.theme][key] or shared[key]
     return c[1],c[2],c[3],alpha or c[4] or 1
 end
 function Factory:Bind(fn,widget)
+    self.hasBoundWidgets=true
+    if self.materialProfile=="interface" and widget then self.materialWidgets[widget]=true;widget.interfacePaints=widget.interfacePaints or {};widget.interfacePaints[#widget.interfacePaints+1]=fn end
     if self.registerPaint then assert(widget,"Production paint needs a lifecycle owner"); self.registerPaint(widget,fn)
+    elseif self.materialProfile=="interface" then assert(widget,"Interface paint needs a lifecycle owner");fn()
     else self.paints[#self.paints+1]=fn; fn() end
 end
 function Factory:Refresh()
+    if self.materialProfile=="interface" then for widget in pairs(self.materialWidgets)do for _,paint in ipairs(widget.interfacePaints or {})do paint()end end;return end
     self.palette=DesignSystem.palettes[self.theme]
     for _,paint in ipairs(self.paints) do paint() end
 end
@@ -247,6 +268,8 @@ local function shade(fills,top,bottom,alpha)
 end
 DesignSystem.Shade=shade
 function Factory:Skin(frame,fill,corner,alpha,shadow)
+    frame.bvTooltipStyle=frame.bvTooltipStyle or self
+    if self.materialProfile=="interface" then return ns.ControlMaterials:Skin(self,frame,fill,alpha)end
     -- In-game style contexts (UI/StyleFamilies.lua) draw the family's border.
     if self.skinner then return self.skinner(frame,fill,corner,alpha,shadow) end
     local fills=slice(frame,media.."DesignLab\\surface.tga",corner,"BACKGROUND",0)
@@ -269,7 +292,7 @@ function Factory:Panel(parent,width,height,fill,corner,alpha)
     fill=aliases[fill] or fill or "panel"
     local panel=CreateFrame("Frame",nil,parent); M.Size(panel,width or 100,height or 100)
     self:Skin(panel,fill or "panel",corner or 6,alpha)
-    if fill=="panel" or fill=="raised" then
+    if self.materialProfile~="interface" and (fill=="panel" or fill=="raised") then
         -- Over the whole surface, just inside its line (Florian 2026-10-11:
         -- inset by the corner it showed as a box inside the smaller-rounded panel).
         panel.sheen=self:Gradient(panel,"VERTICAL","secondary",.015,"accent",.045,1)
@@ -289,11 +312,14 @@ function Factory:Gradient(parent,orientation,fromKey,fromAlpha,toKey,toAlpha,ins
     end,gradient)
     return gradient
 end
--- Brand artwork keeps its authored colors; unlike semantic icons it never
--- participates in palette tinting. Textures are intrinsically mouse-transparent.
+-- Single-texture consumers retain their region API; Interface logos follow the live accent.
 function Factory:Logo(parent,size)
     local logo=parent:CreateTexture(nil,"ARTWORK")
     logo:SetTexture((size or 32)<=32 and DesignSystem.smallLogoTexture or DesignSystem.logoTexture); logo:SetVertexColor(1,1,1,1)
+    if self.materialProfile=="interface" then
+        logo:SetDesaturated(true)
+        self:Bind(function() logo:SetVertexColor(self:Color("accent")) end,logo)
+    end
     M.Size(logo,size or 32,size or 32)
     return logo
 end
@@ -430,6 +456,7 @@ end
 function Factory:Tooltip(control,title,body)
     control.tooltipTitle,control.tooltipBody=title,body
     if control.tooltipHooked then return end
+    control.bvTooltipStyle=control.bvTooltipStyle or self
     control.tooltipHooked=true
     local function show()
         if control.IsEnabled and not control:IsEnabled() then return end
@@ -461,10 +488,13 @@ function Factory:Button(parent,text,width,callback,kind)
     if button.label.SetMaxLines then button.label:SetMaxLines(1) end
     button.label:SetJustifyV("MIDDLE")
     local left,right,alignment=8,8,"CENTER"
+    local labelTop,labelHeight
     local fitLabel
     local function labelGeometry()
-        button.label:ClearAllPoints(); M.Point(button.label,"CENTER",(left-right)/2,0)
-        M.Size(button.label,math.max(1,M.GetWidth(button)-left-right),math.max(1,M.GetHeight(button)-2))
+        button.label:ClearAllPoints()
+        if labelTop then M.Point(button.label,"TOPLEFT",left,-labelTop)
+        else M.Point(button.label,"CENTER",(left-right)/2,self.materialProfile=="interface" and button.pressed and -1 or 0)end
+        M.Size(button.label,math.max(1,M.GetWidth(button)-left-right),labelHeight or math.max(1,M.GetHeight(button)-2))
         button.label:SetJustifyH(alignment)
         if fitLabel then fitLabel() end
     end
@@ -512,8 +542,8 @@ function Factory:Button(parent,text,width,callback,kind)
     -- running, the editor's Area button never said "Finish").
     function button:SetText(value) self:SetLabelText(value) end
     function button:GetText() return self.fullLabel or "" end
-    function button:SetLabelInsets(first,last,justify)
-        left,right,alignment=first or 8,last or 8,justify or "CENTER"; labelGeometry()
+    function button:SetLabelInsets(first,last,justify,top,height)
+        left,right,alignment=first or 8,last or 8,justify or "CENTER";labelTop,labelHeight=top,height; labelGeometry()
     end
     button:SetScript("OnSizeChanged",labelGeometry); labelGeometry()
     if kind=="nav" then button:SetLabelInsets(36,8,"LEFT") end
@@ -524,8 +554,10 @@ function Factory:Button(parent,text,width,callback,kind)
         else M.Height(button.selection,2); M.Point(button.selection,"BOTTOMLEFT"); M.Point(button.selection,"BOTTOMRIGHT") end
     end
     local function render()
-        fitLabel()
+        if self.materialProfile=="interface" then labelGeometry()else fitLabel()end
         local kind=button.presentationKind or kind
+        if self.materialProfile=="interface" and self.shellPresentation=="clean" and (kind=="nav" or kind=="tab" or kind=="window") then ns.ShellMaterials:PaintButton(self,button,kind);return end
+        if self.materialProfile=="interface" then ns.ControlMaterials:Paint(self,button,kind=="menu" and "menu" or "button",{primary=kind=="primary",selected=button.selected,danger=kind=="danger" or button.danger,hovered=button.hovered,pressed=button.pressed,focused=button.keyboardFocused,enabled=button:IsEnabled()});if button.icon then if button.iconRole then button.icon:SetColor(self:Color(button.iconRole))else button.icon:SetColor(unpack(button.interfaceTextColor))end end;return end
         local primary=kind=="primary" or (button.selected and kind~="nav" and kind~="tab" and kind~="menu")
         local fill,fillAlpha,edge,edgeAlpha,textColor="raised",.7,"text",.14,"text"
         if kind=="resize" then fill,fillAlpha,edge,edgeAlpha,textColor=button.hovered and "text" or "accent",1,"bg",1,"bg"
@@ -583,9 +615,12 @@ function Factory:Button(parent,text,width,callback,kind)
         button:SetAlpha(1)
     end
     self:Bind(render,button)
+    -- Skin's size hook was replaced by labelGeometry above. Repaint the actual
+    -- control presenter after layout, including shell-specialized buttons.
+    if self.materialProfile=="interface" then button:HookScript("OnSizeChanged",render)end
     button:SetScript("OnEnter",function() button.hovered=true; render() end)
     button:SetScript("OnLeave",function() button.hovered=false; button.pressed=false; render() end)
-    button:SetScript("OnHide",function() button.hovered=false; button.pressed=false; render() end)
+    button:SetScript("OnHide",function() button.hovered=false; button.pressed=false;button.keyboardFocused=false; render() end)
     button:SetScript("OnShow",render)
     button:SetScript("OnEnable",render); button:SetScript("OnDisable",render)
     button:SetScript("OnMouseDown",function()
@@ -595,10 +630,33 @@ function Factory:Button(parent,text,width,callback,kind)
     button:SetScript("OnMouseUp",function() button.pressed=false; render() end)
     button:SetScript("OnClick",function() if callback then callback(button) end end)
     function button:SetSelected(value) self.selected=value; render() end
+    if self.materialProfile=="interface" then function button:SetFocused(value)self.keyboardFocused=not not value;render()end end
     self:Tooltip(button)
     return button
 end
 function Factory:IconButton(parent,name,callback,kind)
+    if self.materialProfile=="interface" and kind=="icon-only" then
+        -- Explicit opt-in for small HUD actions: no Skin, label or material regions.
+        local button=CreateFrame("Button",nil,parent);M.Size(button,32,32)
+        button.kind=kind;button.bvTooltipStyle=self;button.iconRole="accentText"
+        button.icon=self:Icon(button,name,16,"accentText");M.Point(button.icon,"CENTER")
+        local function paint()
+            local base=button.iconRole=="accent" and "accentText" or button.iconRole
+            local role=not button:IsEnabled() and "muted" or button.hovered and "text" or base
+            button.icon.colorRole=button.iconRole;button.icon:SetColor(self:Color(role))
+        end
+        function button:SetIconRole(role) self.iconRole=role;paint() end
+        button:SetScript("OnClick",function()if callback then callback(button)end end)
+        self:Tooltip(button)
+        button:HookScript("OnEnter",function()button.hovered=true;paint()end)
+        button:HookScript("OnLeave",function()button.hovered=false;paint()end)
+        button:HookScript("OnHide",function()button.hovered=false;paint()end)
+        button:SetScript("OnShow",paint);button:SetScript("OnEnable",paint);button:SetScript("OnDisable",paint)
+        self:Bind(paint,button)
+        -- Keep the public semantic role while painting transient hover after Icon's own painter.
+        self:Bind(paint,button.icon)
+        return button
+    end
     local button=self:Button(parent,"",32,callback,kind)
     button.icon=self:Icon(button,name,16,"text"); M.Point(button.icon,"CENTER")
     return button
@@ -608,15 +666,15 @@ function Factory:Input(parent,width,multiline,initial,changed,bare)
     if not bare then
         self:Skin(box,"bg",4,.85)
         -- A soft ring round the field while you type (Florian 2026-10-11, more refined).
-        box.ring=slice(box,media.."DesignLab\\border.tga",6,"BORDER",2,2)
-        for _,t in ipairs(box.ring) do t:Hide() end
+        if self.materialProfile~="interface" then box.ring=slice(box,media.."DesignLab\\border.tga",6,"BORDER",2,2);for _,t in ipairs(box.ring) do t:Hide() end end
     end
     self:Font(box,14)
-    box:SetAutoFocus(false); box:SetMaxLetters(multiline and 400 or 64)
+    box:SetAutoFocus(false);if self.materialProfile=="interface" then box:SetPropagateKeyboardInput(false)end; box:SetMaxLetters(multiline and 400 or 64)
     box:SetMultiLine(multiline==true); M.TextInsets(box,10,10,multiline and 9 or 0,multiline and 9 or 0)
     box:SetJustifyH("LEFT"); box:SetJustifyV(multiline and "TOP" or "MIDDLE")
     box:SetText(initial or "")
     local function paint()
+        if self.materialProfile=="interface" and not bare then ns.ControlMaterials:Paint(self,box,"input",{focused=box.focused,invalid=box.invalid,enabled=box:IsEnabled()});return end
         if not bare then box:PaintSurface({self:Color("bg")},{self:Color(box.invalid and "danger" or box.focused and "accent" or "text",(box.invalid or box.focused) and .8 or .18)},.85) end
         if box.ring then
             for _,t in ipairs(box.ring) do t:SetVertexColor(self:Color(box.invalid and "danger" or "accent",.3)); t:SetShown(box.focused==true) end
@@ -624,6 +682,7 @@ function Factory:Input(parent,width,multiline,initial,changed,bare)
         box:SetTextColor(self:Color("text"))
     end
     self:Bind(function() self:Font(box,14); paint() end,box)
+    if self.materialProfile=="interface" then box:SetScript("OnEnable",paint);box:SetScript("OnDisable",paint)end
     box:SetScript("OnEditFocusGained",function() box.focused=true; paint() end)
     box:SetScript("OnEditFocusLost",function() box.focused=false; paint() end)
     box:SetScript("OnEscapePressed",function() box:ClearFocus() end)
@@ -646,13 +705,17 @@ function Factory:Slider(parent,width,min,max,step,value,changed)
     M.Size(thumb,14,14)
     slider.fill=slider:CreateTexture(nil,"BORDER"); M.Height(slider.fill,3)
     slider.fill:SetPoint("LEFT",slider.track,"LEFT",0,0); slider.fill:SetPoint("RIGHT",thumb,"CENTER",0,0)
-    self:Bind(function()
+    local function paintSlider()
+        if self.materialProfile=="interface" then ns.ControlMaterials:Slider(self,slider,thumb);return end
         slider.track:SetColorTexture(self:Color("text",slider.scrollbar and .06 or .14))
         slider.fill:SetColorTexture(self:Color("accent",.85))
         slider.fill:SetShown(not slider.scrollbar)
         thumb:SetVertexColor(self:Color(slider.scrollbar and "muted" or "text",slider.scrollbar and .55 or 1))
-    end,slider)
+    end
+    self:Bind(paintSlider,slider)
+    if self.materialProfile=="interface" then slider:HookScript("OnEnable",paintSlider);slider:HookScript("OnDisable",paintSlider)end
     -- As a scroll bar (Forms): a slim quiet bar as its grip, no fill.
+    local materialStyle=self
     function slider:AsScrollbar()
         self.scrollbar=true
         self:SetThumbTexture(media.."DesignLab\\r2\\surface.tga")
@@ -660,6 +723,7 @@ function Factory:Slider(parent,width,min,max,step,value,changed)
         self.fill:Hide()
         self.track:SetColorTexture(1,1,1,.06)
         thumb:SetVertexColor(.7,.7,.75,.55)
+        if materialStyle.materialProfile=="interface" then ns.ControlMaterials:Slider(materialStyle,self,thumb) end
         return thumb
     end
     -- Every vertical one is a scroll bar (settings pages, lists, dialogs).
@@ -672,7 +736,36 @@ function Factory:Slider(parent,width,min,max,step,value,changed)
     slider:SetScript("OnValueChanged",function(_,v) if changed then changed(v) end end)
     return slider
 end
+
+-- Only opt-in Interface contexts delegate their material to the shared renderer.
+-- Programmatic SetValue stays silent; user activation keeps the existing Factory
+-- contract (including an already selected radio reporting true once per click).
+local function interfaceChoice(style,parent,text,value,changed,kind)
+ local control=CreateFrame('Button',nil,parent);M.Size(control,160,28)
+ control.mark=CreateFrame('Frame',nil,control);M.Point(control.mark,'LEFT',0,0)
+ control.choiceThumb=CreateFrame('Frame',nil,control.mark)
+ control.tick=control.mark:CreateTexture(nil,'OVERLAY');control.thumb=control.mark:CreateTexture(nil,'OVERLAY')
+ if kind~='switch' then control.label=style:Label(control,text,14,false)end
+ local function paint()ns.ControlMaterials:Selection(style,control,kind)end
+ function control:SetValue(v)self.value=v==true;paint()end
+ function control:SetFocused(v)self.keyboardFocused=v==true;paint()end
+ control:SetScript('OnEnter',function()control.hovered=true;paint()end)
+ control:SetScript('OnLeave',function()control.hovered=false;control.pressed=false;paint()end)
+ control:SetScript('OnMouseDown',function(_,button)if button==nil or button=='LeftButton' then control.pressed=control:IsEnabled();paint()end end)
+ control:SetScript('OnMouseUp',function()control.pressed=false;paint()end)
+ control:SetScript('OnHide',function()control.hovered=false;control.pressed=false;control.keyboardFocused=false;paint()end)
+ control:SetScript('OnDisable',function()control.hovered=false;control.pressed=false;control.keyboardFocused=false;paint()end)
+ control:SetScript('OnEnable',paint)
+ control:SetScript('OnClick',function()
+  if not control:IsEnabled()then return end
+  control:SetValue(kind=='radio' or not control.value);if changed then changed(control.value)end
+ end)
+ control:SetValue(value);style:Bind(paint,control)
+ return control
+end
+
 function Factory:Check(parent,text,value,changed,radio)
+    if self.materialProfile=='interface' then return interfaceChoice(self,parent,text,value,changed,radio and 'radio' or 'check')end
     local control=CreateFrame("Button",nil,parent); M.Size(control,160,28)
     control.label=self:Label(control,text,14,"text"); M.Point(control.label,"LEFT",26,0)
     M.Point(control.label,"RIGHT",-2,0); M.Height(control.label,28)
@@ -704,6 +797,7 @@ end
 -- A pill track with a round light knob; on: the track filled in the accent
 -- (Florian 2026-10-11: the square knob looked dated).
 function Factory:Switch(parent,value,changed)
+    if self.materialProfile=='interface' then return interfaceChoice(self,parent,nil,value,changed,'switch')end
     local button=CreateFrame("Button",nil,parent); M.Size(button,36,20); self:Skin(button,"raised",10)
     button.thumb=button:CreateTexture(nil,"OVERLAY"); button.thumb:SetTexture(media.."DesignLab\\radio-dot.tga"); M.Size(button.thumb,14,14)
     local function paint()
@@ -820,7 +914,7 @@ end
 -- One dialog material/chrome for gallery demonstrations and production tasks.
 function Factory:Dialog(parent,width,height,name)
     local dialog=CreateFrame("Frame",name,parent); dialog:Hide(); M.Size(dialog,width,height)
-    self:Skin(dialog,"panel",8,nil,true); dialog:EnableMouse(true)
+    self:Skin(dialog,self.materialProfile=="interface" and "dialog" or "panel",8,nil,true); dialog:EnableMouse(true)
     dialog.isDialog=true
     dialog.title=self:Label(dialog,"",16,"text","bold"); M.Point(dialog.title,"TOPLEFT",18,-10); dialog.title:SetWordWrap(false)
     dialog.close=self:IconButton(dialog,"close",function() dialog:Hide() end,"ghost"); M.Point(dialog.close,"TOPRIGHT",-8,-4)
@@ -905,7 +999,7 @@ function Factory:GraphWire(parent,color)
 end
 
 function Factory:Dropdown(parent,width,options,value,changed)
-    local button=self:Button(parent,"",width,function(control) self.owner:ShowDropdown(control) end)
+    local button=self:Button(parent,"",width,function(control) self.owner:ShowDropdown(control) end,self.materialProfile=="interface" and "dropdown" or nil)
     button.options,button.changed=options,changed
     -- Its list opens in the same style (in-game style families, 0.8.95).
     button.bvStyle=self

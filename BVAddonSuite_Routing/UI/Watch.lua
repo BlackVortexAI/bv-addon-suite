@@ -46,11 +46,25 @@ function W:Stop()
     if self.ticker then self.ticker:Cancel();self.ticker=nil end
     self.armed=nil
 end
+-- Where a transition's end lies on its continent, kept per end while it
+-- stays where it is (Claude 2026-10-25: every end converted anew once a
+-- second made about 200 KB of garbage per tick while idle in a city).
+local placed=setmetatable({},{__mode="k"})
 local function onCont(p)
+    local m=placed[p]
+    if m and m.mapID==p.mapID and m.x==p.x and m.y==p.y then return m.cont,m.cx,m.cy end
     local cont,x,y=Routing:OnContinent(p.mapID,p.x,p.y)
+    if cont then placed[p]={mapID=p.mapID,x=p.x,y=p.y,cont=cont,cx=x,cy=y} end
     return cont,x,y
 end
+local ONE,BOTH={"a"},{"a","b"}
 function W:Tick()
+    -- Standing still: nothing to learn or watch anew; the level and its height were worked
+    -- out where you stand (Claude 2026-10-25: in a city idle, the level, its height from the
+    -- NPCs near and the transitions were worked out every second, about 4 MB a minute).
+    local hereMap,hereX,hereY=Routing:Position()
+    if hereMap and hereMap==self.lastMap and hereX==self.lastX and hereY==self.lastY then return end
+    self.lastMap,self.lastX,self.lastY=hereMap,hereX,hereY
     local N=Routing.Navigate
     -- Your level sure: your height (NPCs near) teaches its height.
     local L=Routing.Level
@@ -68,7 +82,7 @@ function W:Tick()
         -- An end on your level within reach: armed.
         for _,link in ipairs(Routing:ReadLinks()) do
             if type(link.a)=="table" and type(link.b)=="table" and (link.a.level or nil)~=(link.b.level or nil) then
-                for _,side in ipairs(link.oneway and {"a"} or {"a","b"}) do
+                for _,side in ipairs(link.oneway and ONE or BOTH) do
                     local p,q=link[side],link[side=="a" and "b" or "a"]
                     if (p.level or nil)==(level or nil) then
                         local c,x,y=onCont(p)

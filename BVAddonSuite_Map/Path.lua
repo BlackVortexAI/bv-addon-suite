@@ -71,15 +71,26 @@ local function cursor()
     if not (scroll and scroll.GetNormalizedCursorPosition and map.GetMapID) then return nil end
     local ok,x,y=pcall(scroll.GetNormalizedCursorPosition,scroll)
     if not ok or type(x)~="number" or x<0 or x>1 or y<0 or y>1 then return nil end
-    return map:GetMapID(),x,y
+    -- The seamless map shows the continent: the zone under the cursor.
+    return P:ZoneAt(map:GetMapID(),x,y)
 end
--- Ctrl+Shift+click: Routing's way to the point (Florian 2026-10-16: every
--- point of the map reachable by Routing); Alt+click appends a waypoint.
+-- Ctrl+click is Blizzard's waypoint and Ctrl+Shift+click Routing's way to
+-- the point (Florian 2026-10-16: every point of the map reachable by
+-- Routing), or the other way round with the switch on (Florian 2026-10-22:
+-- the two together were fiddly); Alt+click appends a waypoint.
+function T:CtrlRoutes() return P:Config().ctrlRoute and P:Config().routeClick and self:Routing()~=nil end
+function T:ToggleCtrl()
+    local c=P:Config()
+    c.ctrlRoute=not c.ctrlRoute
+    P:Changed()
+    if ns.Config then ns.Config:Refresh() end
+end
 function T:MapClick(button)
     if button~="LeftButton" or not P:Active() then return end
     local c=P:Config()
-    if IsControlKeyDown and IsControlKeyDown() and IsShiftKeyDown and IsShiftKeyDown() then
-        if not c.routeClick then return end
+    if IsControlKeyDown and IsControlKeyDown() then
+        local shift=IsShiftKeyDown and IsShiftKeyDown() or false
+        if shift==self:CtrlRoutes() or not c.routeClick then return end
         local R=self:Routing()
         if not R then return end
         local mapID,x,y=cursor()

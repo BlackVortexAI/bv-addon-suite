@@ -34,6 +34,9 @@ N.cache={}
 N.revision=0
 function N:Changed() self.revision=self.revision+1;self.cache={} end
 function N:Points(mapID,minimap)
+    -- No map (the game may not know yours yet just after a reload): nothing, never every map's nodes merged at once
+    -- (Claude 2026-10-26: Core asks with the player's map, nil there merged 80 maps and 13,000 known spawns, 414 ms).
+    if type(mapID)~="number" then return {} end
     local inside=minimap and G.Call("IsIndoors")==true
     local key=tostring(mapID)..(minimap and (inside and ":mi" or ":mo") or ":w")
     local lists={}
@@ -72,7 +75,9 @@ function N:Build(mapID,minimap,inside)
                     local fresh=window>0 and sources.own and node.last and clock-node.last<window
                     if fresh then expires=math.min(expires or math.huge,node.last+window) end
                     out[#out+1]={mapID=mapID,x=node.x,y=node.y,symbol=t.symbol,color=fresh and N.GATHERED or G:Color(t.id),size=unseen and math.max(8,c.size-4) or c.size,
-                        kind=t.id,node=node,alpha=(unseen and .55) or (fresh and .7) or nil,gathered=fresh or nil,
+                        -- Leave the native yellow tracking dot visible through
+                        -- the centre. Kind/name stay in colour and tooltip.
+                        dot=true,hollow=true,kind=t.id,node=node,alpha=(unseen and .55) or (fresh and .7) or nil,gathered=fresh or nil,
                         disc=node.under and N.EARTH or nil,dim=minimap and ((node.under==true)~=inside) or nil}
                 end
             end
@@ -101,6 +106,7 @@ function N:Tooltip(point)
     table.sort(others)
     if #others>0 then rows[#rows+1]={"Also here",table.concat(others,", ")} end
     if node.under then rows[#rows+1]={"Underground",node.place or "a cave"} end
+    if node.layer=="unknown" then rows[#rows+1]={"Location","Surface / underground not confirmed"} end
     if point.gathered then rows[#rows+1]={"Gathered",math.max(1,math.floor((time()-node.last)/60+.5)).." min ago"}
     elseif node.last then rows[#rows+1]={"Last seen",date("%Y-%m-%d",node.last)} end
     -- Where it comes from: your own finds first, then the others.

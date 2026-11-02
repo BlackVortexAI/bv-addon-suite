@@ -73,7 +73,11 @@ function N:Build()
     local map=P:WorldMap()
     if self.frame or not map then return end
     local parent=map.ScrollContainer or map
-    UI:WithStyle(P:Style(),function()
+    -- Map controls belong to the captured Interface; map art/HUD keep P:Style().
+    local style=ns.Config and ns.Config:EnsureShellStyle()
+    if not style or style.materialProfile~="interface" then return end
+    self.style=style
+    UI:WithStyle(style,function()
         local f=CreateFrame("Frame",nil,parent)
         f:SetAllPoints(parent);P:AbovePins(f,parent);f:EnableMouse(false)
         self.frame,self.buttons=f,{}
@@ -97,6 +101,7 @@ function N:Update()
     local show=P:Active() and P:Config().neighbors and map and map:IsShown() and map.GetMapID
     if not show then if self.frame then self.frame:Hide() end;return end
     self:Build()
+    if not self.frame then return end
     local found=self:Find(map:GetMapID())
     for key,b in pairs(self.buttons) do
         b.target=found[key]

@@ -120,13 +120,22 @@ function D:Maps(kind)
     end
     return maps
 end
--- Known spawn points come packed: {x1, y1, nameIndex1, x2, ...}, names in BVGatherKnown.names.
+-- Known spawn points come packed: {x1, y1, nameIndex1, x2, ..., z="..."}, names in BVGatherKnown.names.
+-- z (optional, tools/build_known_spawns.py): two characters per spawn, world height
+-- in whole yards = (a-35)*57+(b-35)-1000; node.z is nil without it.
 local function unpackKnown(list)
     local known=rawget(_G,"BVGatherKnown")
     local names=type(known)=="table" and known.names or {}
     local out={}
     if type(list)~="table" then return out end
-    for i=1,#list-2,3 do out[#out+1]={x=list[i],y=list[i+1],name=names[list[i+2]],count=0,exact=true} end
+    local heights=type(list.z)=="string" and list.z or ""
+    local layers=type(list.layers)=="string" and list.layers or ""
+    for i=1,#list-2,3 do
+        local a,b=string.byte(heights,(i-1)/3*2+1,(i-1)/3*2+2)
+        local layer=layers:sub((i-1)/3+1,(i-1)/3+1)
+        out[#out+1]={x=list[i],y=list[i+1],name=names[list[i+2]],count=0,exact=true,z=b and (a-35)*57+(b-35)-1000 or nil,
+            under=layer=="2" or nil,layer=layer=="2" and "underground" or layer=="1" and "surface" or "unknown"}
+    end
     return out
 end
 local function hiddenNear(db,kind,mapID,x,y)
@@ -176,7 +185,7 @@ function D:Merged(kind,mapID)
             local gx,gy=cell(x,y)
             for dx=-1,1 do for dy=-1,1 do
                 for _,entry in ipairs(grid[(gx+dx)*100000+gy+dy] or {}) do
-                    if D.Same(mapID,entry,x,y,name,under) then return entry end
+                    if D.Same(mapID,entry,x,y,name,under,c) then return entry end
                 end
             end end
         end
@@ -188,7 +197,7 @@ function D:Merged(kind,mapID)
                     if into then origin[into][other.source]=true
                     else
                         local copy={x=node.x,y=node.y,name=node.name,names=node.names,count=node.count,last=node.last,
-                            under=node.under,place=node.place,exact=node.exact,from=node}
+                            under=node.under,layer=node.layer,place=node.place,exact=node.exact,z=node.z,from=node}
                         list[#list+1]=copy;origin[copy]={[other.source]=true};put(copy)
                     end
                 end
@@ -236,8 +245,10 @@ function D.Yards(mapID,x1,y1,x2,y2)
 end
 -- Same node: the same name within the merge distance, or any name within
 -- the (smaller) spawn distance.
-function D.Same(mapID,node,x,y,name,under)
-    local c=G:Config()
+-- c: the settings, read once by a caller that compares many (Claude 2026-10-26: G:Config per comparison was three
+-- quarters of turning Gather on at login, Codex's "script exceeded execution limit" after a reload).
+function D.Same(mapID,node,x,y,name,under,c)
+    c=c or G:Config()
     -- Underground and surface never merge, however close.
     if (node.under==true)~=(under==true) then return false end
     local yards=D.Yards(mapID,node.x,node.y,x,y)
@@ -276,8 +287,9 @@ function D:Add(kind,mapID,x,y,name,opts)
     if source~="own" then self:Dirty() end
     -- An exact position (an import from a database) wins over your offset ones.
     if opts.import and not opts.shared then opts.exact=true end
+    local c=G:Config()
     for _,node in ipairs(list) do
-        if D.Same(mapID,node,x,y,name,opts.under) then
+        if D.Same(mapID,node,x,y,name,opts.under,c) then
             D.Fold(node,x,y,name,opts)
             if opts.place and not node.place then node.place=opts.place end
             return node,false
@@ -294,6 +306,7 @@ end
 function D:Cleanup(kind,onlyMap)
     local removed=0
     local db=self.db or self:Init()
+    local c=G:Config()
     local stores={db.nodes}
     for _,entry in pairs(db.sources) do stores[#stores+1]=entry.nodes end
     for _,store in ipairs(stores) do
@@ -304,7 +317,7 @@ function D:Cleanup(kind,onlyMap)
                 local kept={}
                 for _,node in ipairs(list or {}) do
                     local into
-                    for _,other in ipairs(kept) do if D.Same(mapID,other,node.x,node.y,node.name,node.under) then into=other;break end end
+                    for _,other in ipairs(kept) do if D.Same(mapID,other,node.x,node.y,node.name,node.under,c) then into=other;break end end
                     if into then
                         local a,b=into.count or 1,node.count or 1
                         if node.exact and not into.exact then into.x,into.y,into.exact=node.x,node.y,true
@@ -385,15 +398,28 @@ function D:SourceCount(source,kind)
     end
     return total
 end
--- Names known per kind (filters, import previews).
+-- Names known per kind (filters, import previews, the scanner's herbs and ores): read from the sources that are on,
+-- not from the merged view of every map (Claude 2026-10-26: that merged 80 maps and 13,000 known spawns at login,
+-- 414 ms in one piece). Also names whose nodes are hidden or merged into a node of another name.
 function D:Names(kind)
+    local db=self.db or self:Init()
     local seen,out={},{}
-    for _,list in pairs(self:Nodes(kind) or {}) do
-        for _,node in ipairs(list) do
-            for name in pairs(node.names or (node.name and {[node.name]=1} or {})) do
-                if not seen[name] then seen[name]=true;out[#out+1]=name end
-            end
+    local function add(name) if type(name)=="string" and name~="" and not seen[name] then seen[name]=true;out[#out+1]=name end end
+    local function addList(list)
+        for _,node in ipairs(list or {}) do
+            if node.names then for name in pairs(node.names) do add(name) end end
+            add(node.name)
         end
+    end
+    if self:SourceOn("own") then for _,list in pairs(db.nodes[kind] or {}) do addList(list) end end
+    for source,entry in pairs(db.sources) do
+        if self:SourceOn(source) then for _,list in pairs(entry.nodes[kind] or {}) do addList(list) end end
+    end
+    local known=rawget(_G,"BVGatherKnown")
+    if self:SourceOn("known") and type(known)=="table" and type(known[kind])=="table" then
+        local names,used=type(known.names)=="table" and known.names or {},{}
+        for _,list in pairs(known[kind]) do for i=3,#list,3 do used[list[i]]=true end end
+        for index in pairs(used) do add(names[index]) end
     end
     table.sort(out)
     return out

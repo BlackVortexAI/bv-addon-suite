@@ -5,7 +5,7 @@ local ns=G.ns
 local UI,M=ns.UI,ns.DesignSystem.Metrics
 -- How ways go round terrain, water, cliffs, high-risk areas and enemy bases
 -- is BV Routing's (2026-10-10; shared with /bv route): shown here, kept there.
-local ROUTING={routeTerrain=true,avoidWater=true,preferRoads=true,enemy=true,cliffs=true,risk=true,flightsUnknown=true}
+local ROUTING={avoidWater=true,preferRoads=true,enemy=true,cliffs=true,risk=true,flightsUnknown=true}
 
 function G:Changed()
     -- Settings changed what shows: the next profession or tracking check compares anew.
@@ -13,6 +13,7 @@ function G:Changed()
     if self.Hud then self.Hud:Apply() end
     if self.Sight then self.Sight:Update() end
     if self.Scanner then self.Scanner:Update() end
+    if self.Interaction then self.Interaction:Update() end
     if self.Hud.ScanStatus then self.Hud:ScanStatus() end
     if self.Finds then self.Finds:Refresh() end
     if self.Pins.registered and ns.MapPins and ns.MapPins.providers["gather:minimap"] then
@@ -22,11 +23,20 @@ function G:Changed()
 end
 local page
 local function build(parent)
-    page=UI:Panel(parent,880,600,"surface");UI:HideSurface(page)
+    local pageStyle=UI:GetStyle();local interface=pageStyle.materialProfile=="interface"
+    -- A page host owns layout/context only; it allocates no hidden material.
+    page=UI:Container(parent,880,600,pageStyle)
     local g=UI:SettingsGrid(page);page.grid=g
     local controls={}
     page.controls=controls
     local function cfg() return G:Config() end
+    -- Gather persists RGB only. Keep the existing picker/controller, explicitly
+    -- binding this page's context and the existing empty-string default.
+    local function colorInput(callback,defaultValue)
+        local field=UI:ColorInput(g,190,callback)
+        if interface then field.bvColorOptions={style=pageStyle,rgb=true,default=defaultValue}end
+        return field
+    end
     local function set(key) return function(value) (ROUTING[key] and G.Routing:Config() or cfg())[key]=value;G:Changed();if page then page:Refresh() end end end
     local function row(key,title,control,help) controls[key]=g:Row(title,control,{help=help});return controls[key] end
     local function switch(key,title,help) return row(key,title,UI:Switch(g,false,set(key)),help) end
@@ -63,7 +73,10 @@ local function build(parent)
     g:Section("colours","Colours")
     for _,t in ipairs(G.TYPES) do
         local key=t.id.."Color"
-        row(key,t.label,UI:ColorInput(g,190,function(hex) cfg()[key]=hex:sub(1,6):upper();G:Changed();if page then page:Refresh() end end),"Pin colour for "..t.label:lower()..".")
+        local function accept(hex) cfg()[key]=hex:sub(1,6):upper();G:Changed();if page then page:Refresh() end end
+        local defaultValue=G.Hex(t.color).."FF"
+        local color=colorInput(accept,defaultValue)
+        row(key,t.label,color,"Pin colour for "..t.label:lower()..".")
     end
     g:Row("Reset",UI:Button(g,"Reset colours",190,function() for _,t in ipairs(G.TYPES) do cfg()[t.id.."Color"]="" end;G:Changed();if page then page:Refresh() end end),
         {help="Each kind back to its own colour."})
@@ -71,6 +84,15 @@ local function build(parent)
         "Names separated by commas, for example Peacebloom, Silverleaf. Empty shows all.")
     slider("size","Pin size",8,30,1,"%d","Size of the node pins.")
     slider("respawnMinutes","Gathered: grey for",0,60,1,"%d min","A node you gathered shows grey this long, until it has likely grown back. 0: never.")
+    g:Section("interaction","World objects")
+    row("objectMark","Object marker",UI:Dropdown(g,190,{{value="A",label="A · Corner marks"},{value="B",label="B · Side brackets"},{value="C",label="C · Small pointer"},{value="off",label="Off"}},set("objectMark")),
+        "Marks the herb or ore currently selected by the client's interaction targeting. One object at a time; requires an object nameplate. Gold: ready; dim gold: out of range; grey-silver: cannot gather. An unavailable cursor does not identify the reason.")
+    switch("objectHerbs","Mark herbs","A small leaf identifies herbs.")
+    switch("objectOre","Mark ore","A small pickaxe identifies ore.")
+    slider("objectSize","Marker size",24,160,2,"%d px","Reference size. Camera zoom adjusts the marker; a fresh, unique scanner find can refine the estimate. Entering interaction range does not resize the marker. The scanner is not required or enabled automatically.")
+    slider("objectOffset","Marker height",-240,80,2,"%d px","Reference offset below the object's nameplate. Size and offset scale together. This is an approximation, not measured model bounds.")
+    switch("interactHint","Interaction hint","Shows the real Interact Target key binding and current range. On first start, Gather assigns Ctrl+G only if Interact Target has no key and Ctrl+G is free. Existing bindings and later changes are preserved. This hint is not a clickable action.")
+    switch("interactTargeting","Enable object targeting","Temporarily enables the client's nearby-object targeting while this feature is on. Previous values are restored when disabled, unless changed elsewhere. If ForeverLootSparkles is loaded, its targeting settings are left alone; disable its own marker there to avoid duplicate graphics.")
     g:Section("record","Recording")
     switch("record","Record what you gather","Herbs, ore and treasure are stored where you gathered them.")
     slider("merge","Merge distance",3,60,1,"%d yd","The same plant found again closer than this counts up instead of adding a pin; its position moves to the middle of your finds.")
@@ -94,18 +116,19 @@ local function build(parent)
         "Turning the minimap can reset its shape; if your minimap is square and comes back round after the HUD, choose Square.")
     g:Section("sight","Sight circle")
     switch("sightCircle","Sight circle on the minimap","A see-through ring of the sight radius (Routes tab) around you on the minimap, while the gather mode is on.")
-    row("sightColor","Colour",UI:ColorInput(g,190,function(hex) cfg().sightColor=hex:sub(1,6):upper();G:Changed();if page then page:Refresh() end end),"Colour of the ring; empty: the style's accent.")
+    row("sightColor","Colour",colorInput(function(hex) cfg().sightColor=hex:sub(1,6):upper();G:Changed();if page then page:Refresh() end end,G.Hex({G:Style():Color("accent")}).."FF"),"Colour of the ring; empty: the style's accent.")
     slider("sightAlpha","Opacity",5,100,5,"%d %%","How visible the ring is; its inside stays much fainter.")
     slider("sightWidth","Thickness",1,16,1,"%d px","How thick the ring is drawn.")
     g:Row("Reset",UI:Button(g,"Accent colour",190,function() cfg().sightColor="";G:Changed();if page then page:Refresh() end end),{help="The ring back in the style's accent."})
     g:Section("tracker","Tracker")
     g:Row("Tracker",UI:Button(g,"Open the tracker",190,function() G.TrackerWindow:Show(true) end),
         {help="What a session brings: nodes, items, value and gold per hour; start, pause and stop. Also /bv gather tracker."})
-    row("priceSource","Prices",UI:Dropdown(g,190,{{value="auto",label="Auto (TSM, Auctionator, vendor)"},{value="tsm",label="TradeSkillMaster"},{value="auctionator",label="Auctionator"},{value="vendor",label="Vendor price"}},set("priceSource")),
-        "Where the value of gathered items comes from.")
+    row("priceSource","Prices",UI:Dropdown(g,190,{{value="auto",label="Automatic"},{value="tsm",label="TradeSkillMaster"},{value="auctionator",label="Auctionator"},{value="blackthornes",label="Blackthornes Tradeskills"},{value="vendor",label="Vendor price"}},set("priceSource")),
+        "Automatic uses the first available price for each item: TradeSkillMaster, Auctionator, Blackthornes Tradeskills, then the vendor price.")
     switch("trackAllLoot","Count all loot","Every item you loot while a session runs, not only from gathering.")
     slider("trackerIdle","Pause when idle",0,30,1,"%d min","A running session pauses after this long without gathering (counted up to your last node); the next node resumes it. 0: never.")
-    g:Section("route","Route")
+    g:Section("route","Route",{wide=true})
+    page.lineStyles=ns.RouteLineStyles and ns.RouteLineStyles:Options(g)
     g:Row("Gather route editor",UI:Button(g,"Open route editor",190,function() G.Editor:Toggle() end),
         {help="Its own map: choose zones and herbs or ores, paint no-go, preferred and high-risk areas, calculate a loop, save it and follow it as waypoints. Also /bv gather editor."})
     g:Row("Quick route",UI:Button(g,"Route through this zone",190,function() G.Route:Start() end),
@@ -116,10 +139,9 @@ local function build(parent)
         "A flight map shows only its continent. Where you have not opened one yet, ways leave flights out (you are asked once and the guide says so), or count every flight master of your side. A BV Routing setting, shared with /bv route.")
     switch("ownFlights","Own flight masters only","The route editor shows flight masters of your faction and neutral ones.")
     slider("sightRadius","Sight radius",40,230,5,"%d yd","How far the minimap's Find Herbs and Find Minerals dots reach for routes \"within sight\" (the minimap shows about 230 yards zoomed out, 150 indoors).")
-    switch("routeTerrain","Use the terrain","Routes go round steep slopes and through passes (the terrain data comes with BV Routing). A BV Routing setting, shared with /bv route.")
     row("cliffs","Down cliffs",UI:Dropdown(g,190,{{value="never",label="Never"},{value="safe",label="Short drops"},{value="always",label="Always (Slow Fall)"}},set("cliffs")),
         "Routes may drop down steep faces (never up them): short drops only, or any height with Slow Fall or Levitate.")
-    switch("preferRoads","Prefer roads","Roads of the game's own terrain (from the terrain data) count as preferred ground: routes follow them where it is not much longer.")
+    switch("preferRoads","Prefer roads","Routes follow roads and paths of the navigation data where that is not much longer.")
     switch("recordWays","Record walked ways","Where you walk is counted in a map of 8-yard cells (on foot and mounted, not flying or in instances); the route editor can show it.")
     switch("preferWalked","Prefer walked ways","Cells walked three times or more count as preferred ground, like roads.")
     g:Row("Walked ways",UI:Button(g,"Forget walked ways",190,function() G.Trace:Forget();G:Print("Walked ways forgotten.") end),
@@ -128,14 +150,14 @@ local function build(parent)
     switch("avoidWater","Avoid water","Routes go round water you would have to swim through; off: they swim straight across.")
     slider("routeLineAlpha","Route line opacity",10,100,5,"%d %%","How visible the lines of the route you follow are, on the map and the minimap.")
     slider("routeDotAlpha","Route point opacity",10,100,5,"%d %%","How visible the small points of the route you follow are.")
-    row("routeColor","Route colour",UI:ColorInput(g,190,function(hex) cfg().routeColor=hex:sub(1,6):upper();G:Changed();if page then page:Refresh() end end),"Lines and points of the route; empty: the style's accent.")
-    row("routeNextColor","Next point colour",UI:ColorInput(g,190,function(hex) cfg().routeNextColor=hex:sub(1,6):upper();G:Changed();if page then page:Refresh() end end),"The next point and the line from you to it.")
+    row("routeColor","Route colour",colorInput(function(hex) cfg().routeColor=hex:sub(1,6):upper();G:Changed();if page then page:Refresh() end end,G.Hex({G:Style():Color("accent")}).."FF"),"Lines and points of the route; empty: the style's accent.")
+    row("routeNextColor","Next point colour",colorInput(function(hex) cfg().routeNextColor=hex:sub(1,6):upper();G:Changed();if page then page:Refresh() end end),"The next point and the line from you to it.")
     g:Row("Expert settings",UI:Button(g,"Open expert settings...",190,function() G.Expert:Open() end),
         {help="The fixed values behind route planning and following (levels, jumps, costs of slopes, water and roads, when a point counts as reached), for fine tuning. Most players never need them."})
     slider("worthLimit","Way per node",0,600,10,"%d yd","Worth the way: nodes that cost more way than this each are left out of new routes (a far group with few nodes). 0: every node. Also in the route editor.")
     slider("followRange","Joining range",100,1500,50,"%d yd","While you follow a route, only its legs this close to you are checked for joining or skipping; the rest of the route costs nothing.")
     g:Row("Following",UI:Button(g,"Stop following",190,function() G.Follow:Stop() end),{help="Ends the route you follow. Also /bv gather stop."})
-    switch("routeUnderground","Underground nodes in routes","Nodes in caves and mines join routes too (the route does not know the entrance yet).")
+    switch("routeUnderground","Select underground by default","Preselect underground resources for new editor routes; each resource has its own Underground switch. Also includes underground nodes in quick routes. Saved selections stay unchanged.")
     g:Section("share","Sharing")
     row("shareSend","Send your new nodes",UI:Dropdown(g,190,{},set("shareSend")),"Nodes you find go to your group, your guild or both, one small message each. Off by default.")
     controls.shareSend:SetOptions({{value="off",label="Off"},{value="group",label="Group"},{value="guild",label="Guild"},{value="both",label="Group and guild"}})
@@ -154,7 +176,8 @@ local function build(parent)
     switch("scanner","Scanner","Warns when a herb or ore of the list below shows on the minimap. Also by clicking the status text in the HUD.")
     switch("scanStage","On-screen message","A short message in the upper middle of the screen (the notification stage) besides the sound.")
     controls.scanSoundButton=g:Row("Default sound",UI:Button(g,"",190,function()
-        G.WatchList:Choose(page,cfg().scanSound,function(sound) cfg().scanSound=sound;G:Changed();if page then page:Refresh() end;G.Scanner:Play({}) end)
+        local function accept(sound)cfg().scanSound=sound;G:Changed();if page then page:Refresh()end;G.Scanner:Play({})end
+        G.WatchList:Choose(page,cfg().scanSound,accept)
     end),{help="The sound of every entry set to Default sound. Choose one with a preview."})
     local channels={}
     for _,name in ipairs(G.Scanner.CHANNELS) do channels[#channels+1]={value=name,label=name} end
@@ -176,6 +199,7 @@ local function build(parent)
     local TABS={
         {id="general",label="General",sections={"module","sources","show","colours"}},
         {id="mode",label="Gather mode",sections={"mode","hud","sight","tracker"}},
+        {id="interaction",label="World objects",sections={"interaction"}},
         {id="routes",label="Routes",sections={"route"}},
         {id="record",label="Recording & sharing",sections={"record","share","exchange"}},
         {id="scanner",label="Scanner",sections={"scanner","watch"}},
@@ -198,10 +222,14 @@ local function build(parent)
     function page:Arrange(width)
         self.width=width
         UI:Place(g,self,0,0)
-        local height=g:Arrange(width)+8
+        -- The approved Clean page reserves 10 design units to the right of
+        -- its grid for scrolling (938 viewport, 928 grid at outer width1200).
+        local gridWidth=interface and math.max(1,width-10)or width
+        local height=g:Arrange(gridWidth)+8
         M.Height(self,height);return height
     end
     function page:Refresh()
+        if page.lineStyles then page.lineStyles:Refresh() end
         local c=G:Config()
         self.enabled:SetValue(ns.Settings:Module(G.ID).enabled==true)
         for key,control in pairs(controls) do
@@ -245,7 +273,7 @@ function G:OpenScanner()
     if page and page.navigation then page.navigation.select("scanner") end
 end
 ns.Config:RegisterPage("gather",{title="Gather",description="Herbs, ore, fishing pools and treasure on your maps; GatherMate2 import.",
-    category="questmap",module=G.ID,
+    category="questmap",module=G.ID,interfaceSettings=true,
     build=function(parent) return page or build(parent) end,
     refresh=function() if page then page:Refresh() end end})
 -- Key bindings (Bindings.xml; Florian 2026-10-09): in the game's key

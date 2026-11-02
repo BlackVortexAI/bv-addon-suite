@@ -1,7 +1,7 @@
 local _,ns=...
 -- In-game style families (Core 0.8.95, docs/style-families-concept.md): BV, WoW
 -- and Clean for elements players see while playing (bars, roll bars, toasts).
--- Tool windows keep the BV style (UI:GetStyle). A module asks for its own
+-- Tool windows capture InterfaceStyle. A gameplay module asks for its own
 -- context with UI:GameStyle(moduleID); it inherits the suite family unless the
 -- module's settings name its own (modules[id].styleFamily). Changing a family
 -- repaints through the shared paint registry, then ns.Styles:Notify() tells
@@ -13,7 +13,7 @@ local S={contexts={},listeners={}}
 ns.Styles=S
 
 S.order={"bv","wow","clean","match"}
--- colors: the factory's color roles; nil = BV palette of the tool windows.
+-- colors: the factory's color roles; nil = the saved BV gameplay palette.
 -- fonts: client font paths; nil = the suite font. bar: statusbar texture
 -- (path, "flat" or nil = the suite texture). iconEdge: item icon border width.
 -- barEdge: frame around timer bars. barFrame: progress bars get the family's
@@ -287,7 +287,7 @@ function UI:GameStyle(moduleID)
     local key=moduleID or "suite"
     local style=S.contexts[key]
     if style then return style end
-    local tools=self:ToolStyle()
+    local tools=self:ContextServices()
     style=DS:New(tools.owner)
     style.gameModule=moduleID
     style.colorResolver=function(k,alpha) return S:Color((S:Family(moduleID)),k,alpha) end

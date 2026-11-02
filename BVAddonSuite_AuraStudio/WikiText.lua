@@ -2,6 +2,16 @@
 local _,A=...
 if A.blocked then return end
 A.WikiText={nodes={
+    ["display_visual"]={
+        summary="Shows an icon, text, bar or graphic directly, with its appearance settings in the same node.",
+        use="Choose Show, then set the content. Open Details for colour, opacity, size, position and glow. Expose an appearance input to control it from your graph. Example: connect a condition to Visible to show a reminder only while needed.",
+        advanced="Content can use the supported native protected-value path; appearance and visibility must be readable. Width/Height delta change the layout size by a pixel amount, not to an absolute size. For reusable media, animations or a different modifier order, use Media nodes and Display. Mute suppresses processing; Visible only controls visibility.",
+    },
+    ["unit_information"]={
+        summary="Reads one selected piece of information about you, your target, pet or another supported unit.",
+        use="Choose Whose data and Information, then connect its single output. Example: Player + In combat can control a Display visual's Visible input. A Party or Raid slot can also be connected dynamically.",
+        advanced="Missing is not zero or false. Protected values can only reach compatible native displays; selecting a field does not make it readable. Use Unit for multiple or specialist outputs, Unit Aura/Unit Cast for those observations, and Unit record field for other records.",
+    },
     ["action_display"]={
         summary="Shows a clickable button on screen that performs a prepared action (spell, item, macro, targeting and more) when you click it.",
         use="Connect an Action node and some media (icon, text, button or bar). Example: a big button that casts your defensive cooldown when you left-click it.",

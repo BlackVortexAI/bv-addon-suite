@@ -44,24 +44,35 @@ function Editor:Refresh(kind)
 end
 -- Compact module page (0.8.71): a one-line module strip, then the selected tab
 -- as SettingsGrid rows. The text tab keeps its field list beside the grid.
-function Editor:Build(parent,kind)
+function Editor:Build(parent,kind,options)
     if self.pages[kind] then return self.pages[kind] end
-    local p=at(UI:Panel(parent,880,497,"surface"),parent,0,0)
-    UI:HideSurface(p)
+    if not ns.Settings.db then return nil end
+    local mediaStyle=options and options.mediaStyle
+    assert(not mediaStyle or mediaStyle.materialProfile=="interface","Bar media requires an Interface context")
+    -- Capture the explicit or ambient context once. The current default is
+    -- Interface; an explicitly ambient GameStyle still uses its own rows.
+    -- Hidden page/tab hosts stay neutral and selection callbacks are unchanged.
+    local style=mediaStyle or UI:GetStyle()
+    local interface=style.materialProfile=="interface"
+    if interface then mediaStyle=style end
+    local IM=UI.InterfaceSettingsMetrics
+    return UI:WithStyle(style,function()
+    local p=at(UI:Container(parent,880,497),parent,0,0)
     self.pages[kind]=p; p.fieldIndex=1; p.controls={}; p.fieldButtons={}; p.inputs={bar={},field={}}; p.selectedTab="appearance"
     local function changed()
         ns.ProgressBars:Refresh(kind); self:Refresh(kind)
         if ns.Config.window then ns.Config:Layout() end
     end
     local head=UI:SettingsGrid(p); p.head=head
+    -- Interface rows live in section cards; the module strip becomes one card.
+    if interface then head:Section("module","Module") end
     p.enabled=head:Row("Module enabled",UI:Switch(head,false,function(value) ns.Modules:SetEnabled(kind.."_bar",value); changed() end),
         {help="Shows this bar. Turning it off hides the bar and gives the area back to Blizzard's own bar."})
     local layoutButton=head:Row("Position & size",UI:Button(head,"Open Layout Editor",170,function() ns.LayoutEditor:Open("bv:"..kind) end),
         {help="Arrange, resize and link elements together in the shared Layout Editor."})
     local pages={}
     for _,id in ipairs({"appearance","text","behavior"}) do
-        local frame=UI:Panel(p,880,397,"surface")
-        UI:HideSurface(frame)
+        local frame=UI:Container(p,880,397)
         pages[id]=frame; frame:SetShown(id=="appearance")
     end
     local definitions={{id="appearance",label="Appearance"},{id="text",label="Text fields"},{id="behavior",label="Behavior"}}
@@ -84,7 +95,11 @@ function Editor:Build(parent,kind)
         if mode=="number" then control=UI:NumberInput(grid,width,options,maximum,set)
         elseif mode=="choice" then control=UI:Dropdown(grid,width,options,set)
         elseif mode=="toggle" then control=UI:Switch(grid,false,set)
-        elseif mode=="color" then control=UI:ColorInput(grid,width,set)
+        elseif mode=="color" then
+            control=UI:ColorInput(grid,width,set)
+            -- The picker opens later from an ambient context: bind this page's
+            -- Interface context. RGBA stays (alpha slider, no default button).
+            if interface then control.bvColorOptions={style=mediaStyle} end
         else
             control=UI:Input(grid,width,set); control:SetMaxLetters(160)
             function control:SetValue(v) self:SetText(v) end
@@ -136,23 +151,26 @@ function Editor:Build(parent,kind)
     end
     local text=pages.text
     local list=UI:Panel(text,190,397,"panel",6,.5); p.fieldList=list
-    local listTitle=at(UI:Label(list,"FIELDS",11,"accent",true),list,10,8)
+    local listTitle=at(UI:Label(list,"FIELDS",11,interface and "accentText" or "accent",true),list,10,8)
+    -- Field list rhythm: legacy 22 high rows every 24; Interface 28 high controls every 30.
+    local LIST=interface and {top=34,pitch=30,row=28,button=IM.CONTROL,footer=48} or {top=28,pitch=24,row=22,button=24,footer=40}
+    if interface then at(listTitle,list,IM.PAD,10) end
     for index=1,12 do
         local i=index
         local button=at(UI:NavButton(list,"",170,function()
             if UI.colorPopup then UI.colorPopup:Hide() end
             p.fieldIndex=i; self:Refresh(kind)
-        end),list,6,28+(i-1)*24)
-        D.Height(button,22); D.Height(button.mark,22); D.Height(button.label,20); p.fieldButtons[i]=button
+        end),list,6,LIST.top+(i-1)*LIST.pitch)
+        D.Height(button,LIST.row); D.Height(button.mark,LIST.row); D.Height(button.label,LIST.row-2); p.fieldButtons[i]=button
     end
     local addField=UI:Button(list,"+ Add",80,function()
         local cfg=ns.ProgressOptions:Get(kind); if #cfg.fields>=12 then return end
         cfg.fields[#cfg.fields+1]={template="{percent}%"}; p.fieldIndex=#cfg.fields; changed()
-    end); D.Height(addField,24)
+    end); D.Height(addField,LIST.button)
     local removeField=UI:Button(list,"Remove",80,function()
         local cfg=ns.ProgressOptions:Get(kind); if #cfg.fields<=1 then return end
         table.remove(cfg.fields,p.fieldIndex); p.fieldIndex=1; changed()
-    end); D.Height(removeField,24)
+    end); D.Height(removeField,LIST.button)
     local t=UI:SettingsGrid(text); p.textGrid=t; t.navigationID="text"
     t:Section("field","Selected text field")
     local template=field(t,"Text / variables","template",true,"text",420)
@@ -169,34 +187,61 @@ function Editor:Build(parent,kind)
     field(t,"Text width","width",true,"number",80,20,1400)
     field(t,"Offset X","x",true,"number",80,-2000,2000)
     field(t,"Offset Y","y",true,"number",80,-2000,2000)
-    p.sample=t:Block(UI:Label(t,"",13,"accent"),34)
+    p.sample=t:Block(UI:Label(t,"",13,interface and "accentText" or "accent"),34)
     function p:Arrange(width)
         self.layoutWidth=width
+        -- Interface pages keep the approved 10-unit scroll reserve (as Gather).
+        local outer=width; width=interface and math.max(1,width-10) or width
+        local gap=interface and IM.GAP or 10
         at(head,self,0,0); local headHeight=head:Arrange(width)
-        for _,frame in pairs(pages) do at(frame,self,0,headHeight+10); D.Width(frame,width) end
+        for _,frame in pairs(pages) do at(frame,self,0,headHeight+gap); D.Width(frame,width) end
         local appearanceHeight=a:Arrange(width); at(a,pages.appearance,0,0); D.Height(pages.appearance,appearanceHeight)
         local behaviorHeight=b:Arrange(width); at(b,pages.behavior,0,0); D.Height(pages.behavior,behaviorHeight)
         -- Text tab: field list beside the grid when there is room, above it otherwise.
         local beside=width>=700; local listWidth=beside and 190 or width
         local listColumns=not beside and width>=460 and 2 or 1
         local count=#ns.ProgressOptions:Get(kind).fields
-        local listRows=math.ceil(count/listColumns); local listHeight=28+listRows*24+40
+        local listRows=math.ceil(count/listColumns); local listHeight=LIST.top+listRows*LIST.pitch+LIST.footer
         at(list,text,0,0); D.Size(list,listWidth,listHeight)
         local buttonWidth=(listWidth-12-(listColumns-1)*8)/listColumns
         for index,button in ipairs(self.fieldButtons) do
             local col=(index-1)%listColumns; local row=math.floor((index-1)/listColumns)
-            at(button,list,6+col*(buttonWidth+8),28+row*24); D.Width(button,buttonWidth)
+            at(button,list,6+col*(buttonWidth+8),LIST.top+row*LIST.pitch); D.Width(button,buttonWidth)
         end
-        at(addField,list,8,listHeight-32); at(removeField,list,96,listHeight-32)
+        at(addField,list,8,listHeight-LIST.button-8); at(removeField,list,96,listHeight-LIST.button-8)
         D.Width(listTitle,listWidth-20)
-        local gridX=beside and 206 or 0; local gridY=beside and 0 or listHeight+10
+        local gridX=beside and 206 or 0; local gridY=beside and 0 or listHeight+gap
         at(t,text,gridX,gridY)
         local textGridHeight=t:Arrange(width-gridX)
         local textHeight=math.max(listHeight,gridY+textGridHeight); D.Height(text,textHeight)
         local selectedHeight=self.selectedTab=="appearance" and appearanceHeight or self.selectedTab=="text" and textHeight or behaviorHeight
-        local total=headHeight+10+selectedHeight
-        D.Size(self,width,total)
+        local total=headHeight+gap+selectedHeight
+        D.Size(self,outer,total)
         return total
     end
+    if mediaStyle then
+        local disposeProfile
+        -- Every selector and color field of this page is Interface-owned now;
+        -- only their own menus/pickers close, never a foreign one.
+        local function owned(owner)
+            if not owner then return false end
+            for _,c in ipairs(p.controls)do if c.widget==owner then return true end end
+            return false
+        end
+        local function cancelOwnedMenu()
+            if UI.dropdown and owned(UI.dropdown.owner)then UI:CloseDropdown()end
+            if UI.colorPopup and owned(UI.colorPopup.owner)then UI.colorPopup:Hide()end
+        end
+        local function watchProfile()
+            if not disposeProfile then disposeProfile=ns.Settings:BeforeProfileChange(p,cancelOwnedMenu)end
+        end
+        p:HookScript("OnShow",watchProfile)
+        p:HookScript("OnHide",function()
+            cancelOwnedMenu()
+            if disposeProfile then disposeProfile();disposeProfile=nil end
+        end)
+        if p:IsVisible()then watchProfile()end
+    end
     self:Refresh(kind); p:Arrange(880); return p
+    end)
 end

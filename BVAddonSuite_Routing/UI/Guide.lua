@@ -1,7 +1,9 @@
 local _,Routing=...
 if not Routing.ready then return end
 -- The guide while a way is followed (Florian 2026-10-12): an arrow to the
--- next point of the way in a round medallion; what to do now in large (the
+-- forward route course (or the guidance target when no local course is
+-- confirmed) plus a hollow guidance-target point in a round
+-- medallion (GuideSnapshot v1); what to do now in large (the
 -- yards left of a walk, or the transition by its kind and name: "Take the
 -- lift", "Lift 2 - to Lower Hall"), under a line what comes after it and
 -- the time left to the goal. Beside the tour window when that is open
@@ -15,11 +17,14 @@ Routing.Guide=G
 G.WIDTH,G.HEIGHT=320,134
 G.EVERY=.05
 G.GAP=8
-local MEDIA="Interface\\AddOns\\BVAddonSuite\\Media\\DesignLab\\"
+local GUIDE_MEDIA="Interface\\AddOns\\BVAddonSuite_Routing\\Media\\"
 
-local function style() return UI:GameStyle(nil) end
-local function color(key,alpha)
-    local r,g,b=style():Color(key)
+local function style() return G.style end
+local function foreground(key)
+    return key=="accent" and style().materialProfile=="interface" and "accentText" or key
+end
+local function color(key,alpha,pigment)
+    local r,g,b=style():Color(pigment and key or foreground(key))
     return r,g,b,alpha or 1
 end
 -- A Lucide symbol on a texture (changed as the step changes).
@@ -29,8 +34,11 @@ local function symbol(texture,name,size)
 end
 function G:Build()
     if self.frame then return self.frame end
+    local captured=UI:InterfaceStyle();if not captured then return nil end
+    self.style=captured
     UI:WithStyle(style(),function()
         local f=UI:Panel(UIParent,G.WIDTH,G.HEIGHT,"panel",12,.95)
+        f.bvStyle=self.style;f.bvTooltipStyle=self.style
         f:Hide();f:SetFrameStrata("DIALOG");f:SetClampedToScreen(true)
         f:SetMovable(true);f:EnableMouse(true);f:RegisterForDrag("LeftButton")
         if ns.ExternalFrames then ns.ExternalFrames:MarkOwned(f) end
@@ -38,33 +46,39 @@ function G:Build()
         f:SetScript("OnDragStop",function(self) self:StopMovingOrSizing();G:Keep() end)
         f:SetScript("OnMouseUp",function(self,button) if button=="RightButton" then G:Menu(self) end end)
         -- The medallion: a faint disc, a ring, the arrow.
-        f.medal=CreateFrame("Frame",nil,f);M.Size(f.medal,64,64);M.Point(f.medal,"TOPLEFT",f,"TOPLEFT",16,-16)
-        f.disc=f.medal:CreateTexture(nil,"BACKGROUND");f.disc:SetTexture(MEDIA.."radio-dot.tga");f.disc:SetAllPoints(f.medal)
-        f.ring=f.medal:CreateTexture(nil,"BORDER");f.ring:SetTexture(MEDIA.."radio-ring.tga");f.ring:SetAllPoints(f.medal)
+        f.medal=CreateFrame("Frame",nil,f);M.Size(f.medal,64,64);M.Point(f.medal,"TOPLEFT",f,"TOPLEFT",16,-31)
+        f.disc=f.medal:CreateTexture(nil,"BACKGROUND");f.disc:SetTexture(GUIDE_MEDIA.."guide-disc.tga");f.disc:SetAllPoints(f.medal)
+        f.ring=f.medal:CreateTexture(nil,"BORDER");f.ring:SetTexture(GUIDE_MEDIA.."guide-ring.tga");f.ring:SetAllPoints(f.medal)
         f.arrow=f.medal:CreateTexture(nil,"OVERLAY");symbol(f.arrow,"navigation",64)
         M.Size(f.arrow,32,32);M.Point(f.arrow,"CENTER",f.medal,"CENTER",0,0)
+        -- Separate shapes: the filled route course and the hollow target point.
+        f.course=f.medal:CreateTexture(nil,"OVERLAY");f.course:SetTexture(GUIDE_MEDIA.."guide-course.tga")
+        M.Size(f.course,64,64);M.Point(f.course,"CENTER",f.medal,"CENTER",0,0);f.course:Hide()
+        f.point=f.medal:CreateTexture(nil,"OVERLAY");f.point:SetTexture(GUIDE_MEDIA.."guide-point.tga")
+        M.Size(f.point,16,16);f.point:Hide()
+        f.forward=f.medal:CreateTexture(nil,"ARTWORK");f.forward:SetColorTexture(color("text",.7))
+        M.Size(f.forward,1,4);M.Point(f.forward,"TOP",f.medal,"TOP",0,-1)
         -- Now: what kind of step, the step count, what to do, where to.
         local x=96
-        f.kind=f:CreateTexture(nil,"OVERLAY");M.Size(f.kind,12,12);M.Point(f.kind,"TOPLEFT",f,"TOPLEFT",x,-17)
-        f.head=UI:Label(f,"",10,"muted",true);M.Point(f.head,"LEFT",f.kind,"RIGHT",5,0)
+        f.head=UI:Label(f,"",10,"muted",true);M.Point(f.head,"LEFT",f,"TOPLEFT",14,-18);M.Size(f.head,172,16)
         -- Two small quiet buttons top right (Florian 2026-10-14): end the
         -- way, and search it anew from here (far off the way); the count
         -- beside them.
-        f.stop=UI:IconButton(f,"x",function() Routing.Navigate:Stop() end,"ghost")
-        M.Size(f.stop,20,20);M.Point(f.stop,"TOPRIGHT",f,"TOPRIGHT",-10,-10)
+        f.stop=UI:IconButton(f,"x",function() Routing.Navigate:Stop() end,self.style.materialProfile=="interface" and "icon-only" or "ghost")
+        M.Size(f.stop,20,20);M.Point(f.stop,"TOPRIGHT",f,"TOPRIGHT",-12,-8)
         UI:AttachTooltip(f.stop,"End the way","Ends the way and the guide (/bv route stop).")
-        f.restart=UI:IconButton(f,"rotate-cw",function() Routing.Navigate:Restart() end,"ghost")
+        f.restart=UI:IconButton(f,"rotate-cw",function() Routing.Navigate:Restart() end,self.style.materialProfile=="interface" and "icon-only" or "ghost")
         M.Size(f.restart,20,20);M.Point(f.restart,"RIGHT",f.stop,"LEFT",-4,0)
         UI:AttachTooltip(f.restart,"Search anew","The way to the same goal searched again from where you are now.")
         -- The log and the whole way as text (Florian 2026-10-14).
-        f.export=UI:IconButton(f,"clipboard",function() ns.UI:DiagnosticReport("Routing: the way",Routing.Navigate:ExportText()) end,"ghost")
+        f.export=UI:IconButton(f,"clipboard",function() ns.UI:DiagnosticReport("Routing: the way",Routing.Navigate:ExportText()) end,self.style.materialProfile=="interface" and "icon-only" or "ghost")
         M.Size(f.export,20,20);M.Point(f.export,"RIGHT",f.restart,"LEFT",-4,0)
         UI:AttachTooltip(f.export,"Export the way","The whole way as text to copy for a bug report: versions, start and goal, settings, data sets, every step with its points, the log (/bv route export).")
-        f.log=UI:IconButton(f,"scroll-text",function() ns.UI:DiagnosticReport("Routing log",Routing:LogText()) end,"ghost")
+        f.log=UI:IconButton(f,"scroll-text",function() ns.UI:DiagnosticReport("Routing log",Routing:LogText()) end,self.style.materialProfile=="interface" and "icon-only" or "ghost")
         M.Size(f.log,20,20);M.Point(f.log,"RIGHT",f.export,"LEFT",-4,0)
         UI:AttachTooltip(f.log,"Log","What Routing did for this way: the plan, its steps, levels, new searches (/bv route log).")
         -- Safe or normal for this way (Florian 2026-10-16), the setting the default.
-        f.safe=UI:IconButton(f,"shield",function() Routing.Navigate:ToggleSafe() end,"ghost")
+        f.safe=UI:IconButton(f,"shield",function() Routing.Navigate:ToggleSafe() end,self.style.materialProfile=="interface" and "icon-only" or "ghost")
         M.Size(f.safe,20,20);M.Point(f.safe,"RIGHT",f.log,"LEFT",-4,0)
         UI:AttachTooltip(f.safe,"Safe way","Switches this way between safe (keeps to roads, swims little, goes round zones above your level) and normal, and searches it again. New ways start as set on Routing's settings page (Route mode).")
         f.count=UI:Label(f,"",10,"muted");M.Point(f.count,"RIGHT",f.safe,"LEFT",-6,0);f.count:SetJustifyH("RIGHT")
@@ -74,25 +88,41 @@ function G:Build()
         f.target=UI:Label(f,"",13,"text");M.Point(f.target,"TOPLEFT",f,"TOPLEFT",x,-58);M.Size(f.target,G.WIDTH-x-16,32);f.target:SetJustifyV("TOP")
         -- A hair line, then what comes after and the time left.
         f.rule=f:CreateTexture(nil,"ARTWORK");f.rule:SetColorTexture(color("text",.08))
-        M.Point(f.rule,"TOPLEFT",f,"TOPLEFT",16,-102);M.Point(f.rule,"TOPRIGHT",f,"TOPRIGHT",-16,-102);M.Height(f.rule,1)
+        M.Point(f.rule,"TOPLEFT",f,"TOPLEFT",16,-104);M.Point(f.rule,"TOPRIGHT",f,"TOPRIGHT",-16,-104);M.Height(f.rule,1)
         f.thenLabel=UI:Label(f,"THEN",10,"muted",true);M.Point(f.thenLabel,"TOPLEFT",f,"TOPLEFT",16,-111)
         f.next=UI:Label(f,"",11,"muted");M.Point(f.next,"LEFT",f.thenLabel,"RIGHT",8,0);M.Size(f.next,G.WIDTH-180,14)
-        f.time=UI:Label(f,"",12,"accent",true);M.Point(f.time,"TOPRIGHT",f,"TOPRIGHT",-16,-110);f.time:SetJustifyH("RIGHT")
+        f.time=UI:Label(f,"",12,foreground("accent"),true);M.Point(f.time,"TOPRIGHT",f,"TOPRIGHT",-16,-110);f.time:SetJustifyH("RIGHT")
         f.clock=f:CreateTexture(nil,"OVERLAY");symbol(f.clock,"clock",32);M.Size(f.clock,12,12);M.Point(f.clock,"RIGHT",f.time,"LEFT",-5,0)
         -- Flights left out where your flight points are not known (Florian
         -- 2026-10-15): a line of its own under the rest.
         f.flightIcon=f:CreateTexture(nil,"OVERLAY");symbol(f.flightIcon,"plane",32);M.Size(f.flightIcon,12,12)
         M.Point(f.flightIcon,"TOPLEFT",f,"TOPLEFT",16,-134);f.flightIcon:SetVertexColor(color("warning"));f.flightIcon:Hide()
-        f.flight=UI:Label(f,"",11,"text");M.Point(f.flight,"LEFT",f.flightIcon,"RIGHT",6,0);M.Size(f.flight,G.WIDTH-50,14)
+        f.flight=UI:Label(f,"",11,self.style.materialProfile=="interface" and "warning" or "text");M.Point(f.flight,"LEFT",f.flightIcon,"RIGHT",6,0);M.Size(f.flight,G.WIDTH-50,14)
         f.flight:SetTextColor(color("warning"));f.flight:Hide()
         f.flightTip=CreateFrame("Frame",nil,f);f.flightTip:SetPoint("TOPLEFT",f.flightIcon,"TOPLEFT",-2,2);M.Size(f.flightTip,G.WIDTH-32,16)
         UI:AttachTooltip(f.flightTip,"Flight points not known","A flight map shows only its own continent. Talk to a flight master there and open the flight map once: Routing learns which flight points you have and plans the way anew with them.")
         f.flightTip:EnableMouse(true);f.flightTip:Hide()
         for _,label in ipairs({f.head,f.now,f.target,f.next,f.flight}) do label:SetJustifyH("LEFT");label:SetWordWrap(label==f.target) end
-        UI:AttachTooltip(f,"Guide","The arrow points to the next point of the way. Drag it to undock it; right-click: beside the tour window right or left, undocked, the background, or hide it.")
+        UI:AttachTooltip(f,"Guide","The filled arrow follows the local route course. When that course is unconfirmed, it points toward the guidance target instead. The hollow point always marks that target's bearing. Neither guarantees a walkable shortcut. Drag it to undock it; right-click: beside the tour window right or left, undocked, the background, or hide it.")
+        f.guideHelp=f.tooltipBody
         f:SetScript("OnShow",function() G:Tick(true) end)
         f:SetScript("OnHide",function() G:Tick(false) end)
         self.frame=f
+        if ns.InterfaceSurfaces and ns.InterfaceSurfaces.AttachHUD then ns.InterfaceSurfaces:AttachHUD(self.style,f) end
+        if self.style.materialProfile=="interface" then
+            -- Passive repaint only: no navigation sample, ticker or position update.
+            self.style:Bind(function() G:Look() end,f)
+            f.safe:SetIconRole("muted")
+            for _,label in ipairs({f.head,f.count,f.now,f.target,f.thenLabel,f.next,f.time}) do
+                label.bvAfterFont=function()
+                    if (label==f.head or label==f.count) and f.headFull then G:SetHead(f.headFull,f.countFull) end
+                    if label==f.now and f.fullLabel then G:SetNow(f.fullLabel) end
+                    local bare=Routing:Config().guideGround~=true
+                    label:SetShadowOffset(bare and 1 or 0,bare and -1 or 0)
+                    label:SetShadowColor(0,0,0,bare and .9 or 0)
+                end
+            end
+        end
     end)
     self:Look()
     return self.frame
@@ -103,18 +133,28 @@ function G:Look()
     local f=self.frame
     if not f then return end
     local bare=Routing:Config().guideGround~=true
-    f.disc:SetVertexColor(color("accent",bare and .22 or .12))
-    f.ring:SetVertexColor(color("accent",.45))
-    f.kind:SetVertexColor(color("muted"))
+    f.disc:SetVertexColor(color("accent",bare and .14 or .07,true))
+    f.ring:SetVertexColor(color("accent",.28,true))
     f.clock:SetVertexColor(color("accent"))
-    if bare then UI:HideSurface(f)
+    f.forward:SetColorTexture(color("text",.7))
+    if self.style.materialProfile=="interface" then
+        f.surfaceHidden=bare
+        -- Reuse the existing skin, including every material slice on restore.
+        f:PaintSurface()
+        if f.hudSurface then f.hudSurface:Refresh() end
+    elseif bare then UI:HideSurface(f)
     elseif f.surfaceHidden then
         f.surfaceHidden=false
         if f.fill then f.fill:Show() end
         for _,edge in ipairs(f.edges or {}) do edge:Show() end
         if f.sheen then f.sheen:Show() end
     end
+    f.rule:SetColorTexture(color("text",.08))
     f.rule:SetShown(not bare)
+    f.flightIcon:SetVertexColor(color("warning"))
+    f.course:SetVertexColor(color("accent"))
+    f.point:SetVertexColor(color("text"))
+    f.arrow:SetVertexColor(color(f.arrowRole or "muted",f.arrow:GetAlpha()))
     for _,label in ipairs({f.head,f.count,f.now,f.target,f.thenLabel,f.next,f.time}) do
         if label.SetShadowOffset then
             label:SetShadowOffset(bare and 1 or 0,bare and -1 or 0)
@@ -160,8 +200,8 @@ function G:Wanted()
     if self.preview then return true end
     return Routing:Config().guide~="off" and (N.steps~=nil or N.busy~=nil)
 end
--- A look at it without a way (/bv route guide preview): a lift into the
--- Trade Quarter, the arrow turning slowly; ends with the command again or
+-- A look at it without a way (/bv route guide preview): an explicitly
+-- illustrative route course and guidance point; ends with the command again or
 -- when a way begins.
 function G:Preview(on)
     if on==nil then on=not self.preview end
@@ -171,11 +211,12 @@ function G:Preview(on)
 end
 -- Called whenever the way changes (Navigate:Show) and by the tour window.
 function G:Update()
+    if not self.frame and not UI:InterfaceStyle() then return nil end
     if not self:Wanted() then
         if self.frame then self.frame:Hide() end
         return
     end
-    local f=self:Build()
+    local f=self:Build();if not f then return nil end
     self:Place()
     f:Show()
     self:Paint()
@@ -222,6 +263,76 @@ function G:Vector(cont,tx,ty)
     -- Bearing counter-clockwise from north: north is -south, west is -east.
     return (math.atan2(-east,-south)-facing)%(2*math.pi),distance
 end
+-- Bounded A header: the type starts at x14; five actions start at x192.
+-- Count retains its own measured slot; a long type cannot enter that slot.
+function G:SetHead(text,count)
+    local f=self.frame;local skin=style();count=count or ""
+    f.headFull=text;f.countFull=count;f.count:SetText(count)
+    f.tooltipBody=text..(count~="" and " · "..count or "").."\n\n"..f.guideHelp;f.tooltipText=f.tooltipBody
+    local countWidth=math.min(M.ToNative(48),f.count:GetUnboundedStringWidth())
+    skin:FitCaption(f.count,count,math.max(1,countWidth))
+    skin:FitCaption(f.head,text,M.ToNative(172)-(count~="" and countWidth+M.ToNative(8) or 0))
+end
+-- A long transport or search title must remain inside its single-line slot.
+-- Native font measurement chooses the size; the existing caption helper handles
+-- UTF-8-safe ellipsis at the minimum, and the guide tooltip retains full text.
+function G:SetNow(text)
+    local f=self.frame;local label=f.now;local skin=style()
+    f.fullLabel=text;label:SetText(text);skin:Font(label,21,"bold")
+    local width=label:GetWidth();local natural=label:GetUnboundedStringWidth()
+    if natural>width then skin:Font(label,math.max(14,math.floor(21*width/natural)),"bold") end
+    skin:FitCaption(label,text,width)
+    if self.style.materialProfile=="interface" then
+        -- Font() softens its shadow; restore the bare-guide contract last,
+        -- both for normal Paint ticks and the font-refresh refit.
+        local bare=Routing:Config().guideGround~=true
+        label:SetShadowOffset(bare and 1 or 0,bare and -1 or 0)
+        label:SetShadowColor(0,0,0,bare and .9 or 0)
+    end
+end
+-- Direction data belongs to Navigate. This view neither projects onto a route
+-- nor keeps a snapshot across paints. Missing data must never look like north.
+local function finite(value)
+    return type(value)=="number" and not (Routing.Secret and Routing.Secret(value))
+        and value==value and value~=math.huge and value~=-math.huge
+end
+function G:NeutralDirection(name,role)
+    local f=self.frame
+    f.course:Hide();f.point:Hide();f.arrow:Show()
+    symbol(f.arrow,name or "circle-help",64);f.arrowSymbol=name or "circle-help"
+    f.arrowRole=role or "muted"
+    f.arrow:SetRotation(0);f.arrow:SetVertexColor(color(f.arrowRole));f.arrow:SetAlpha(1)
+end
+function G:PaintDirections(snapshot,facing)
+    local f=self.frame
+    self:NeutralDirection("circle-help")
+    local N=Routing.Navigate
+    if type(snapshot)~="table" or snapshot.version~=1 or snapshot.route~=N.steps
+        or snapshot.stepIndex~=N.current or not finite(facing) then return end
+    if snapshot.phase~="walk" and snapshot.phase~="transition" then return end
+    if self.style.materialProfile=="interface" and snapshot.phase=="transition" and snapshot.transitionKind=="lift" then
+        -- Snapshot v1 has no vertical direction; a valid horizontal target must not hide the lift.
+        self:NeutralDirection("arrow-up-down","accent");return
+    end
+    local course,target=snapshot.course,snapshot.target
+    local haveCourse=type(course)=="table" and course.valid==true and finite(course.bearingWorldRad)
+        and snapshot.routeRelation=="projected" and (course.mode=="tangent" or course.mode=="routeWindow")
+    local havePoint=type(target)=="table" and target.valid==true and finite(target.bearingWorldRad)
+    -- Progress remains monotone when walking back, so the provider may no
+    -- longer confirm a local tangent. Its target bearing is still valid:
+    -- retain a filled direction toward it instead of leaving only the dot.
+    -- Never invent a course or change the tracker's anchor/progress here.
+    local direction=haveCourse and course.bearingWorldRad or (havePoint and target.bearingWorldRad)
+    if direction then
+        f.course:SetRotation((direction-facing)%(2*math.pi))
+        f.course:SetVertexColor(color("accent"));f.course:Show();f.arrow:Hide()
+    end
+    if havePoint then
+        local angle=(target.bearingWorldRad-facing)%(2*math.pi)
+        f.point:ClearAllPoints();M.Point(f.point,"CENTER",f.medal,"CENTER",-math.sin(angle)*27,math.cos(angle)*27)
+        f.point:SetVertexColor(color("text"));f.point:Show();f.arrow:Hide()
+    end
+end
 -- What shows instead of the arrow while you fly or ride.
 G.RIDESYMBOL={flight="plane",ship="ship",zeppelin="plane",tram="cable-car",ride="ship"}
 function G:Paint()
@@ -229,47 +340,51 @@ function G:Paint()
     if not (f and f:IsShown()) then return end
     local N=Routing.Navigate
     if self.preview and (N.steps or N.busy) then self.preview=nil end
+    f.course:Hide();f.point:Hide();f.arrow:Hide()
+    f.flight:Hide();f.flightIcon:Hide();f.flightTip:Hide();M.Height(f,G.HEIGHT)
     if self.preview then
-        symbol(f.kind,"arrow-up-down",32);f.head:SetText("LIFT");f.count:SetText("Step 2 of 4")
-        f.now:SetText("Take the lift down");f.target:SetText("East Lift  -  to the Trade Quarter")
-        f.next:SetText("Go through to the lower city");f.time:SetText("3:12");f.clock:Show()
-        f.arrow:SetRotation(((GetTime()-self.preview.at)*.6)%(2*math.pi)+math.pi/4);f.arrow:SetVertexColor(color("accent"))
+        self:SetHead("GUIDE PREVIEW","")
+        self:SetNow("Course + point");f.target:SetText("Filled: route course\nHollow: guidance target")
+        f.next:SetText("Example only");f.time:SetText("");f.clock:Hide()
+        f.course:SetRotation(0);f.course:SetVertexColor(color("accent"));f.course:Show()
+        local example=math.atan2(6,15)
+        f.point:ClearAllPoints();M.Point(f.point,"CENTER",f.medal,"CENTER",-math.sin(example)*27,math.cos(example)*27)
+        f.point:SetVertexColor(color("text"));f.point:Show()
         return
     end
     if N.busy and not N.steps then
-        symbol(f.kind,"route",32);f.head:SetText("FINDING THE WAY");f.count:SetText("")
-        f.now:SetText(N.goal and N.goal.name or "...");f.target:SetText("")
+        self:SetHead("FINDING THE WAY","")
+        self:SetNow(N.goal and N.goal.name or "...");f.target:SetText("")
         f.next:SetText("");f.time:SetText("");f.clock:Hide()
-        f.arrow:SetRotation(0);f.arrow:SetVertexColor(color("muted"))
+        self:NeutralDirection("route")
         return
     end
     local i=N.current or 1
     local step=N.steps and N.steps[i]
-    if not step then return end
+    if not step then f:Hide();return end
     local parts=N:Parts(step)
-    symbol(f.kind,parts.icon,32)
-    f.head:SetText(parts.head:upper())
-    f.count:SetText(#N.steps>1 and string.format("Step %d of %d",i,#N.steps) or "")
+    self:SetHead(parts.head:upper(),#N.steps>1 and string.format("%d/%d",i,#N.steps) or "")
     -- The shield shows the mode of this way: checked when safe, lit up.
     local safe=Routing:RouteMode()=="safe"
     -- (The button's icon is Core's symbol frame: its glyph texture and colour role.)
     local icon=f.safe.icon
     if icon and icon.glyph then
         symbol(icon.glyph,safe and "shield-check" or "shield",32)
-        icon.colorRole=safe and "accent" or "muted";icon:SetColor(color(icon.colorRole))
+        if self.style.materialProfile=="interface" then f.safe:SetIconRole(safe and "accent" or "muted")
+        else icon.colorRole=safe and "accent" or "muted";icon:SetColor(color(icon.colorRole)) end
     end
     if step.kind=="walk" then
         local yards=N.left or step.yards
-        f.now:SetText(yards and (math.floor(yards+.5).." yd") or "Walk")
+        self:SetNow(yards and (math.floor(yards+.5).." yd") or "Walk")
         f.target:SetText(parts.target)
     elseif step.kind=="flight" then
-        f.now:SetText("Fly "..parts.target)
+        self:SetNow("Fly "..parts.target)
         f.target:SetText("Talk to the flight master. Wait here until you land.")
     elseif step.kind=="transport" then
-        f.now:SetText(parts.verb.." "..parts.target)
-        f.target:SetText("Wait for it here and ride along until you are there.")
+        self:SetNow(parts.verb.." "..parts.target)
+        f.target:SetText(Routing.Timetable and Routing.Timetable:GuideText(step) or "Wait for it here and ride along until you are there.")
     else
-        f.now:SetText(parts.verb)
+        self:SetNow(parts.verb)
         f.target:SetText(parts.name and (parts.name.."  -  "..parts.target) or parts.target)
     end
     local after=N.steps[i+1]
@@ -283,23 +398,16 @@ function G:Paint()
     -- A flight or a ride (Florian 2026-10-15: the arrow went on pointing at
     -- the goal and led you away from the flight master or the dock): its
     -- symbol instead, still, until you are there.
-    local ride=step.kind=="flight" or step.kind=="transport"
-    local want=ride and G.RIDESYMBOL[step.kind=="flight" and "flight" or tostring(step.by and step.by.kind)] or "navigation"
-    if f.arrowSymbol~=want then symbol(f.arrow,want,64);f.arrowSymbol=want end
-    if ride then
-        f.arrow:SetRotation(0);f.arrow:SetVertexColor(color("accent"))
-        f.arrow:SetAlpha(.75+.25*math.sin(GetTime()*3))
-        return
+    -- One provider sample and one common facing for both heading-up markers.
+    local snapshot=N.GuideSnapshot and N:GuideSnapshot() or nil
+    local facing=Routing.Call("GetPlayerFacing")
+    if step.kind=="flight" or step.kind=="transport" then
+        self:NeutralDirection(G.RIDESYMBOL[step.kind=="flight" and "flight" or tostring(step.by and step.by.kind)] or "ship","accent")
+        f.arrow:SetAlpha(.75+.25*math.sin(GetTime()*3));return
     end
-    f.arrow:SetAlpha(1)
-    local angle=self:Vector(self:Target(step))
-    if not angle then
-        f.arrow:SetRotation(0);f.arrow:SetVertexColor(color("muted"))
-        return
-    end
-    -- The symbol points to the upper right: a quarter turn back first.
-    f.arrow:SetRotation(angle+math.pi/4)
-    f.arrow:SetVertexColor(color("accent"))
+    self:PaintDirections(snapshot,facing)
+    if not f.course:IsShown() and not f.point:IsShown() and step.kind=="transition"
+        and step.by and step.by.kind=="lift" then self:NeutralDirection("arrow-up-down") end
 end
 function G:Tick(on)
     if on and not self.ticker then self.ticker=C_Timer.NewTicker(G.EVERY,function() G:Paint() end)

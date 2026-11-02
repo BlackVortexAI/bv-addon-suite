@@ -9,6 +9,22 @@ their own license; they read this data when the package is installed and
 work without it.
 
 Source
+  Forever additions: advocaite/TrinityCore, branch forever (GPL-2.0),
+  https://github.com/advocaite/TrinityCore
+  Base release forever-tdb-2026-10-14 plus the source updates recorded in
+  the generated Zephras.lua header. The release documents the world DB as
+  built from the repository's sql/updates and sql/custom, including Zephras.
+  Imported 2026-10-30 from the local world database, restricted to map 2991:
+  creature, creature_template, creature_classic_level, creature_trainer,
+  trainer, creature_queststarter, creature_questender, quest_template and
+  game_event_creature. Only names, locations, service/classification facts,
+  levels and quest relations are included, no scripts or quest prose.
+  Client FactionTemplate facts classify faction hostility; UiMapAssignment
+  converts world positions. Technical, phased and event spawns are excluded.
+  tools/import_forever_npcs.py captures the exact JSON input and generates
+  this supplement; the source snapshot and matching inputs are retained for
+  the written source offer below. NPCs may differ from the live game world.
+
   vMaNGOS world database, https://github.com/vmangos/core (GPL-2.0),
   release "db_latest" (SQLite database), tables creature,
   creature_template, faction_template, game_event_creature, gameobject,

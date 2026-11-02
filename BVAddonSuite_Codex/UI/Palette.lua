@@ -177,24 +177,28 @@ local function setIcon(icon,name)
 end
 P.SetIcon=setIcon
 local function color(key,alpha)
-    local r,g,b=UI:GameStyle(nil):Color(key)
+    local r,g,b=P.style:Color(key)
     return r,g,b,alpha or 1
 end
 -- The footer's keys: {key cap, what it does}.
 P.KEYS={{"Enter","add"},{"Shift+Enter","navigate now"},{"Ctrl+Enter","tour"}}
 function P:Build()
     if self.window then return self.window end
-    UI:WithStyle(UI:GameStyle(nil),function()
-        local w=UI:Window("BVCodexPalette",WIDTH,BAR+60+P.ROWS*ROW,{title="Codex"})
-        self.window=w
+    local style=UI:InterfaceStyle();if not style then return nil end
+    self.style=style
+    UI:WithStyle(style,function()
+        local w=UI:Window("BVCodexPalette",WIDTH,BAR+60+P.ROWS*ROW,{title="Codex",gameplaySurface=true})
+        self.window=w;w.bvStyle=style
+        if style.materialProfile=="interface" then UI:ScopeDialogEscape(w) end
         local c=w.content
         -- The search bar: a raised field, the magnifier, the input.
         local bar=UI:Panel(c,WIDTH-28,BAR,"raised",10,.95)
         M.Point(bar,"TOPLEFT",c,"TOPLEFT",14,-8)
+        bar.interfaceInputSurface=true
+        if style.materialProfile=="interface" then ns.ControlMaterials:Paint(style,bar,"panel",bar.interfaceState) end
         self.bar=bar
-        bar.icon=UI:Icon(bar,"search",22,"accent");bar.icon:ClearAllPoints();M.Point(bar.icon,"LEFT",bar,"LEFT",14,0)
+        bar.icon=UI:Icon(bar,"search",22,style.materialProfile=="interface" and "accentText" or "accent");bar.icon:ClearAllPoints();M.Point(bar.icon,"LEFT",bar,"LEFT",14,0)
         -- The field without a frame of its own (the bar is its frame), larger type.
-        local style=UI:GetStyle()
         local input=style:Input(bar,WIDTH-92,false,"",nil,true)
         input:SetMaxLetters(60)
         input:SetScript("OnEnterPressed",function() P:Enter() end)
@@ -202,7 +206,8 @@ function P:Build()
         style:Font(input,17)
         M.Point(input,"LEFT",bar,"LEFT",40,0)
         input:HookScript("OnTextChanged",function() P:Update() end)
-        input:SetScript("OnEscapePressed",function() w:Hide() end)
+        input:SetScript("OnEscapePressed",function() if style.materialProfile=="interface" then input:ClearFocus() else w:Hide() end end)
+        if w.escapeController then w:TrackEscapeInput(input);w:HookScript("OnHide",function() input:ClearFocus() end) end
         input:SetScript("OnArrowPressed",function(_,key) if key=="UP" then P:Choose(P.chosen-1) elseif key=="DOWN" then P:Choose(P.chosen+1) end end)
         input:SetScript("OnTabPressed",function() P:Choose(P.chosen+1) end)
         UI:AttachTooltip(input,"Search","An NPC, a title (\"Warlock Trainer\", \"Banker\"), a flight master, a zeppelin, an instance, \"Mailbox\". Enter adds it to your tour.")
@@ -233,6 +238,8 @@ function P:Build()
     return self.window
 end
 function P:Row(c,i)
+    if not self.style then return nil end
+    return UI:WithStyle(self.style,function()
     local row=CreateFrame("Button",nil,c)
     M.Size(row,WIDTH-28,ROW-4);M.Point(row,"TOPLEFT",c,"TOPLEFT",14,-(BAR+18+(i-1)*ROW))
     row.bg=row:CreateTexture(nil,"BACKGROUND");row.bg:SetAllPoints(row);row.bg:SetTexture(WHITE);row.bg:SetVertexColor(1,1,1,0)
@@ -270,16 +277,24 @@ function P:Row(c,i)
     row:SetScript("OnDoubleClick",function() P:Pick(i) end)
     row:SetScript("OnEnter",function() P:Choose(i) end)
     self.rows[i]=row
+    if self.style.materialProfile=="interface" then
+        local style=self.style
+        style:Bind(function() row.mark:SetVertexColor(color("accent")) end,row.mark)
+        style:Bind(function() row.bg:SetVertexColor(color("accent",P.chosen==i and .1 or 0)) end,row.bg)
+        style:Bind(function() row.name:SetTextColor(color(row.hostile and "warning" or "text")) end,row.name)
+        style:Bind(function() row.far:SetTextColor(color(P.chosen==i and "text" or "muted")) end,row.far)
+    end
+    end)
 end
 function P:Open(text)
-    local w=self:Build()
+    local w=self:Build();if not w then return nil end
     w:Show()
     self.input:SetText(text or "")
     self.input:SetFocus()
     self:Update()
 end
 function P:Toggle()
-    local w=self:Build()
+    local w=self:Build();if not w then return nil end
     if w:IsShown() then w:Hide() else self:Open() end
 end
 -- The matches for what is typed.
@@ -312,7 +327,8 @@ function P:Update()
             local zone=m.place and e.kind~="zone" and e.kind~="category" and e.kind~="action" and e.kind~="bundle" and C:ZoneAt(m.place.cont,m.place.x,m.place.y)
             row.name:SetText(zone and (e.name.."  ("..zone..")") or e.name)
             local hostile=m.place and e.kind~="category" and e.kind~="action" and e.kind~="bundle" and C:Hostile(m.place.cont,m.place.x,m.place.y)
-            row.warn:SetShown(hostile and true or false)
+            row.hostile=hostile and true or false
+            row.warn:SetShown(row.hostile)
             -- Room for the warning after the name (Florian 2026-10-15: it lay
             -- over a shortened zone name).
             M.Size(row.name,hostile and WIDTH-272 or WIDTH-250,16)
@@ -347,7 +363,7 @@ function P:Choose(i)
         -- The chosen row: a soft accent wash, its symbol and distance lit.
         row.bg:SetVertexColor(color("accent",on and .1 or 0))
         row.mark:SetShown(on)
-        if row.icon.SetColor then row.icon.colorRole=on and "accent" or "muted";row.icon:SetColor(color(on and "accent" or "muted")) end
+        if row.icon.SetColor then local role=on and (self.style.materialProfile=="interface" and "accentText" or "accent") or "muted";row.icon.colorRole=role;row.icon:SetColor(color(role)) end
         row.far:SetTextColor(color(on and "text" or "muted"))
     end
 end

@@ -16,7 +16,8 @@ function Bars:View(kind)
     return state.view
 end
 
-function Bars:Render(kind)
+-- clock: the clock's tick (only the numbers move).
+function Bars:Render(kind, clock)
     local state = self.states[kind]
     local preview = self.preview[kind]
     if not state or (not state.active and not preview) then return end
@@ -42,10 +43,13 @@ function Bars:Render(kind)
         values = Model.Values(snapshot, nil, now)
     end
     view:Render(snapshot, values)
+    local wasShown = view:IsShown()
     local allowed=ns.Layout:IsAvailable("bv:"..kind)
     view:SetShown(shown and allowed and not view.layoutHidden)
     ns.NativeBars:SetHidden(kind, state.active and liveShown and allowed and not view.layoutHidden and config.hideBlizzard or false)
-    ns.Layout:UpdateCursorTracking()
+    -- The clock's tick asks the layout again only when the bar showed or hid
+    -- (Claude 2026-10-25: 12 KB of garbage a second while idle).
+    if not clock or view:IsShown() ~= wasShown then ns.Layout:UpdateCursorTracking() end
 end
 
 function Bars:NeedsClock(kind)
@@ -62,7 +66,7 @@ function Bars:Clock(kind)
     local state = self.states[kind]
     if self:NeedsClock(kind) and not state.clock then
         state.clock = C_Timer.NewTicker(1, function()
-            local ok = ns:Call(kind .. "/clock", self.Render, self, kind)
+            local ok = ns:Call(kind .. "/clock", self.Render, self, kind, true)
             if not ok then ns.Modules:Fault(ns.Modules.records[kind .. "_bar"]) end
         end)
     elseif not self:NeedsClock(kind) and state.clock then state.clock:Cancel(); state.clock = nil end
@@ -157,7 +161,7 @@ function Bars:Register(definition)
     })
     local record=ns.Modules:Register({ id = id .. "_bar", OnEnable = function(context) enable(id, context) end })
     ns.Config:RegisterPage(id,{title=definition.label,description=definition.description,
-        build=function(parent) return ns.BarConfig:Build(parent,id) end,
+        build=function(parent) return ns.BarConfig:Build(parent,id,ns.Config.shellStyle and {mediaStyle=ns.Config.shellStyle}) end,
         refresh=function() ns.BarConfig:Refresh(id) end})
     for _,alias in ipairs(definition.aliases or {}) do ns.Commands:Register(alias,record.id,id) end
     if ns.ready and IsLoggedIn() and ns.Settings:Module(record.id).enabled==true then ns.Modules:Start(record) end

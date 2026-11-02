@@ -11,7 +11,12 @@ end
 -- parent that are anchored at its top left.
 function UI:ContentBottom(parent)
     local bottom=0
+    -- The panel owns its material regions; they are not measured content.
+    -- Keep real labels/artwork and child controls in the existing measurement.
+    local decoration={}
+    for _,region in pairs(parent.interfaceTextures or {}) do decoration[region]=true end
     local function visit(region)
+        if decoration[region] then return end
         if not region.IsShown or not region:IsShown() or not region.GetPoint then return end
         local ok,point,rel,_,x,y=pcall(region.GetPoint,region,1)
         if not ok or point~="TOPLEFT" or (rel and rel~=parent) or type(y)~="number" then return end
@@ -64,6 +69,7 @@ end
 -- Editor-only position relationship. Route outside the bars so short gaps still
 -- have a readable arrow; coordinates use the common UIParent coordinate space.
 function UI:AnchorConnector(parent)
+    local style=self:GetStyle()
     local host=CreateFrame("Frame",nil,parent); host:SetAllPoints(parent); host:EnableMouse(false)
     host.lines={}
     for i=1,5 do
@@ -71,8 +77,10 @@ function UI:AnchorConnector(parent)
     end
     host.badge=UI:Panel(host,24,24,"canvas"); host.badge:SetSize(22,22)
     host.badge:EnableMouse(false); host.badge:SetFrameLevel(host:GetFrameLevel()+1)
-    host.sideLabel=UI:Label(host.badge,"",13,"accent",true); host.sideLabel:SetPoint("CENTER")
+    local labelRole="accent";if style.materialProfile=="interface" then labelRole=false end
+    host.sideLabel=UI:Label(host.badge,"",13,labelRole,true); host.sideLabel:SetPoint("CENTER")
     function host:SetGeometry(source,target,side,selected)
+        local geometry=self.geometry or {};geometry[1],geometry[2],geometry[3],geometry[4]=source,target,side,selected;self.geometry=geometry
         local points,tip,wingA,wingB
         if side=="TOP" or side=="BOTTOM" then
             local sx,tx=source.x+source.width/2,target.x+target.width/2
@@ -90,7 +98,7 @@ function UI:AnchorConnector(parent)
             local line=self.lines[i]
             line:SetStartPoint("CENTER",UIParent,pair[1][1],pair[1][2])
             line:SetEndPoint("CENTER",UIParent,pair[2][1],pair[2][2])
-            line:SetColorTexture(Theme:Color(selected and "accent" or "muted"))
+            line:SetColorTexture(style:Color(selected and (style.materialProfile=="interface" and "accentText" or "accent") or "muted"))
             line:SetAlpha(selected and 1 or .65)
             line:SetShown(pair[1][1]~=pair[2][1] or pair[1][2]~=pair[2][2])
         end
@@ -108,19 +116,23 @@ function UI:AnchorConnector(parent)
         self.badge:ClearAllPoints(); self.badge:SetPoint("CENTER",UIParent,"CENTER",bx,by)
         self.badge:SetFrameLevel(self:GetFrameLevel()+1)
         self.sideLabel:SetText(({RIGHT="R",LEFT="L",TOP="T",BOTTOM="B",CENTER="C"})[side] or "?")
-        self.sideLabel:SetTextColor(Theme:Color(selected and "accent" or "muted"))
+        self.sideLabel:SetTextColor(style:Color(selected and (style.materialProfile=="interface" and "accentText" or "accent") or "muted"))
         self:Show()
     end
+    if style.materialProfile=="interface" then style:Bind(function()if host.geometry and host:IsShown()then host:SetGeometry(unpack(host.geometry))end end,host)end
     host:Hide(); return host
 end
 
 function UI:SnapGuides(parent)
+    local style=self:GetStyle()
     local host=CreateFrame("Frame",nil,parent); host:SetAllPoints(parent); host:EnableMouse(false)
-    host.lines={}
+    host.lines={};host.geometry={}
     for _,axis in ipairs({"x","y"}) do
         local line=host:CreateLine(nil,"OVERLAY"); line:SetThickness(1.5); line:Hide(); host.lines[axis]=line
     end
     function host:Draw(axis,hit,source,target)
+        if hit then local geometry=self.geometry[axis]or {};geometry[1],geometry[2],geometry[3]=hit,source,target;self.geometry[axis]=geometry
+        else self.geometry[axis]=nil end
         local line=self.lines[axis]
         if not hit then line:Hide(); return end
         target=target or source
@@ -131,9 +143,10 @@ function UI:SnapGuides(parent)
             line:SetStartPoint("CENTER",UIParent,math.min(source.x-source.width/2,target.x-target.width/2)-12,hit.coordinate)
             line:SetEndPoint("CENTER",UIParent,math.max(source.x+source.width/2,target.x+target.width/2)+12,hit.coordinate)
         end
-        line:SetColorTexture(Theme:Color("accent")); line:SetAlpha(hit.kind=="element" and 1 or .45)
+        line:SetColorTexture(style:Color(style.materialProfile=="interface" and "accentText" or "accent")); line:SetAlpha(hit.kind=="element" and 1 or .45)
         line:Show(); self:Show()
     end
+    if style.materialProfile=="interface" then style:Bind(function()if host:IsShown()then for axis,args in pairs(host.geometry)do host:Draw(axis,unpack(args))end end end,host)end
     host:Hide(); return host
 end
 function UI:ResizeSection(card,width,height)
@@ -186,6 +199,11 @@ function UI:ActionButton(parent,label,icon,width,callback,primary)
     local button=self:Button(parent,label,width,callback,primary)
     button:SetLabelInsets(32,10,"LEFT")
     button.icon=self:Icon(button,icon,16,primary and "bg" or "text"); D.Point(button.icon,"LEFT",10,0)
+    -- Match the actual material's ink from the first paint, including the dark
+    -- Atlas primary surface. Run after the icon's own theme paint as well.
+    self:GetStyle():Bind(function()
+        if button.interfaceTextColor then button.icon:SetColor(unpack(button.interfaceTextColor)) end
+    end,button.icon)
     return button
 end
 
@@ -193,6 +211,7 @@ end
 function UI:TextMenu(parent,label,width,options,callback)
     local button=self:Button(parent,label,width,function(host) UI:OpenDropdown(host) end,"nav")
     button:SetLabelInsets(8,8,"CENTER")
+    button.bvStyle=self:GetStyle()
     button.options=options; button.callback=callback; button.menuWidth=246; button.menuRows=16
     function button:SetValue() end -- Commands do not replace the menu heading.
     function button:SetOptions(items) self.options=items end
@@ -333,13 +352,14 @@ end
 -- Transient popup with a transparent screen-wide click shield. The dismissing
 -- press/release belongs to the shield, never to an editor control behind it.
 -- Parent ownership also closes it on window hide/minimize without idle polling.
-function UI:DismissiblePopup(parent,width,height)
+function UI:DismissiblePopup(parent,width,height,surfaceRole)
     local root=CreateFrame("Frame",nil,parent); root:Hide()
     root:SetAllPoints(UIParent); root:SetFrameStrata("TOOLTIP")
     root:SetFrameLevel(parent:GetFrameLevel()+50); root:EnableMouse(true)
     root:EnableMouseWheel(true); root:SetScript("OnMouseWheel",function() end)
     root:EnableKeyboard(not InCombatLockdown()); UI:SetKeyboardPropagation(root,true)
-    root.panel=self:Panel(root,width,height,"raised",6,.9); root.panel:EnableMouse(true)
+    local readingSurface=surfaceRole=="dialog" and self:GetStyle().materialProfile=="interface"
+    root.panel=self:Panel(root,width,height,readingSurface and "dialog" or "raised",6,readingSurface and 1 or .9); root.panel:EnableMouse(true)
     -- Movable by its top strip; position remembered per popup key.
     root.dragHandle=CreateFrame("Button",nil,root.panel)
     root.dragHandle:SetPoint("TOPLEFT",root.panel,"TOPLEFT",0,0);root.dragHandle:SetPoint("TOPRIGHT",root.panel,"TOPRIGHT",-D.ToNative(72),0)
@@ -372,7 +392,16 @@ end
 -- separate hit targets. The consumer owns persistence and execution semantics.
 function UI:LibraryTree(parent,onSelect,onToggle,onRename,onMove,options)
     options=options or {}
-    local tree=CreateFrame("Frame",nil,parent); tree.pool={}; tree.items={}; tree.collapsed={}; tree.definitions={}
+    local style=self:GetStyle()
+    local interface=style.materialProfile=="interface"
+    local rowHeight=interface and style.interfaceThemeKey=="classic" and 30 or 28
+    local rowStep=rowHeight+2
+    local function construct(method,...)
+        local args,n={...},select("#",...)
+        if interface and (method=="Label" or method=="Icon") and args[4]=="accent" then args[4]="accentText" end
+        return UI:WithStyle(style,UI[method],UI,unpack(args,1,n))
+    end
+    local tree=CreateFrame("Frame",nil,parent); tree.bvStyle=style; tree.pool={}; tree.items={}; tree.collapsed={}; tree.definitions={}
     tree.viewport=self:Form(tree,220,200,tree); tree.viewport:SetClipsChildren(true)
     self:Place(tree.viewport,tree,0,0)
     function tree:CancelDrag()
@@ -435,7 +464,7 @@ function UI:LibraryTree(parent,onSelect,onToggle,onRename,onMove,options)
                         control.lastClick=nil; self:Rename(item)
                     else control.lastClick=GetTime(); control.lastID=item.id; onSelect(item) end
                 end
-                row=UI:Button(self.viewport.content,"",width,select,"nav")
+                row=construct("Button",self.viewport.content,"",width,select,"nav")
                 if options.onContext and not options.readOnly then
                     row:RegisterForClicks("LeftButtonUp","RightButtonUp")
                     row:SetScript("OnClick",function(control,button)
@@ -445,8 +474,8 @@ function UI:LibraryTree(parent,onSelect,onToggle,onRename,onMove,options)
                         else select(control) end
                     end)
                 end
-                D.Height(row,28); UI:GetStyle():Font(row.label,12)
-                row.rename=UI:InlineEdit(row,function(text)
+                D.Height(row,rowHeight); style:Font(row.label,12)
+                row.rename=construct("InlineEdit",row,function(text)
                     local target=self.renameItem; self.renameItem=nil; if target and onRename then onRename(target,text) end
                 end); UI:Place(row.rename,row,20,1); row.rename:SetFrameLevel(row:GetFrameLevel()+5)
                 if onMove then row:RegisterForDrag("LeftButton") end
@@ -456,10 +485,10 @@ function UI:LibraryTree(parent,onSelect,onToggle,onRename,onMove,options)
                     self:CancelDrag(); self.dragID=row.item.id; self.dragRow=row; row.suppressClick=true
                     self.dragContext=options.context and options.context()
                     if not self.ghost then
-                        self.ghost=UI:Panel(UIParent,190,34,"raised"); self.ghost:SetFrameStrata("TOOLTIP"); self.ghost:EnableMouse(false); self.ghost:SetAlpha(.78)
-                        self.ghost.icon=UI:Icon(self.ghost,"spark",16,"accent"); D.Point(self.ghost.icon,"LEFT",10,0)
-                        self.ghost.label=UI:Label(self.ghost,"",12,"text",true); D.Point(self.ghost.label,"LEFT",34,0); D.Size(self.ghost.label,144,24); self.ghost.label:SetWordWrap(false)
-                        self.marker=UI:Rule(self,190,"accent"); D.Height(self.marker,2)
+                        self.ghost=construct("Panel",UIParent,190,34,"raised"); self.ghost:SetFrameStrata("TOOLTIP"); self.ghost:EnableMouse(false); self.ghost:SetAlpha(.78)
+                        self.ghost.icon=construct("Icon",self.ghost,"spark",16,"accent"); D.Point(self.ghost.icon,"LEFT",10,0)
+                        self.ghost.label=construct("Label",self.ghost,"",12,"text",true); D.Point(self.ghost.label,"LEFT",34,0); D.Size(self.ghost.label,144,24); self.ghost.label:SetWordWrap(false)
+                        self.marker=construct("Rule",self,190,"accent"); D.Height(self.marker,2)
                     end
                     self.ghost:SetScale(self:GetEffectiveScale()/UIParent:GetEffectiveScale()); self.ghost.label:SetText(row.item.label); self.ghost:Show()
                     self:DragStep(); self.dragTimer=C_Timer.NewTicker(.025,function() self:DragStep() end)
@@ -474,13 +503,13 @@ function UI:LibraryTree(parent,onSelect,onToggle,onRename,onMove,options)
                 row:HookScript("OnLeave",function()
                     if self.dragID then self.dropID=nil; row:SetSelected(self.value==row.item.id) end
                 end)
-                row.expand=UI:IconButton(row,"chevron",function()
+                row.expand=construct("IconButton",row,"chevron",function()
                     self.collapsed[row.item.id]=not self.collapsed[row.item.id]; self:Rebuild()
                 end,"nav"); D.Size(row.expand,22,24)
-                row.closed=UI:Icon(row.expand,"right",16,"text"); D.Point(row.closed,"CENTER")
-                row.toggle=UI:Switch(row,false,function(value) if not InCombatLockdown() then onToggle(row.item,value) end end)
-                row.status=UI:Icon(row,"spark",12,"accent")
-                row.changed=UI:Label(row,"*",18,"accent",true);D.Point(row.changed,"LEFT",6,0)
+                row.closed=construct("Icon",row.expand,"right",16,"text"); D.Point(row.closed,"CENTER")
+                row.toggle=construct("Switch",row,false,function(value) if not InCombatLockdown() then onToggle(row.item,value) end end)
+                row.status=construct("Icon",row,"spark",12,"accent")
+                row.changed=construct("Label",row,"*",18,"accent",true);D.Point(row.changed,"LEFT",6,0)
                 self.pool[index]=row
             end
             local item=entry.item
@@ -489,7 +518,7 @@ function UI:LibraryTree(parent,onSelect,onToggle,onRename,onMove,options)
                 if UI.dropdown and UI.dropdown.owner and UI.dropdown.owner.anchor==row then UI:CloseDropdown() end
             end
             row.item=item; self.items[item.id]=row
-            UI:Place(row,self.viewport.content,0,(index-1)*30); D.Width(row,width)
+            UI:Place(row,self.viewport.content,0,(index-1)*rowStep); D.Width(row,width)
             local indent=entry.depth*14
             row:SetLabelInsets(indent+26,44,"LEFT")
             row:SetLabelText(item.label); row:SetSelected(self.value==item.id); row:Show()
@@ -504,11 +533,11 @@ function UI:LibraryTree(parent,onSelect,onToggle,onRename,onMove,options)
             if InCombatLockdown() then row.toggle:Disable() else row.toggle:Enable() end
             UI:AttachTooltip(row,item.label,item.children and (#item.children.." visible graphs. Use the arrow to expand or collapse.") or options.readOnly and "Quick-Access: activation only. Open Studio to edit this graph." or (item.changed and "Unsaved changes. " or "").."Select to edit. The switch changes activation, not selection.")
             UI:AttachTooltip(row.toggle,item.label,InCombatLockdown() and "Change activation after combat." or item.toggleHelp or item.children and "Enable or pause this group. Individual switches are preserved." or
-                item.blocked and "Enabled, but paused by its group or module." or "Enable or disable this applied graph. Draft changes are not applied.")
+                item.blocked and "Enabled, but paused by its group, module or load conditions." or "Enable or disable this applied graph. Draft changes are not applied.")
         end
         for i=#visible+1,#self.pool do self.pool[i]:Hide() end
-        local form=self.viewport; D.Height(form.content,math.max(1,#visible*30))
-        form.maximum=math.max(0,#visible*30-D.GetHeight(form))
+        local form=self.viewport; D.Height(form.content,math.max(1,#visible*rowStep))
+        form.maximum=math.max(0,#visible*rowStep-D.GetHeight(form))
         form.slider:SetMinMaxValues(0,form.maximum); form.slider:SetValue(math.min(form.slider:GetValue(),form.maximum))
         form.slider:SetShown(form.maximum>0)
     end
@@ -516,9 +545,19 @@ function UI:LibraryTree(parent,onSelect,onToggle,onRename,onMove,options)
     function tree:SetValue(id) self.value=id; for key,row in pairs(self.items) do row:SetSelected(key==id) end end
     tree:Arrange(220,200); return tree
 end
+-- Only authoring/library windows opt into an opaque reading base. Theme RGB,
+-- frame alpha and other windows keep their existing contracts.
+function UI:WindowReadingSurface(window,style)
+    if style.materialProfile~="interface" or window.bvReadingSurface then return end
+    window.bvReadingSurface=style
+    style:Bind(function() window:PaintSurface({style:Color("bg",1)},nil,1) end,window)
+end
 -- Same hierarchy and controller as Studio, without authoring gestures.
 function UI:QuickAccess(controller)
-    local window=self:Window("BVAddonSuiteAuraQuick",280,360,{title="Quick-Access",minWidth=230,minHeight=180,compact=true})
+    local style=self:InterfaceStyle();if not style then return nil end
+    return self:WithStyle(style,function()
+    local window=self:Window("BVAddonSuiteAuraQuick",280,360,{title="Quick-Access",minWidth=230,minHeight=180,compact=true,hudIcon="sparkles"})
+    self:WindowReadingSurface(window,style)
     for i=#UISpecialFrames,1,-1 do if UISpecialFrames[i]=="BVAddonSuiteAuraQuick" then table.remove(UISpecialFrames,i) end end
     local tree
     tree=self:LibraryTree(window.content,function(item)
@@ -558,6 +597,7 @@ function UI:QuickAccess(controller)
     end)
     window:HookScript("OnHide",function() ns.Events:Release(window) end)
     window.loading=true; window:Arrange(); window.loading=nil; return window
+    end)
 end
 function UI:Field(parent,title,control,x,y)
     local label=self:Place(self:Label(parent,title,12,"muted"),parent,x,y)

@@ -8,10 +8,10 @@ local _,ns=...
 local UI,D=ns.UI,ns.DesignSystem.Metrics
 local Markdown={maxLength=4000};ns.Markdown=Markdown
 local colors={bold="ffffffff",italic="ffc8c8c8",code="ffe6c27a",link="ff6fb7ff",strike="ff8a8a8a"}
-local function color(key,text) return "|c"..colors[key]..text.."|r" end
 -- Inline markup on already escaped text (| doubled). Code spans are replaced
 -- first so their content is never formatted further.
-function Markdown.Inline(text)
+function Markdown.Inline(text,palette)
+    local function color(key,value) return "|c"..((palette or colors)[key])..value.."|r" end
     text=text:gsub("|","||")
     local codes={}
     text=text:gsub("`([^`]+)`",function(c) codes[#codes+1]=c;return "\0"..#codes.."\0" end)
@@ -82,20 +82,44 @@ local sizes={17,15,13}
 -- and blank lines as typed (notes)}. Defaults stay compact for notes on the
 -- canvas; the wiki passes roomier values.
 function UI:MarkdownView(parent,width,options)
+    local style=options and options.style or UI:GetStyle()
+    local interface=style.materialProfile=="interface"
     local view=CreateFrame("Frame",nil,parent);D.Size(view,width,1);view:EnableMouse(false)
-    view.width=width;view.labels={};view.textures={}
+    view.width=width;view.labels={};view.textures={};view.bvStyle=style
     local o=options or {}
     view.body,view.spacing,view.gap,view.rowPad,view.breaks=o.body or 12,o.spacing or 0,o.gap or 4,o.rowPad or 4,o.breaks==true
     local function label(i)
-        local l=view.labels[i];if not l then l=UI:Label(view,"",12,"text");l:SetJustifyH("LEFT");l:SetJustifyV("TOP");l:SetWordWrap(true);view.labels[i]=l end
+        local l=view.labels[i];if not l then
+            local role="text";if interface then role=false end
+            l=style:Label(view,"",12,role);
+            if interface then l.bvAfterFont=function()
+                if l.bvMarkdownCode then l.displayFont=nil;UI:ApplyMediaFont(l,"Fonts\\ARIALN.TTF",l.bvFontSize,"") end
+                l:SetTextColor(style:Color(l.bvMarkdownRole or "text"))
+            end end;l:SetJustifyH("LEFT");l:SetJustifyV("TOP");l:SetWordWrap(true);view.labels[i]=l end
         return l
     end
     local function texture(i)
         local t=view.textures[i];if not t then t=view:CreateTexture(nil,"BACKGROUND");view.textures[i]=t end
         return t
     end
+    local function paintFont(label,font,size,flags,role)
+        if interface then
+            label.bvMarkdownRole=role or "text";label.bvMarkdownCode=font=="Fonts\\ARIALN.TTF";style:Font(label,size,flags=="OUTLINE" and "bold" or "regular")
+            if label.bvMarkdownCode then label.displayFont=nil;UI:ApplyMediaFont(label,font,size,flags) end
+            label:SetTextColor(style:Color(label.bvMarkdownRole))
+        else UI:ApplyMediaFont(label,font,size,flags) end
+    end
+    local function palette()
+        if not interface then return end
+        local out={}
+        for key,role in pairs({bold="text",italic="muted",code="accentText",link="accentText",strike="muted"})do
+            local r,g,b=style:Color(role);out[key]=string.format("ff%02x%02x%02x",math.floor(r*255+.5),math.floor(g*255+.5),math.floor(b*255+.5))
+        end
+        return out
+    end
     -- Renders the note and returns its height in design units.
     function view:SetMarkdown(source,limit)
+        self.source,self.sourceLimit=source,limit;local inlineColors=palette()
         for _,l in ipairs(self.labels) do l:Hide() end
         for _,t in ipairs(self.textures) do t:Hide() end
         local y,li,ti=0,0,0
@@ -123,15 +147,15 @@ function UI:MarkdownView(parent,width,options)
                     local x,rowH=0,0;local rowLabels={}
                     for c=1,cols do
                         li=li+1;local l=label(li)
-                        UI:ApplyMediaFont(l,"Fonts\\FRIZQT__.TTF",self.body-1,header and "OUTLINE" or "")
+                        paintFont(l,"Fonts\\FRIZQT__.TTF",self.body-1,header and "OUTLINE" or "","text")
                         if l.SetSpacing then l:SetSpacing(self.spacing) end
-                        l:SetTextColor(1,1,1,1);UI:Place(l,self,x+6,y+self.rowPad);D.Width(l,widths[c]-12)
-                        l:SetText(Markdown.Inline(row[c] or ""));l:SetHeight(0);l:Show()
+                        if not interface then l:SetTextColor(1,1,1,1) end;UI:Place(l,self,x+6,y+self.rowPad);D.Width(l,widths[c]-12)
+                        l:SetText(Markdown.Inline(row[c] or "",inlineColors));l:SetHeight(0);l:Show()
                         local h=math.max(13,D.ToDesign(l:GetStringHeight()));D.Height(l,h);rowH=math.max(rowH,h)
                         x=x+widths[c]
                     end
                     ti=ti+1;local t=texture(ti)
-                    t:SetColorTexture(1,1,1,header and .12 or (r%2==0 and .04 or .015));UI:Place(t,self,0,y);D.Size(t,self.width,rowH+2*self.rowPad);t:Show()
+                    if interface then t:SetColorTexture(style:Color("text",header and .12 or (r%2==0 and .04 or .015))) else t:SetColorTexture(1,1,1,header and .12 or (r%2==0 and .04 or .015)) end;UI:Place(t,self,0,y);D.Size(t,self.width,rowH+2*self.rowPad);t:Show()
                     y=y+rowH+2*self.rowPad
                 end
                 y=y+8
@@ -139,25 +163,27 @@ function UI:MarkdownView(parent,width,options)
                 -- One empty text line; the gap after the previous block stays.
                 y=y+self.body+2
             elseif b.kind=="rule" then
-                ti=ti+1;local t=texture(ti);t:SetColorTexture(1,1,1,.25);UI:Place(t,self,0,y+6);D.Size(t,self.width,1);t:Show();y=y+14
+                ti=ti+1;local t=texture(ti);if interface then
+                    t:SetColorTexture(style:Color("controlEdge"));if t.SetSnapToPixelGrid then t:SetSnapToPixelGrid(false) end;if t.SetTexelSnappingBias then t:SetTexelSnappingBias(0) end
+                else t:SetColorTexture(1,1,1,.25) end;UI:Place(t,self,0,y+6);D.Size(t,self.width,1);t:Show();y=y+14
             else
-                li=li+1;local l=label(li);local x,w,size,flags,text=0,self.width,self.body,"",Markdown.Inline(b.text or "")
+                li=li+1;local l=label(li);local x,w,size,flags,text=0,self.width,self.body,"",Markdown.Inline(b.text or "",inlineColors)
                 if l.SetSpacing then l:SetSpacing(self.spacing) end
                 local font="Fonts\\FRIZQT__.TTF"
                 if b.kind=="heading" then size=sizes[b.level]+(self.body-12);flags="OUTLINE"
                 elseif b.kind=="bullet" then x=10+b.level*12;text="• "..text
                 elseif b.kind=="number" then x=10+b.level*12;text=b.number..". "..text
                 elseif b.kind=="quote" then x=12
-                elseif b.kind=="code" then x=6;size=self.body-1;font="Fonts\\ARIALN.TTF";text=color("code",(b.text:gsub("|","||"))) end
-                UI:ApplyMediaFont(l,font,size,flags)
-                l:SetTextColor(b.kind=="quote" and .75 or 1,b.kind=="quote" and .75 or 1,b.kind=="quote" and .75 or 1,1)
+                elseif b.kind=="code" then x=6;size=self.body-1;font="Fonts\\ARIALN.TTF";text="|c"..((inlineColors or colors).code)..(b.text:gsub("|","||")).."|r" end
+                paintFont(l,font,size,flags,b.kind=="quote" and "muted" or "text")
+                if not interface then l:SetTextColor(b.kind=="quote" and .75 or 1,b.kind=="quote" and .75 or 1,b.kind=="quote" and .75 or 1,1) end
                 UI:Place(l,self,x,y+(b.kind=="code" and 4 or 0));D.Width(l,w-x-(b.kind=="code" and 6 or 0))
                 l:SetText(text);l:SetHeight(0);l:Show()
                 local h=math.max(size+2,D.ToDesign(l:GetStringHeight()));D.Height(l,h)
                 if b.kind=="quote" or b.kind=="code" then
                     ti=ti+1;local t=texture(ti)
-                    if b.kind=="quote" then t:SetColorTexture(.55,.7,1,.7);UI:Place(t,self,2,y);D.Size(t,3,h)
-                    else t:SetColorTexture(0,0,0,.35);UI:Place(t,self,0,y);D.Size(t,self.width,h+8);h=h+8 end
+                    if b.kind=="quote" then if interface then t:SetColorTexture(style:Color("accentText",.7)) else t:SetColorTexture(.55,.7,1,.7) end;UI:Place(t,self,2,y);D.Size(t,3,h)
+                    else if interface then t:SetColorTexture(style:Color("field")) else t:SetColorTexture(0,0,0,.35) end;UI:Place(t,self,0,y);D.Size(t,self.width,h+8);h=h+8 end
                     t:Show()
                 end
                 y=y+h+(b.kind=="heading" and self.gap+2 or self.gap)
@@ -165,6 +191,7 @@ function UI:MarkdownView(parent,width,options)
         end
         D.Height(self,math.max(1,y));return y
     end
+    if interface then style:Bind(function() if view.source~=nil then view:SetMarkdown(view.source,view.sourceLimit) end end,view) end
     return view
 end
 -- Edit window for a Markdown Note node: source on the left, live preview on

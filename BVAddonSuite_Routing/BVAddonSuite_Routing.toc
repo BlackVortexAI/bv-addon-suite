@@ -2,29 +2,58 @@
 ## Title: BV Addon Suite - Routing
 ## Notes: Ways you can really walk: round slopes, water, cliffs and painted areas, by flight, ship, zeppelin and tram. Used by BV Gather; /bv route leads you anywhere. Requires BV Core.
 ## Author: BV
-## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.1.7
-## Dependencies: BVAddonSuite
+## IconTexture: Interface\AddOns\BVAddonSuite_Routing\Media\Brand\module-icon
+## Version: 0.1.11
+## Dependencies: BVAddonSuite, BVAddonSuite_MapData
 ## SavedVariables: BVRoutingDB
 
+Mark\Start.lua
 Routing.lua
+Scheduler.lua
 ZoneLevels.lua
-Transit.lua
-Terrain\Data_azeroth.lua
-Terrain\Data_kalimdor.lua
-Grid.lua
-Terrain\Fine.lua
-Terrain\FineData.lua
+Geo.lua
+Mark\Maps.lua
 Data\Transports.lua
+Data\ShipBoarding.lua
+Data\TransportAdditions.lua
 Data\Maps.lua
+Mark\Towns.lua
+Data\Towns.lua
+Mark\Roads.lua
 Data\Roads.lua
 Data\Revision.lua
-Data\Transit.lua
+Mark\Nav.lua
+Hpa.lua
+HpaOverlay.lua
+Data\Nav_1415.lua
+Mark\Nav1414.lua
+Data\Nav_1414.lua
+Mark\Nav2665.lua
+Data\Nav_2665.lua
+Data\NavTails_1415.lua
+Data\NavTails_1414.lua
+Data\NavFlat_1415.lua
+Data\NavFlat_1414.lua
+Data\NavZones_1415.lua
+Data\NavZones_1414.lua
+Mark\Ground.lua
+Data\NavGround_1415.lua
+Data\NavGround_1414.lua
+Data\NavGround_2665.lua
+Data\NavLevels_1415.lua
+Data\NavLevels_1414.lua
+Mark\Code.lua
 Level.lua
 Height.lua
 Navigate.lua
+Timetable.lua
+TransportWatch.lua
+TransportSync.lua
 Probe.lua
 UI\Watch.lua
 UI\Guide.lua
 UI\Busy.lua
 Commands.lua
+UI\Arrivals.lua
+
+Mark\End.lua

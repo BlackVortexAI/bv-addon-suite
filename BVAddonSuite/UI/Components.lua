@@ -83,37 +83,41 @@ function UI:Bind(widget,render)
     self.styled[widget]=render; render(widget); return widget
 end
 
--- UI:WithStyle (UI/StyleFamilies.lua) builds a window in an in-game style.
+-- Shared lifecycle services carry no palette, material or constructor state.
+-- Interface and gameplay factories share only their owner and weak registry.
 function UI:GetStyle()
     if self.styleOverride then return self.styleOverride end
     return self:ToolStyle()
 end
+function UI:InterfaceStyle()
+    return ns.Config and ns.Config:EnsureShellStyle() or nil
+end
 function UI:ToolStyle()
-    if self.styleContext then return self.styleContext end
+    return assert(self:InterfaceStyle(),"Interface context is not ready; initialize Settings before building tool widgets")
+end
+function UI:ContextServices()
+    if self.contextServices then return self.contextServices end
     local owner={}
     function owner:ShowTooltip(control,title,body) UI:ShowTooltip(control,title,body) end
     function owner:HideTooltip() UI:HideTooltip() end
     function owner:ShowDropdown(control) UI:OpenDropdown(control) end
-    local style=DS:New(owner)
-    style.theme=ns.Settings:Get("themeKey") or "violet"
-    style.colorResolver=function(key,alpha) return Theme:Color(key,alpha) end
-    style.fontResolver=function(region,size,weight)
+    local services={owner=owner}
+    services.fontResolver=function(region,size,weight)
         Theme:Font(region,size,(weight=="bold" or weight=="display") and Theme:BoldFont() or nil)
     end
     -- Keep production painters in the existing weak widget registry. A context
     -- must not permanently retain closed/rebuilt module controls in paints/edits.
-    style.registerPaint=function(widget,paint)
+    services.registerPaint=function(widget,paint)
         widget.bvPaints=widget.bvPaints or {}
         widget.bvPaints[#widget.bvPaints+1]=paint
         UI.styled[widget]=function(current) for _,fn in ipairs(current.bvPaints) do fn() end end
         paint()
     end
-    self.styleContext=style
-    return style
+    self.contextServices=services
+    return services
 end
 
 function UI:Refresh()
-    if self.styleContext then self.styleContext.theme=ns.Settings:Get("themeKey"); self.styleContext:Refresh() end
     -- Snapshot first: a render may register new widgets (a progress bar adds
     -- labels), and adding keys while pairs() runs can skip entries at random.
     local widgets={}
@@ -121,6 +125,14 @@ function UI:Refresh()
     for _,widget in ipairs(widgets) do local render=self.styled[widget]; if render then render(widget) end end
     if ns.Styles then ns.Styles:Notify() end
     if ns.Config then ns.Config:Refresh() end
+end
+
+-- Inert hosts have ownership and geometry, never a painted material to hide.
+function UI:Container(parent,width,height,style)
+    style=style or self:GetStyle()
+    local host=CreateFrame("Frame",nil,parent)
+    M.Size(host,width,height);host.bvStyle=style;host.bvTooltipStyle=style;host.surfaceHidden=true
+    return host
 end
 
 -- Compatibility facade for callers controlling entire surfaces. Never replace
@@ -143,6 +155,8 @@ end
 function UI:Compatible(frame) return compatibility(frame) end
 function UI:HideSurface(frame)
     frame.surfaceHidden=true
+    if frame.headerSurface then frame.headerSurface:Hide() end
+    if frame.hudSurface then frame.hudSurface:Hide() end
     if frame.fill then frame.fill:Hide() end
     for _,edge in ipairs(frame.edges or {}) do edge:Hide() end
     if frame.sheen then frame.sheen:Hide() end
@@ -176,6 +190,7 @@ end
 -- clipboard access: copy/cut/paste stay on Ctrl+C / Ctrl+X / Ctrl+V.
 function UI:TextFieldMenu(input,changed)
     if input.bvTextMenu then return end
+    input.bvMenuStyle=input.bvMenuStyle or self:GetStyle()
     input.bvTextMenu=true;input.bvHistory={}
     input:HookScript("OnTextChanged",function(self,user)
         if user and not self.bvUndoing then
@@ -209,6 +224,7 @@ function UI:Input(parent,width,onSubmit)
     return input
 end
 function UI:Tabs(parent,definitions,callback)
+    local style=self:GetStyle()
     local host=CreateFrame("Frame",nil,parent); host.buttons={}; host.pool={}
     M.Size(host,math.max(1,#definitions)*130,38)
     -- host.bvHeight: compact callers (settings window) use 30.
@@ -216,12 +232,20 @@ function UI:Tabs(parent,definitions,callback)
         M.Width(self,width)
         local count=#(self.definitions or {})
         if count==0 then return end
-        local gap=8; local cell=math.min(132,math.max(1,(width-gap*(count-1))/count))
+        local gap=style.shellPresentation=="clean" and 0 or 8; local cell=math.min(132,math.max(1,(width-gap*(count-1))/count))
+        local x=0
         local height=self.bvHeight or 38
         M.Height(self,height)
         for index,definition in ipairs(self.definitions) do
             local button=self.buttons[definition.id]
-            button:ClearAllPoints(); M.Point(button,"TOPLEFT",(index-1)*(cell+gap),0); M.Size(button,cell,height)
+            button:ClearAllPoints(); M.Point(button,"TOPLEFT",x,0)
+            local bw=cell
+            if style.shellPresentation=="clean" then
+                local label=button.label;label:SetText(button.fullLabel or definition.label)
+                bw=math.min(cell,math.max(48,math.ceil(M.ToDesign(label:GetUnboundedStringWidth()))+26))
+            end
+            M.Size(button,bw,height);x=x+bw+gap
+            if style.shellPresentation=="clean" then button:SetLabelText(definition.label)end
         end
     end
     function host:SetDefinitions(items)
@@ -229,7 +253,8 @@ function UI:Tabs(parent,definitions,callback)
         for index,definition in ipairs(self.definitions) do
             local button=self.pool[index]
             if not button then
-                button=UI:Button(self,"",120,function(control) invoke("tab",callback,control.tabID) end,"tab")
+                button=UI:WithStyle(style,function()return UI:Button(self,"",120,function(control) invoke("tab",callback,control.tabID) end,"tab")end)
+                if style.shellPresentation=="clean" then style:Font(button.label,12);button:SetLabelInsets(12,12,"CENTER")end
                 self.pool[index]=button
             end
             button.tabID=definition.id; button:SetLabelText(definition.label); button:Show()
@@ -257,13 +282,17 @@ end
 -- line of mouse actions under a hairline.
 local TIP={MIN=150,MAX=240,PADX=10,TOP=7,BOTTOM=8,TITLE=13,BODY=12,SMALL=11}
 local function tipRegion(parent,size,role,bold)
-    local label=UI:Label(parent,"",size,role,bold)
+    local label=parent.bvTooltipStyle:Label(parent,"",size,role,bold and "bold" or "regular")
     label:SetJustifyV("TOP");label:SetWordWrap(true)
     return label
 end
-function UI:TooltipFrame()
-    if self.tooltip then return self.tooltip end
+function UI:TooltipFrame(style)
+    if not style and self.tooltip then return self.tooltip end
+    style=style or self:ToolStyle()
+    self.tooltips=self.tooltips or {}
+    if self.tooltips[style] then return self.tooltips[style] end
     local tooltip=CreateFrame("Frame",nil,UIParent)
+    tooltip.bvTooltipStyle=style
     tooltip:SetFrameStrata("TOOLTIP");tooltip:SetClampedToScreen(true);tooltip:EnableMouse(false);tooltip:Hide()
     tooltip.ground=tooltip:CreateTexture(nil,"BACKGROUND");tooltip.ground:SetAllPoints(tooltip)
     tooltip.edges={}
@@ -274,7 +303,11 @@ function UI:TooltipFrame()
     tooltip.edges[4]:SetPoint("TOPRIGHT");tooltip.edges[4]:SetPoint("BOTTOMRIGHT");tooltip.edges[4]:SetWidth(1)
     -- Rounded and crisp like the windows, with their soft shadow (Florian
     -- 2026-10-11, finer); the square ground and edges stay as the fallback.
-    if DS.Slice and DS.SHADOW then
+    if style.materialProfile=="interface" then
+        style:Skin(tooltip,"tooltip",6,1)
+        tooltip.ground:Hide()
+        for _,edge in ipairs(tooltip.edges) do edge:Hide() end
+    elseif DS.Slice and DS.SHADOW then
         local lab="Interface\\AddOns\\BVAddonSuite\\Media\\DesignLab\\"
         tooltip.fills=DS.Slice(tooltip,lab.."surface.tga",8,"BACKGROUND",0)
         tooltip.lines=DS.Slice(tooltip,lab.."border.tga",8,"BORDER",0)
@@ -283,13 +316,28 @@ function UI:TooltipFrame()
         for _,edge in ipairs(tooltip.edges) do edge:Hide() end
     end
     tooltip.title=tipRegion(tooltip,TIP.TITLE,"text",true);tooltip.title:SetWordWrap(false)
-    tooltip.tag=tipRegion(tooltip,TIP.SMALL,"muted");tooltip.tag:SetWordWrap(false);tooltip.tag:SetJustifyH("RIGHT")
+    tooltip.tag=tipRegion(tooltip,TIP.SMALL,false);tooltip.tag:SetWordWrap(false);tooltip.tag:SetJustifyH("RIGHT")
     tooltip.body=tipRegion(tooltip,TIP.BODY,"text")
     tooltip.rule=tooltip:CreateTexture(nil,"ARTWORK")
     tooltip.hint=tipRegion(tooltip,TIP.SMALL,"muted")
     tooltip.labels,tooltip.values={},{}
+    function tooltip:PaintContent()
+        local br,bg,bb=style:Color("bg")
+        if style.materialProfile~="interface" then
+            self.ground:SetColorTexture(br*.6,bg*.6,bb*.6,.95)
+            for _,edge in ipairs(self.edges) do edge:SetColorTexture(1,1,1,.1) end
+            for _,t in ipairs(self.fills or {}) do t:SetVertexColor(br*.6,bg*.6,bb*.6,.96) end
+            for _,t in ipairs(self.lines or {}) do t:SetVertexColor(1,1,1,.12) end
+        end
+        if style.materialProfile=="interface" then self.rule:SetColorTexture(style:Color("edge",.35))
+        else self.rule:SetColorTexture(1,1,1,.08) end
+        self.title:SetTextColor(style:Color("text"))
+        local color=self.content and self.content.tagColor
+        if color then self.tag:SetTextColor(color[1],color[2],color[3]) else self.tag:SetTextColor(style:Color("muted")) end
+    end
+    style:Bind(function()tooltip:PaintContent()end,tooltip)
     -- Older callers may still set these fields on the frame.
-    self.tooltip=tooltip
+    self.tooltips[style]=tooltip
     return tooltip
 end
 -- Width of a text at a size (the client measures; a fallback estimate where it cannot).
@@ -308,7 +356,17 @@ end
 function UI:ShowTooltip(owner,title,text)
     title=title or owner.tooltipTitle
     if not title or not ns.Settings:Get("tooltips") then return end
-    local tooltip=self:TooltipFrame()
+    -- The owner determines appearance, never the ambient factory at hover time.
+    local style=owner.bvTooltipStyle or owner.bvStyle
+    local parent=owner.GetParent and owner:GetParent()
+    while not style and parent do
+        style=parent.bvTooltipStyle or parent.bvStyle
+        parent=parent.GetParent and parent:GetParent()
+    end
+    style=style or self:ToolStyle()
+    local tooltip=self:TooltipFrame(style)
+    if self.tooltip and self.tooltip~=tooltip then self:HideTooltip() end
+    self.tooltip=tooltip
     tooltip.owner=owner
     -- Its owner's scale; a pin on a zoomed map: the map's, not the zoom
     -- (Florian 2026-10-14: zoomed in, the tooltip grew with it).
@@ -320,15 +378,8 @@ function UI:ShowTooltip(owner,title,text)
     local body=type(content.text)=="string" and content.text or ""
     local hint=type(content.hint)=="string" and content.hint or ""
     local tag=type(content.tag)=="string" and content.tag or ""
-    -- Colours from the tool style; the ground slightly darker than its panels.
-    local br,bg,bb=Theme:Color("bg")
-    tooltip.ground:SetColorTexture(br*.6,bg*.6,bb*.6,.95)
-    for _,edge in ipairs(tooltip.edges) do edge:SetColorTexture(1,1,1,.1) end
-    for _,t in ipairs(tooltip.fills or {}) do t:SetVertexColor(br*.6,bg*.6,bb*.6,.96) end
-    for _,t in ipairs(tooltip.lines or {}) do t:SetVertexColor(1,1,1,.12) end
-    tooltip.rule:SetColorTexture(1,1,1,.08)
-    tooltip.title:SetTextColor(Theme:Color("text"))
-    if content.tagColor then tooltip.tag:SetTextColor(content.tagColor[1],content.tagColor[2],content.tagColor[3]) else tooltip.tag:SetTextColor(Theme:Color("muted")) end
+    tooltip.content=content
+    tooltip:PaintContent()
     -- Width: as much as the content needs, within MIN..MAX.
     local need=textWidth(tooltip.title,title,TIP.TITLE)+(tag~="" and textWidth(tooltip.tag,tag,TIP.SMALL)+12 or 0)
     local labelWidth,valueWidth=0,0
@@ -353,7 +404,7 @@ function UI:ShowTooltip(owner,title,text)
         local label,value=tooltip.labels[i],tooltip.values[i]
         label:ClearAllPoints();M.Point(label,"TOPLEFT",tooltip,"TOPLEFT",TIP.PADX,-y);M.Size(label,inner*.5,TIP.BODY*1.3);label:SetText(tostring(row[1] or ""))
         value:ClearAllPoints();M.Point(value,"TOPRIGHT",tooltip,"TOPRIGHT",-TIP.PADX,-y);M.Size(value,inner-math.min(labelWidth,inner*.5)-8,TIP.BODY*1.3);value:SetText(tostring(row[2] or ""))
-        label:SetTextColor(Theme:Color("muted"));value:SetTextColor(Theme:Color("text"))
+        label:SetTextColor(style:Color("muted"));value:SetTextColor(style:Color("text"))
         label:Show();value:Show()
         y=y+TIP.BODY*1.3
     end
@@ -362,7 +413,7 @@ function UI:ShowTooltip(owner,title,text)
         if #rows>0 then y=y+3 end
         local height=textHeight(tooltip.body,body,TIP.BODY,inner)
         tooltip.body:ClearAllPoints();M.Point(tooltip.body,"TOPLEFT",tooltip,"TOPLEFT",TIP.PADX,-y);M.Height(tooltip.body,height)
-        tooltip.body:SetTextColor(Theme:Color("text"));tooltip.body:Show()
+        tooltip.body:SetTextColor(style:Color("text"));tooltip.body:Show()
         y=y+height
     else tooltip.body:Hide() end
     if hint~="" then
@@ -371,7 +422,7 @@ function UI:ShowTooltip(owner,title,text)
         y=y+5
         local height=textHeight(tooltip.hint,hint,TIP.SMALL,inner)
         tooltip.hint:ClearAllPoints();M.Point(tooltip.hint,"TOPLEFT",tooltip,"TOPLEFT",TIP.PADX,-y);M.Height(tooltip.hint,height)
-        tooltip.hint:SetTextColor(Theme:Color("muted"));tooltip.hint:Show()
+        tooltip.hint:SetTextColor(style:Color("muted"));tooltip.hint:Show()
         y=y+height
     else tooltip.rule:Hide();tooltip.hint:Hide() end
     M.Size(tooltip,inner+2*TIP.PADX,y+TIP.BOTTOM)
@@ -380,11 +431,15 @@ end
 function UI:HideTooltip(owner)
     if self.tooltip and (not owner or self.tooltip.owner==owner) then self.tooltip:Hide(); self.tooltip.owner=nil end
 end
-function UI:StatusBar(parent,width,height)
+-- Loading indicators may opt into their captured Interface context. Omission
+-- preserves the global material preview and callers with their own bar colours.
+function UI:StatusBar(parent,width,height,style)
+    local captured=style and style.materialProfile=="interface" and style or nil
     local bar=CreateFrame("StatusBar",nil,parent); M.Size(bar,width,height); bar:SetMinMaxValues(0,1); bar:SetValue(.72)
+    bar.bvStyle=captured
     return self:Bind(bar,function(self)
         local texture = ns.Media:StatusBar(ns.Settings:Get("statusbar"))
-        self:SetStatusBarTexture(texture); self:SetStatusBarColor(Theme:Color("accent"))
+        self:SetStatusBarTexture(texture); self:SetStatusBarColor((captured or Theme):Color("accent"))
     end)
 end
 
@@ -392,26 +447,53 @@ end
 -- Callers retain their own geometry, lifecycle and maximize/minimize state.
 function UI:WindowChrome(window,style,options)
     options=options or {}; style=style or self:GetStyle()
+    local shell=window.shellMetrics or ns.ShellMetrics.Window(options.shellMetrics)
+    window.shellMetrics=shell
     style:Skin(window,"bg",8,function() return style.opacity end,true); compatibility(window)
     local chrome={}
     local bar=CreateFrame("Frame",nil,window); chrome.titlebar=bar
-    M.Point(bar,"TOPLEFT"); M.Point(bar,"TOPRIGHT"); M.Height(bar,44)
+    M.Point(bar,"TOPLEFT"); M.Point(bar,"TOPRIGHT"); M.Height(bar,shell.titlebarHeight)
     bar:EnableMouse(true); bar:RegisterForDrag("LeftButton")
-    local rule=style:Rule(bar); M.Point(rule,"BOTTOMLEFT"); M.Point(rule,"BOTTOMRIGHT")
-    chrome.brand=style:Logo(bar,24)
-    M.Point(chrome.brand,"LEFT",14,0)
-    chrome.title=style:Label(bar,options.title or "Addon Suite",options.titleSize or 14,"text","bold")
-    M.Point(chrome.title,"LEFT",46,0); M.Height(chrome.title,44); chrome.title:SetWordWrap(false)
+    local rule=style:Rule(bar); chrome.rule=rule; M.Point(rule,"BOTTOMLEFT"); M.Point(rule,"BOTTOMRIGHT")
+    local hud=options.hudIcon and style.materialProfile=="interface"
+    chrome.brand=hud and style:Icon(bar,options.hudIcon,16,"accentText") or style:Logo(bar,24)
+    M.Point(chrome.brand,"LEFT",hud and 10 or 14,0)
+    chrome.title=style:Label(bar,options.title or "Addon Suite",options.titleSize or (hud and 13 or 14),"text","bold")
+    M.Point(chrome.title,"LEFT",hud and 33 or 46,0); M.Height(chrome.title,shell.titlebarHeight); chrome.title:SetWordWrap(false)
     chrome.caption=style:Label(bar,options.caption or "",12,"muted")
-    M.Point(chrome.caption,"LEFT",136,0); M.Size(chrome.caption,130,44)
+    M.Point(chrome.caption,"LEFT",136,0); M.Size(chrome.caption,130,shell.titlebarHeight)
     chrome.caption:SetShown(options.caption~=nil)
     local function action(name,callback)
-        return style:IconButton(bar,name,function() invoke("window/"..name,callback) end,"window")
+        if hud and name=="close" then
+            local close=style:IconButton(bar,name,function() invoke("window/close",callback) end,"icon-only")
+            M.Size(close,30,30)
+            return close
+        end
+        local button=style:IconButton(bar,name,function() invoke("window/"..name,callback) end,"window")
+        -- Shared shell contexts also create standalone windows. Their caption
+        -- renderer needs the same action/owner identity as the Config shell.
+        if style.materialProfile=="interface" then
+            button.shellAction=name;button.shellWindow=window
+            if style.shellPresentation=="clean" then ns.ShellMaterials:PaintButton(style,button,"window") end
+        end
+        return button
     end
     chrome.close=action("close",options.onClose or function() window:Hide() end)
     chrome.maximize=action("max",options.onMaximize)
     chrome.minimize=action("minus",options.onMinimize)
-    M.Point(chrome.close,"RIGHT",-10,0); M.Point(chrome.maximize,"RIGHT",-46,0); M.Point(chrome.minimize,"RIGHT",-82,0)
+    local grouped=style.materialProfile=="interface" and not ns.ShellMetrics.IsWoW(style.interfaceThemeKey)
+    if grouped and not hud then
+        for _,button in ipairs({chrome.close,chrome.maximize,chrome.minimize}) do M.Size(button,32,30) end
+    end
+    M.Point(chrome.close,"RIGHT",hud and -4 or -10,0)
+    if grouped then
+        -- Overlap the one-unit rims so every key also has a complete outline
+        -- when a neighbouring action is hidden or its width changes.
+        M.Point(chrome.maximize,"RIGHT",chrome.close,"LEFT",1,0)
+        M.Point(chrome.minimize,"RIGHT",chrome.maximize,"LEFT",1,0)
+    else
+        M.Point(chrome.maximize,"RIGHT",-46,0); M.Point(chrome.minimize,"RIGHT",-82,0)
+    end
     chrome.maximize.restoreIcon=style:Icon(chrome.maximize,"restore",16,"text")
     M.Point(chrome.maximize.restoreIcon,"CENTER"); chrome.maximize.restoreIcon:Hide()
     style:Tooltip(chrome.close,"Close","Close this window.")
@@ -430,9 +512,11 @@ function UI:WindowChrome(window,style,options)
     grip:SetScript("OnMouseUp",function() invoke("window/resizestop",options.onResizeStop or function() window:StopMovingOrSizing() end) end)
     function chrome:SetMaximized(value)
         self.maximize.icon:SetShown(not value); self.maximize.restoreIcon:SetShown(value)
+        if self.presentation then self.presentation:Chrome()
+        elseif style.materialProfile=="interface" and style.shellPresentation=="clean" then ns.ShellMaterials:PaintButton(style,self.maximize,"window") end
     end
     if options.compact then chrome.maximize:Hide(); chrome.minimize:Hide() end
-    local function titleGeometry() M.Width(chrome.title,math.max(1,M.GetWidth(window)-(options.compact and 98 or 174))) end
+    local function titleGeometry() M.Width(chrome.title,math.max(1,M.GetWidth(window)-(hud and 72 or options.compact and 98 or 174))) end
     window:HookScript("OnSizeChanged",titleGeometry); titleGeometry()
     window.chrome=chrome
     return chrome
@@ -440,13 +524,19 @@ end
 
 function UI:Window(name,width,height,options)
     options=options or {}
+    local shell=ns.ShellMetrics.Window(options.shellMetrics)
+    if options.hudIcon and self:GetStyle().materialProfile=="interface" then
+        shell.titlebarHeight,shell.contentTop=32,32
+    end
+    ns.ShellMetrics.ContentSize(width,height,shell)
+    ns.ShellMetrics.ContentSize(options.minWidth or 480,options.minHeight or 420,shell)
     local style=self:GetStyle()
-    local window=CreateFrame("Frame",name,UIParent); window:Hide()
+    local window=CreateFrame("Frame",name,UIParent); window:Hide();window.shellMetrics=shell
     M.Size(window,width,height); window:SetPoint("CENTER"); window:SetFrameStrata("DIALOG")
     window:SetClampedToScreen(true); window:SetMovable(true); window:SetResizable(true); window:EnableMouse(true)
     M.ResizeBounds(window,options.minWidth or 480,options.minHeight or 420)
     window.content=CreateFrame("Frame",nil,window)
-    M.Point(window.content,"TOPLEFT",window,"TOPLEFT",0,-44); M.Point(window.content,"BOTTOMRIGHT",window,"BOTTOMRIGHT",0,0)
+    M.Point(window.content,"TOPLEFT",window,"TOPLEFT",shell.contentLeft,-shell.contentTop); M.Point(window.content,"BOTTOMRIGHT",window,"BOTTOMRIGHT",-shell.contentRight,shell.contentBottom)
     function window:SetTitle(text) self.title:SetText(text or "") end
     local function snapshot()
         return {width=M.GetWidth(window),height=M.GetHeight(window),point={window:GetPoint(1)}}
@@ -460,12 +550,14 @@ function UI:Window(name,width,height,options)
             geometry(self.beforeMinimize); self.content:Show(); self.resizeGrip:Show()
         elseif self.maximized then self.maximized=false; geometry(self.beforeMaximize) end
         self.chrome:SetMaximized(self.maximized); self.resizeGrip:SetShown(not self.maximized)
+        if self.shellPresentation then self.shellPresentation:Chrome()end
     end
     function window:Minimize()
         if self.minimized then self:Restore(); return end
         self.beforeMinimize=snapshot(); self.minimized=true
         self.content:Hide(); self.resizeGrip:Hide(); UI:HideTooltip(); if UI.CloseDropdown then UI:CloseDropdown() end
-        M.ResizeBounds(self,280,44); M.Size(self,math.min(360,self.beforeMinimize.width),44)
+        M.ResizeBounds(self,shell.collapsedMinWidth,shell.collapsedHeight); M.Size(self,math.min(shell.collapsedMaxWidth,self.beforeMinimize.width),shell.collapsedHeight)
+        if self.shellPresentation then self.shellPresentation:Chrome()end
     end
     function window:ToggleMaximize()
         if self.minimized then self:Restore() end
@@ -479,6 +571,7 @@ function UI:Window(name,width,height,options)
     local chrome=self:WindowChrome(window,style,{
         title=options.title or "Addon Suite",
         compact=options.compact,
+        hudIcon=options.hudIcon,
         onClose=function() window:Hide() end,
         onMaximize=function() window:ToggleMaximize() end,
         onMinimize=function() window:Minimize() end,
@@ -488,6 +581,9 @@ function UI:Window(name,width,height,options)
     window.drag,window.title=chrome.titlebar,chrome.title
     window.close,window.maximize,window.minimize=chrome.close,chrome.maximize,chrome.minimize
     window.resizeGrip=chrome.grip
+    -- Persistent gameplay windows share the HUD motif without decorating
+    -- nested panels or the separate, already textured authoring shell.
+    if options.gameplaySurface then ns.InterfaceSurfaces:AttachHUD(style,window) end
     window:HookScript("OnHide",function(self)
         self:StopMovingOrSizing(); UI:HideTooltip(); if UI.CloseDropdown then UI:CloseDropdown() end
     end)
@@ -545,7 +641,71 @@ function UI:MakeMovable(frame,handle,key)
     frame:HookScript("OnHide",function() frame:StopMovingOrSizing() end)
     return handle
 end
-function UI:Dialog(name,width,height,owner)
+-- Opt-in modal Escape routing for owned dialogs; the existing window stack stays authoritative.
+local strataOrder={BACKGROUND=1,LOW=2,MEDIUM=3,HIGH=4,DIALOG=5,FULLSCREEN=6,FULLSCREEN_DIALOG=7,TOOLTIP=8}
+local function dialogHasPriority(dialog)
+    if not dialog:IsVisible() then return false end
+    for _,popup in pairs({UI.dropdown,UI.colorPopup})do
+        if popup~=dialog and popup:IsVisible() then return false end
+    end
+    local rank=strataOrder[dialog:GetFrameStrata()] or 0
+    for _,other in ipairs(stack)do
+        if other~=dialog and other:IsVisible() then
+            local otherRank=strataOrder[other:GetFrameStrata()] or 0
+            if otherRank>rank or (otherRank==rank and other:GetFrameLevel()>dialog:GetFrameLevel())then return false end
+        end
+    end
+    return true
+end
+local function dialogOwnsFocus(dialog,focus)
+    for _=1,64 do
+        if not focus or (issecretvalue and issecretvalue(focus))then return false end
+        if focus==dialog then return true end
+        if not focus.GetParent or (focus.IsForbidden and focus:IsForbidden())then return false end
+        focus=focus:GetParent()
+    end
+    return false
+end
+function UI:ScopeDialogEscape(dialog)
+    if dialog.escapeController then return dialog.escapeController end
+    local controller={};dialog.escapeController=controller
+    local function clearFocusKey()
+        if controller.focusTimer then controller.focusTimer:Cancel();controller.focusTimer=nil end
+        controller.focusKey=nil
+    end
+    local function focusKey()
+        clearFocusKey();controller.focusKey=true
+        -- EditBox may consume key-up. Keep only a single dispatch-turn guard, never an idle poll.
+        controller.focusTimer=C_Timer.NewTimer(0,function()controller.focusTimer=nil;controller.focusKey=nil end)
+    end
+    function dialog:TrackEscapeInput(input)
+        input:HookScript("OnEscapePressed",function()if dialog:IsVisible()then focusKey()end end)
+        input:HookScript("OnKeyUp",function(_,key)if key=="ESCAPE"then clearFocusKey()end end)
+    end
+    dialog:SetScript("OnKeyDown",function(self,key)
+        if InCombatLockdown()then return end
+        if not dialogHasPriority(self)then UI:SetKeyboardPropagation(self,true);return end
+        local focus=GetCurrentKeyBoardFocus and GetCurrentKeyBoardFocus()
+        if focus and not dialogOwnsFocus(self,focus)then UI:SetKeyboardPropagation(self,true);return end
+        if key~="ESCAPE"then UI:SetKeyboardPropagation(self,not focus);return end
+        UI:SetKeyboardPropagation(self,false)
+        if controller.focusKey then return end
+        if focus then focusKey();focus:ClearFocus();return end
+        self:Hide()
+    end)
+    dialog:SetScript("OnKeyUp",function(_,key)if key=="ESCAPE"then clearFocusKey()end end)
+    local function shown()
+        clearFocusKey();dialog:EnableKeyboard(not InCombatLockdown());UI:SetKeyboardPropagation(dialog,true)
+        ns.Events:Subscribe(controller,"PLAYER_REGEN_DISABLED",function()dialog:EnableKeyboard(false);clearFocusKey()end)
+        ns.Events:Subscribe(controller,"PLAYER_REGEN_ENABLED",function()UI:SetKeyboardPropagation(dialog,true);dialog:EnableKeyboard(true)end)
+    end
+    dialog:HookScript("OnShow",shown)
+    dialog:HookScript("OnHide",function()clearFocusKey();ns.Events:Release(controller);dialog:EnableKeyboard(false)end)
+    if dialog:IsVisible()then shown()end
+    return controller
+end
+
+function UI:Dialog(name,width,height,owner,options)
     local dialog=self:GetStyle():Dialog(UIParent,width,height,name)
     dialog:SetPoint("CENTER"); dialog:SetFrameStrata("FULLSCREEN_DIALOG"); dialog:SetClampedToScreen(true)
     -- Title bar drag handle (leaves the close button free).
@@ -558,6 +718,7 @@ function UI:Dialog(name,width,height,owner)
         M.Size(self,w,h); UI:FitWindow(self,w,h,ns.Settings:Get("scale"))
     end
     self:ManageWindow(dialog)
+    if options and options.escapeScope then self:ScopeDialogEscape(dialog)end
     if name then UISpecialFrames[#UISpecialFrames+1]=name end
     if owner then owner:HookScript("OnHide",function() dialog:Hide() end) end
     dialog:HookScript("OnHide",function() UI:HideTooltip(); if UI.CloseDropdown then UI:CloseDropdown() end end)

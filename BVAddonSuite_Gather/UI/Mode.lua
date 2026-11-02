@@ -10,7 +10,7 @@ local UI,M=ns.UI,ns.DesignSystem.Metrics
 local H={}
 G.Mode=H
 local WIDTH=270
-local HEIGHT=466
+local HEIGHT=454
 
 function H:On() return G:Active() and G:Config().mode==true end
 function H:Set(on)
@@ -30,26 +30,29 @@ function H:Toggle() self:Set(not self:On()) end
 
 function H:Build()
     if self.window then return self.window end
-    UI:WithStyle(G:Style(),function()
-        local w=UI:Window("BVGatherMode",WIDTH,HEIGHT,{title="Gather mode",minWidth=WIDTH,minHeight=HEIGHT,compact=true})
+    local style=UI:InterfaceStyle()
+    if not style then return nil end
+    UI:WithStyle(style,function()
+        local w=UI:Window("BVGatherMode",WIDTH,HEIGHT,{title="Gather mode",minWidth=WIDTH,minHeight=HEIGHT,compact=true,hudIcon="leaf",gameplaySurface=true})
         -- A fixed size (Florian 2026-10-09: resizing made no sense here).
         w:SetResizable(false);if w.resizeGrip then w.resizeGrip:Hide() end;if w.maximize then w.maximize:Hide() end
         -- Escape does not close it: it is a tool you keep open while playing.
         for i=#UISpecialFrames,1,-1 do if UISpecialFrames[i]=="BVGatherMode" then table.remove(UISpecialFrames,i) end end
-        self.window=w
+        self.window=w;w.bvStyle=style
         local c=w.content
         local y=-8
         local function row(title,control,help)
-            local l=UI:Label(c,title,12,"text");M.Point(l,"TOPLEFT",c,"TOPLEFT",12,y-2);M.Size(l,150,20)
+            local controlHeight=M.GetHeight(control)
+            local l=UI:Label(c,title,12,"text");M.Point(l,"TOPLEFT",c,"TOPLEFT",12,y-math.max(2,(controlHeight-20)/2));M.Size(l,150,20)
             M.Point(control,"TOPRIGHT",c,"TOPRIGHT",-12,y)
             if help then UI:AttachTooltip(control,title,help) end
-            y=y-28
+            y=y-math.max(28,controlHeight+6)
             return control
         end
         self.mode=row("Gather mode",UI:Switch(c,false,function(value) H:Set(value) end),
             "Off: the route leaves the map and the minimap; it comes back when you switch the mode on.")
         y=y-4
-        local heading=UI:Label(c,"Route",12,"accent",true);M.Point(heading,"TOPLEFT",c,"TOPLEFT",12,y);y=y-22
+        local heading=UI:Label(c,"Route",12,style.materialProfile=="interface" and "accentText" or "accent",true);M.Point(heading,"TOPLEFT",c,"TOPLEFT",12,y);y=y-22
         self.route=UI:Dropdown(c,WIDTH-24,{},function(value) H.chosen=value end);M.Point(self.route,"TOPLEFT",c,"TOPLEFT",12,y);y=y-38
         self.route:SetOptionsProvider(function() return H:RouteOptions() end)
         self.start=UI:Button(c,"Follow",(WIDTH-30)/2,function() H:Follow() end,true);M.Point(self.start,"TOPLEFT",c,"TOPLEFT",12,y)
@@ -57,18 +60,20 @@ function H:Build()
         y=y-38
         self.status=UI:Label(c,"",11,"muted");M.Point(self.status,"TOPLEFT",c,"TOPLEFT",12,y);M.Size(self.status,WIDTH-24,30);self.status:SetWordWrap(true)
         y=y-32
-        local show=UI:Label(c,"Show",12,"accent",true);M.Point(show,"TOPLEFT",c,"TOPLEFT",12,y);y=y-22
+        local show=UI:Label(c,"Show",12,style.materialProfile=="interface" and "accentText" or "accent",true);M.Point(show,"TOPLEFT",c,"TOPLEFT",12,y);y=y-22
         self.kinds={}
+        local kindHeight,kindStep=24,26
         for i,t in ipairs(G.TYPES) do
             local col=(i-1)%2
             local box=CreateFrame("Frame",nil,c);M.Size(box,(WIDTH-24)/2,24)
-            M.Point(box,"TOPLEFT",c,"TOPLEFT",12+col*((WIDTH-24)/2),y-math.floor((i-1)/2)*26)
+            M.Point(box,"TOPLEFT",c,"TOPLEFT",12+col*((WIDTH-24)/2),y-math.floor((i-1)/2)*kindStep)
             box.switch=UI:Switch(box,false,function(value) G:Config()[t.id]=value;G:Changed();H:Refresh() end);M.Point(box.switch,"LEFT",box,"LEFT",0,0)
+            kindHeight=math.max(24,M.GetHeight(box.switch)+4);kindStep=kindHeight+2;M.Height(box,kindHeight)
             box.label=UI:Label(box,t.label,11,"text");M.Point(box.label,"LEFT",box,"LEFT",42,0);M.Size(box.label,(WIDTH-24)/2-44,24)
-            box.label:SetTextColor(unpack(G:Color(t.id)))
+            style:Bind(function() box.label:SetTextColor(unpack(G:Color(t.id))) end,box.label)
             self.kinds[t.id]=box
         end
-        y=y-56
+        y=y-math.max(56,math.ceil(#G.TYPES/2)*kindStep+4)
         self.lines=row("Route lines",UI:Switch(c,true,function(value) G:Config().routeLines=value;G:Changed();H:Refresh() end),
             "The route's lines and arrows; off: only its points.")
         self.hud=row("HUD",UI:Switch(c,false,function(value) if value then G.Hud:Show() else G.Hud:Hide() end;H:Refresh() end),
@@ -82,6 +87,8 @@ function H:Build()
         self.editor=UI:Button(c,"Route editor",(WIDTH-30)/2,function() G.Editor:Toggle() end,"ghost");M.Point(self.editor,"TOPLEFT",c,"TOPLEFT",12,y)
         self.scanner=UI:Button(c,"Scanner",(WIDTH-30)/2,function() G:OpenScanner() end,"ghost");M.Point(self.scanner,"TOPRIGHT",c,"TOPRIGHT",-12,y)
         UI:AttachTooltip(self.scanner,"Scanner","The minimap scanner's settings: which herbs and ores warn, and their sounds.")
+        local height=math.max(HEIGHT,w.shellMetrics.contentTop-y+M.GetHeight(self.editor)+12+w.shellMetrics.contentBottom)
+        M.Height(w,height);M.ResizeBounds(w,WIDTH,height)
         w.drag:HookScript("OnDragStop",function() UI:SaveWindowPosition(w) end)
         w:HookScript("OnShow",function() H:Refresh() end)
         -- Closed with its X it stays closed after a reload (like the tracker).
@@ -93,6 +100,7 @@ function H:Build()
 end
 function H:Show(on)
     local w=self:Build()
+    if not w then return nil end
     if on==nil then on=not w:IsShown() end
     G:Config().modeWindow=on and true or false
     w:SetShown(on)
@@ -144,6 +152,7 @@ if ns.Launcher and ns.Launcher.AddEntry then
     ns.Launcher:AddEntry({id="gatherhud",label="Gather HUD",order=34,group="gather",icon="crosshair",shown=function() return G:Active() end,state=function() return G.Hud:On() end,onClick=function() G.Hud:Toggle() end})
 end
 function H:Enable(context)
+    if not self.window and not UI:InterfaceStyle() then return nil end
     if G:Config().modeWindow then self:Show(true) end
     context:Defer(function() if H.window then H.window:Hide() end end)
 end

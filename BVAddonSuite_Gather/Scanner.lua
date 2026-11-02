@@ -215,9 +215,9 @@ function S:Disarm()
     if m and G.Hud:On() then pcall(m.EnableMouse,m,false) end
 end
 function S:Scan()
-    local ok,hits=pcall(self.Read,self)
+    local ok,hits,complete=pcall(self.Read,self)
     self:Disarm()
-    if ok and hits then self:Found(hits) end
+    if ok and hits then self:Found(hits,complete) else self.observation=nil end
 end
 -- Names on the grid, only herbs and ores: name -> grid points.
 function S:Read()
@@ -225,7 +225,7 @@ function S:Read()
     local m=minimap()
     local cx,cy=m:GetCenter()
     local s=m:GetEffectiveScale()
-    local hits={}
+    local hits,complete={},true
     for _,cell in ipairs(self:Cells(m:GetWidth()/2)) do
         if pcall(m.UpdateMouseoverAtPoint,m,(cx+cell[1])*s,(cy+cell[2])*s) then
             local ok,data=pcall(C_TooltipInfo.GetMinimapMouseover)
@@ -233,10 +233,10 @@ function S:Read()
                 for _,name in ipairs(S.Parse(data)) do
                     if self:Kind(name) then hits[name]=hits[name] or {};table.insert(hits[name],cell) end
                 end
-            end
-        end
+            else complete=false end
+        else complete=false end
     end
-    return hits
+    return hits,complete
 end
 
 -- The node seen before: same name, same map, within SAME yards (without a
@@ -250,7 +250,28 @@ function S:Match(name,mapID,x,y)
         end
     end
 end
-function S:Found(hits)
+S.LAYER_LABEL={surface="Surface",underground="Underground",unknown="Layer unknown"}
+-- Minimap positions are estimates, with no object Z. All plausible spawns
+-- must agree. Never infer caves from the player's indoor flag or select the
+-- nearest of two vertically overlapping deposits. Legacy 'under' alone is
+-- not evidence: old recordings used IsIndoors for buildings as well.
+function S:Layer(kind,name,mapID,x,y)
+    if not kind or not mapID or not x or not y then return "unknown" end
+    local layer
+    for _,node in ipairs(G.Data:Nodes(kind,mapID) or {}) do
+        if node.name==name or (node.names and node.names[name]) then
+            local distance=G.Data.Yards(mapID,x,y,node.x,node.y)
+            if distance and distance<=self.SAME then
+                local value=node.layer
+                if value~="surface" and value~="underground" then return "unknown" end
+                if layer and layer~=value then return "unknown" end
+                layer=value
+            end
+        end
+    end
+    return layer or "unknown"
+end
+function S:Found(hits,complete)
     local m=minimap()
     local c=G:Config()
     local now=GetTime()
@@ -263,6 +284,15 @@ function S:Found(hits)
     if G.Call("GetCVar","rotateMinimap")=="1" then
         local value=G.Call("GetPlayerFacing")
         if type(value)=="number" and not G.Secret(value) then facing=value end
+    end
+    -- A separate, short-lived observation, before the 40-yard alert merge.
+    -- The interaction marker must not infer uniqueness from merged alerts.
+    self.observation=nil
+    local observation
+    if complete and px and type(w)=="number" and w>0 and type(h)=="number" and h>0
+        and type(view)=="number" and not G.Secret(view) and view>0 then
+        observation={at=now,mapID=mapID,points={}}
+        self.observation=observation
     end
     local fresh={}
     for name,list in pairs(hits) do
@@ -283,6 +313,10 @@ function S:Found(hits)
             end
             entry.last=now
             if x then entry.x,entry.y=x,y end
+            entry.layer=self:Layer(entry.kind,name,mapID,x,y)
+            if observation and x then
+                observation.points[#observation.points+1]={name=name,kind=entry.kind,x=x,y=y,layer=entry.layer}
+            end
         end
     end
     self:Missing(now)
@@ -295,6 +329,32 @@ function S:Found(hits)
     while #self.recent>self.RECENT do table.remove(self.recent) end
     self:Alert(fresh)
     if G.Finds then G.Finds:Refresh() end
+end
+-- Optional horizontal estimate for an already selected interaction object.
+-- Read-only: never arms the scanner, opens the HUD or changes tracking.
+-- One candidate is still an approximation, not a GUID-to-spawn identity.
+function S:DistanceEstimate(name,kind,now)
+    local sample=self.observation
+    if not G:Config().scanner or self.status~="active" or not G.Hud:On()
+        or G.Call("InCombatLockdown") or not sample then return nil end
+    local age=now-sample.at
+    if age<0 or age>self.EVERY+1 then return nil end
+    local mapID,px,py=G.Record:Position()
+    if mapID~=sample.mapID or not px then return nil end
+    local found,distance
+    for _,point in ipairs(sample.points) do
+        if point.name==name and point.kind==kind then
+            local d=G.Data.Yards(mapID,px,py,point.x,point.y)
+            if type(d)=="number" and not G.Secret(d) and d==d and d>=0 and d<=70 then
+                if found then return nil end -- even if alert history merged them
+                found,distance=point,d
+            end
+        end
+    end
+    if not found or found.layer~="surface" then return nil end -- uncertain height
+    -- This estimate has its own freshness/ambiguity checks. A boolean
+    -- interact-range transition must not toggle the geometry data source.
+    return distance
 end
 -- One message and one sound per scan: the entry highest in your list.
 function S:Alert(fresh)
@@ -309,7 +369,7 @@ function S:Alert(fresh)
     local top=watched[1]
     if c.scanStage and ns.Stage and ns.Stage.types.gatherfind then
         local title=top.entry.name..(#watched>1 and (" +"..(#watched-1)) or "")
-        pcall(ns.Stage.Show,ns.Stage,"gatherfind",{title=title,subtitle=string.format("On the minimap · %d yd %s",top.entry.yards,top.entry.direction),
+        pcall(ns.Stage.Show,ns.Stage,"gatherfind",{title=title,subtitle=string.format("On the minimap · %d yd %s · %s",top.entry.yards,top.entry.direction,self.LAYER_LABEL[top.entry.layer] or self.LAYER_LABEL.unknown),
             color=top.entry.kind and G:Color(top.entry.kind),key="find"})
     end
     local now=GetTime()

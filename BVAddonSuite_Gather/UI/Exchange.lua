@@ -10,9 +10,13 @@ G.Exchange=X
 
 function X:Dialog()
     if self.dialog then return self.dialog end
-    UI:WithStyle(G:Style(),function()
-        local d=UI:Dialog("BVGatherExchange",480,380)
+    local style=UI:InterfaceStyle()
+    if not style then return nil end
+    UI:WithStyle(style,function()
+        local d=UI:Dialog("BVGatherExchange",480,380,nil,{escapeScope=style.materialProfile=="interface"})
+        d.bvStyle=style
         d.text=UI:TransferText(d.content,450,220,400000)
+        if d.TrackEscapeInput then d:TrackEscapeInput(d.text.input)end
         M.Point(d.text,"TOPLEFT",d.content,"TOPLEFT",16,-12)
         d.note=UI:Label(d.content,"",11,"muted");M.Point(d.note,"TOPLEFT",d.content,"TOPLEFT",16,-240);M.Size(d.note,440,48);d.note:SetWordWrap(true)
         d.ok=UI:Button(d.content,"OK",120,function() X:Confirm() end,true);M.Point(d.ok,"BOTTOMRIGHT",d.content,"BOTTOMRIGHT",-16,12)
@@ -24,6 +28,7 @@ function X:Dialog()
 end
 function X:Open(mode,summary,text)
     local d=self:Dialog()
+    if not d then return nil end
     d.mode=mode
     d.text:SetShown(mode=="export" or mode=="import" or mode=="routeExport" or mode=="routeImport" or mode=="areasExport" or mode=="areasImport")
     if mode=="export" then

@@ -1,11 +1,11 @@
 local package,G=...
 local ns=BVAddonSuiteCore
 if not ns or not ns.RequireCore then
-    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.96 or newer. Update Core; saved data is preserved.") end
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.113 or newer. Update Core; saved data is preserved.") end
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.2.1","0.8.96",1) then return end
+if not ns:RequireCore(package,"0.2.5","0.8.113",1) then return end
 -- Way finding is BV Routing's (Florian 2026-10-10), loaded before us (TOC).
 if not (ns.Routing and ns.Routing.ready) then
     ns:Print(package.." is off: it needs BV Addon Suite - Routing. Install or enable it; saved data is preserved.")
@@ -18,14 +18,15 @@ end
 -- GatherMate2 running, ours neither records nor draws by default, so the
 -- two never double up (plan decision 3, "use ours anyway" takes it back).
 -- Files fill G: Data (node database), Record, Pins, Import, Share, Route,
--- RoutePlan (route editor; its ways from BV Routing, G.Grid), Trace
+-- RoutePlan (route editor; its ways from BV Routing's navmesh), Trace
 -- (walked ways), Follow
 -- (following a route), UI/Exchange,
 -- UI/Editor, Options.
 G.ns=ns
 ns.Gather=G
 G.Routing=ns.Routing
-G.Grid=ns.Routing.Grid
+-- BV Routing's scheduler: the route plan runs in its slices (Scheduler.Run).
+G.Scheduler=ns.Routing.Scheduler
 G.ready=true
 G.ID="gather"
 
@@ -82,7 +83,7 @@ G.DEFAULTS={enabled=false,
     -- Gather mode (the route shows only while it is on), its window, the
     -- route's lines.
     mode=false,modeWindow=false,routeLines=true,
-    -- Tracker: price source ("auto", "tsm", "auctionator", "vendor"), all
+    -- Tracker: price source ("auto", "tsm", "auctionator", "blackthornes", "vendor"), all
     -- loot or only from gathering, its window.
     priceSource="auto",trackAllLoot=false,trackerWindow=false,
     -- HUD: size (percent of the screen height), opacity, turning with you.
@@ -124,6 +125,7 @@ G.DEFAULTS={enabled=false,
     modeTracker=false,modeFinds=false,findsWindow=false,
     -- Pin colours per kind (hex RRGGBB); empty = the kind's own colour.
     herbColor="",oreColor="",fishColor="",treasureColor="",
+    objectMark="A",objectSize=64,objectOffset=-20,objectHerbs=true,objectOre=true,interactHint=true,interactTargeting=true,
     size=14,styleFamily="inherit"}
 local function num(value,default,low,high)
     if type(value)~="number" or value~=value then value=default end
@@ -131,8 +133,17 @@ local function num(value,default,low,high)
 end
 function G:Config()
     local cfg=ns.Settings:Module(self.ID)
+    -- Florian's native calibration, 2026-10-30. Correct the former shipped
+    -- offset once; preserve custom heights and subsequent explicit choices.
+    if cfg.objectOffsetRevision==nil then
+        if cfg.objectOffset==-70 then cfg.objectOffset=-20 end
+        cfg.objectOffsetRevision=1
+    end
     for key,value in pairs(self.DEFAULTS) do if cfg[key]==nil then cfg[key]=value end end
     for _,key in ipairs({"world","minimap","minimapEdge","herb","ore","fish","treasure","record","forceRecord","forceShow","shareReceive","routeUnderground","loop","editorTerrain","editorNames","editorRelief","ownFlights","routeSmooth","recordWays","preferWalked","editorHeat","mode","modeWindow","routeLines","trackAllLoot","trackerWindow","hudRotate","knownSpawns","routeKnown","sightCircle","hudCompass","ownFinds","scanner","scanStage","modeTracker","modeFinds","findsWindow"}) do cfg[key]=cfg[key]==true end
+    for _,key in ipairs({"objectHerbs","objectOre","interactHint","interactTargeting"}) do cfg[key]=cfg[key]==true end
+    if cfg.objectMark~="A" and cfg.objectMark~="B" and cfg.objectMark~="C" and cfg.objectMark~="off" then cfg.objectMark="A" end
+    cfg.objectSize=num(cfg.objectSize,64,24,160);cfg.objectOffset=num(cfg.objectOffset,-20,-240,80)
     cfg.passRadius=num(cfg.passRadius,45,10,80)
     cfg.hudSize=num(cfg.hudSize,80,40,100);cfg.hudAlpha=num(cfg.hudAlpha,55,10,100)
     cfg.sightRadius=num(cfg.sightRadius,150,40,230);cfg.sightAlpha=num(cfg.sightAlpha,55,5,100);cfg.sightWidth=num(cfg.sightWidth,3,1,16)
@@ -145,7 +156,7 @@ function G:Config()
         if type(cfg[key])~="string" or not (cfg[key]=="" or cfg[key]:match("^%x%x%x%x%x%x")) then cfg[key]=default end
     end
     if cfg.routeNextColor=="" then cfg.routeNextColor="5FD16B" end
-    if not ({auto=true,tsm=true,auctionator=true,vendor=true})[cfg.priceSource] then cfg.priceSource="auto" end
+    if not ({auto=true,tsm=true,auctionator=true,blackthornes=true,vendor=true})[cfg.priceSource] then cfg.priceSource="auto" end
     if not ({keep=true,square=true,round=true})[cfg.hudShape] then cfg.hudShape="keep" end
     if type(cfg.sourceOff)~="table" then cfg.sourceOff={} end
     cfg.scanRepeat=num(cfg.scanRepeat,5,1,60)
@@ -240,4 +251,5 @@ ns.Modules:Register({id=G.ID,OnEnable=function(context)
     G.Sight:Enable(context)
     G.Scanner:Enable(context)
     G.Finds:Enable(context)
+    G.Interaction:Enable(context)
 end})

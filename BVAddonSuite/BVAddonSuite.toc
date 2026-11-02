@@ -2,8 +2,8 @@
 ## Title: BV Addon Suite - Core
 ## Notes: Shared UI, media, profiles and layout editor. Install feature addons separately.
 ## Author: BV
-## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.8.105
+## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\module-icon
+## Version: 0.8.117
 ## OptionalDeps: Masque
 ## SavedVariables: BVAddonSuiteDB, BVSpellIndexDB, BVRecordingDB
 
@@ -26,6 +26,7 @@ Core\SpellIndex.lua
 Core\ItemCatalog.lua
 Core\SpellMetadata.lua
 Core\IconCatalog.lua
+Core\FactoryDefaults.lua
 Core\Settings.lua
 Core\Modules.lua
 Core\Commands.lua
@@ -54,8 +55,14 @@ Core\DisplayStacks.lua
 Core\ActionStacks.lua
 Core\LayoutCleanup.lua
 Core\DisplayStackQueue.lua
+UI\ThemeTokens.lua
+UI\ControlMaterials.lua
 UI\DesignSystem.lua
 UI\Theme.lua
+UI\ShellMetrics.lua
+UI\InterfaceSurfaces.lua
+UI\ShellWoWMaterials.lua
+UI\ShellMaterials.lua
 UI\Components.lua
 UI\StyleFamilies.lua
 UI\Dropdown.lua
@@ -102,12 +109,16 @@ UI\NativeButtons.lua
 UI\NativeBarOptions.lua
 Modules\ProgressBars.lua
 UI\BarConfig.lua
+UI\LayoutPlacement.lua
+UI\LayoutEditorMaterials.lua
+UI\LayoutEditorPresentation.lua
 UI\LayoutEditor.lua
 UI\FrameInspector.lua
 UI\FrameLibrary.lua
 UI\LayoutCleanupUI.lua
 UI\Config.lua
 UI\Stage.lua
+UI\RouteLineStyles.lua
 UI\MapPins.lua
 UI\DesignLabTheme.lua
 UI\DesignLab.lua

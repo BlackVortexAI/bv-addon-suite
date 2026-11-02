@@ -27,7 +27,12 @@ function B.Create(name)
     glow:SetPoint("TOPLEFT",1,-1);glow:SetPoint("BOTTOMRIGHT",-1,1);glow:SetColorTexture(1,.85,.4,.12)
     local logo=b:CreateTexture(nil,"ARTWORK")
     logo:SetSize(36,36);logo:SetPoint("LEFT",b,"LEFT",10,0)
-    logo:SetTexture("Interface\\AddOns\\BVAddonSuite\\Media\\Brand\\bv-logo-small")
+    logo:SetTexture("Interface\\AddOns\\BVAddonSuite\\Media\\Interface\\Brand\\LogoNeutral")
+    local style=L.ns.UI:InterfaceStyle()
+    if style then
+        logo:SetDesaturated(true)
+        style:Bind(function() logo:SetVertexColor(style:Color("accent")) end,logo)
+    end
     b.logo=logo
     local title=b:CreateFontString(nil,"OVERLAY")
     title:SetFont("Fonts\\FRIZQT__.TTF",14,"OUTLINE");title:SetTextColor(1,.82,0)

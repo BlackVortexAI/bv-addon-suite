@@ -10,11 +10,13 @@ local WIDTH,ROWS,ROW=290,8,20
 
 function W:Build()
     if self.window then return self.window end
-    UI:WithStyle(G:Style(),function()
-        local w=UI:Window("BVGatherTracker",WIDTH,330,{title="Gather tracker",minWidth=WIDTH,minHeight=330,compact=true})
+    local style=UI:InterfaceStyle()
+    if not style then return nil end
+    UI:WithStyle(style,function()
+        local w=UI:Window("BVGatherTracker",WIDTH,318,{title="Gather tracker",minWidth=WIDTH,minHeight=318,compact=true,hudIcon="list",gameplaySurface=true})
         for i=#UISpecialFrames,1,-1 do if UISpecialFrames[i]=="BVGatherTracker" then table.remove(UISpecialFrames,i) end end
         w:SetResizable(false);if w.resizeGrip then w.resizeGrip:Hide() end;if w.maximize then w.maximize:Hide() end
-        self.window=w
+        self.window=w;w.bvStyle=style
         local c=w.content
         self.summary=UI:Label(c,"",13,"text",true);M.Point(self.summary,"TOPLEFT",c,"TOPLEFT",12,-8);M.Size(self.summary,WIDTH-24,20)
         self.detail=UI:Label(c,"",11,"muted");M.Point(self.detail,"TOPLEFT",c,"TOPLEFT",12,-30);M.Size(self.detail,WIDTH-24,18)
@@ -48,6 +50,7 @@ end
 -- minimap finds, Florian 2026-10-15).
 function W:Show(on)
     local w=self:Build()
+    if not w then return nil end
     if on==nil then on=not w:IsShown() end
     local c=G:Config()
     c.trackerWindow=on and true or false
@@ -57,11 +60,14 @@ function W:Show(on)
 end
 -- With the gather mode: shown when it is wanted, the wish kept.
 function W:Follow(on)
+    if not self.window and not UI:InterfaceStyle() then return nil end
     local c=G:Config()
     local show=on and c.modeTracker==true
     if not show and not self.window then return end
+    local w=self:Build()
+    if not w then return nil end
     c.trackerWindow=show
-    self:Build():SetShown(show)
+    w:SetShown(show)
     G:WindowsChanged()
 end
 -- The clock ticks once a second while the window is open and a session runs.
@@ -122,9 +128,14 @@ function W:Sessions()
     end
 end
 function W:Enable(context)
+    if not self.window and not UI:InterfaceStyle() then return nil end
     -- Open after a reload when it was, or when the gather mode is on and
     -- brings it (as the minimap finds, Florian 2026-10-14).
     local c=G:Config()
-    if c.trackerWindow or (c.modeTracker and G.Mode:On()) then self:Build():Show();c.trackerWindow=true end
+    if c.trackerWindow or (c.modeTracker and G.Mode:On()) then
+        local w=self:Build()
+        if not w then return nil end
+        w:Show();c.trackerWindow=true
+    end
     context:Defer(function() if W.window then W.window:Hide() end;W:Watch(false) end)
 end

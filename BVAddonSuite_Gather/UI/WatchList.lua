@@ -27,24 +27,38 @@ end
 -- sounds of other addons (Florian 2026-10-10: many game sounds make poor
 -- alarms), with a preview; it opens on the source of the current sound.
 function L:Choose(owner,current,done)
+    local style=owner and owner.bvStyle
+    local interface=style and style.materialProfile=="interface"
+    if interface and not owner:IsVisible()then return end
+    local active=true;local picker
     local c=G:Config()
     if type(current)~="table" then current=c.scanSound end
     local config={source=current.source=="sharedmedia" and "sharedmedia" or "soundkit",soundKit=current.soundKit or G.Scanner.DEFAULT_SOUND.soundKit,
         sound=current.sound,channel=c.scanChannel,volume=100}
     if self.picker then self.picker:Hide() end
-    self.picker=UI:SoundPicker(owner,config,function(value,source)
+    local function createPicker()return UI:SoundPicker(owner,config,function(value,source)
+        if interface and (not active or not picker or not picker:IsShown()or not owner:IsVisible())then return end
         if source=="sharedmedia" then done({source="sharedmedia",sound=value}) else done({source="soundkit",soundKit=value}) end
-    end,{sources=true})
+    end,{sources=true,escapeScope=interface})end
+    picker=style and UI:WithStyle(style,createPicker)or createPicker();self.picker=picker
+    if interface then
+        local dispose=ns.Settings:BeforeProfileChange(picker,function()picker:Hide()end)
+        picker:HookScript("OnHide",function()
+            active=false
+            if dispose then dispose();dispose=nil end
+        end)
+    end
 end
 
 local SOUND_OPTIONS={{value="default",label="Default sound"},{value="none",label="No sound"},{value="choose",label="Choose sound..."}}
 function L:Build(parent,changed)
-    local f=CreateFrame("Frame",nil,parent);f.rows={}
+    local f=CreateFrame("Frame",nil,parent);f.rows={};f.bvStyle=UI:GetStyle()
     f.headName=UI:Label(f,"Herb or ore",11,"muted");f.headSound=UI:Label(f,"Sound",11,"muted")
     f.empty=UI:Label(f,"Nothing on the list yet: add a herb or ore below.",12,"muted")
     local S=G.Scanner
     local function row(i)
         if f.rows[i] then return f.rows[i] end
+        return UI:WithStyle(f.bvStyle,function()
         local r=CreateFrame("Frame",nil,f)
         r.name=UI:Label(r,"",12,"text");r.name:SetWordWrap(false)
         r.hint=UI:Label(r,"",11,"muted");r.hint:SetWordWrap(false)
@@ -52,7 +66,9 @@ function L:Build(parent,changed)
             local entry=r.entry;if not entry then return end
             if value=="choose" then
                 L:Choose(parent,entry.sound,function(sound) entry.sound=sound;f:Refresh();S:Play(entry) end)
-            else entry.sound=value=="none" and false or nil end
+            -- "none" stores false (no sound), anything else nil (the default); `x and false or nil` was always nil.
+            elseif value=="none" then entry.sound=false
+            else entry.sound=nil end
             f:Refresh()
         end)
         r.test=UI:Button(r,"Test",56,function() if r.entry and not S:Play(r.entry) then G:Print("No sound for "..r.entry.name..".") end end,"ghost")
@@ -60,6 +76,7 @@ function L:Build(parent,changed)
         UI:AttachTooltip(r.test,"Test","Plays this entry's sound on the chosen channel.")
         f.rows[i]=r
         return r
+        end)
     end
     f.add=UI:Dropdown(f,300,{},function(name)
         if S:Add(name) then changed() end

@@ -43,10 +43,14 @@ function UI:ShareOptions(parent,controller,width)
     panel:Refresh();return panel
 end
 -- Receiver prompt: Accept or Decline; closing counts as Decline.
-function UI:ShareRequest(sender,kind,name,parts,accept,decline)
+function UI:ShareRequest(sender,kind,name,parts,accept,decline,options)
     local d=self.shareRequest
     if not d then
-        d=self:Dialog(nil,420,230);self.shareRequest=d;d.positionKey="shareRequest"
+        local style=options and options.style or self:InterfaceStyle()
+        if not style then return nil,"Interface context is not ready" end
+        UI:WithStyle(style,function()
+        d=self:Dialog(nil,420,230,nil,{escapeScope=style.materialProfile=="interface"});self.shareRequest=d;d.positionKey="shareRequest"
+        d.bvStyle=style
         d.text=UI:Place(UI:Label(d.content,"",13,"text"),d.content,20,16);M.Size(d.text,380,90)
         -- Buttons on the bottom edge (layout guard).
         d.decline=UI:Button(d.content,"Decline",150,function() local f=d.onDecline;d.onAccept,d.onDecline=nil,nil;d:Hide();if f then f() end end)
@@ -54,6 +58,7 @@ function UI:ShareRequest(sender,kind,name,parts,accept,decline)
         d.accept=UI:Button(d.content,"Accept",150,function() local f=d.onAccept;d.onAccept,d.onDecline=nil,nil;d:Hide();if f then f() end end,true)
         M.Point(d.accept,"RIGHT",d.decline,"LEFT",-10,0)
         d:HookScript("OnHide",function() local f=d.onDecline;d.onAccept,d.onDecline=nil,nil;if f then f() end end)
+        end)
     end
     if d:IsShown() and d.onDecline then local f=d.onDecline;d.onAccept,d.onDecline=nil,nil;f() end
     d.title:SetText("Shared "..(kind=="block" and "block" or "graph"))

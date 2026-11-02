@@ -18,7 +18,23 @@ Gather keeps your **herbs, ore, fishing pools and treasure** on the world map an
 
 **Example:** you farm Silverleaf and Peacebloom in Silverpine. Gather for a while, open the editor, choose Silverpine, leave only those two herbs on, Calculate, Follow route. The minimap now leads you from node to node.
 
-Use the list on the left for every part. Settings are under `/bv gather` in the tabs General, Gather mode, Routes, Recording & sharing and Scanner.
+Use the list on the left for every part. Settings are under `/bv gather` in the tabs General, Gather mode, World objects, Routes, Recording & sharing and Scanner.
+]]},
+{id="objects",title="World objects and interaction",text=[[
+# World objects and interaction
+The **World objects** settings mark the herb or ore currently chosen by the client's interaction targeting. Only this one nearby object is marked, not every recorded spawn. An object nameplate is required. Supported clients expose object cursors and interaction range; unsupported clients show no marker.
+
+**A · Corner marks** is the default. **B · Side brackets**, **C · Small pointer** and **Off** are available. The finished artwork uses gold highlights and a shadow; unavailable targets use silver artwork. A leaf means herb; a pickaxe means ore. Marker size and height are reference values. Camera zoom adjusts size and offset together, with a smooth transition. Entering or leaving interaction range changes the feedback, not the marker size.
+
+The marker works with the **scanner and Gather HUD off**. Without scanner data, only camera zoom adjusts its size; walking closer does not provide a continuous object-distance measurement. When the scanner is already running, a fresh, unique surface find can refine the estimate from current player position. Old, ambiguous and uncertain-height finds are ignored. The marker never starts the scanner or changes your tracked waypoint. Its nameplate anchor and estimated scale cannot precisely trace the object's model, especially on slopes or at unusual camera angles.
+
+**Gold** means in range with an available gather cursor. **Dim gold** means out of range. **Grey-silver** means unavailable: a missing skill, locked object or another restriction can cause this. **Range unknown** is never presented as ready.
+
+The **Interaction hint** shows your **Interact Target** key on a translucent dark background. On first start, Gather assigns **Ctrl+G** if Interact Target has no key and Ctrl+G is free. Existing keys are preserved; if Ctrl+G is occupied, a chat message points you to the game's Key Bindings. Setup waits until you leave combat and is remembered separately for account-wide and character-specific bindings. Later changes or deliberate removal are respected. Press the displayed key to use the client's normal interaction. The hint itself is not a mouse button. The hint keeps its normal UI size while the object marker adjusts.
+
+**Enable object targeting** temporarily configures nearby targeting. Turning the feature or module off restores unchanged settings after combat. When ForeverLootSparkles is loaded, it owns targeting; turn off its own graphics there if you only want the BV mark.
+
+The scanner's finds list has **S** (surface), **U** (underground) or **?** (unknown). Matching uses resource type, name and nearby known spawns. Conflicting floors or missing classification stay unknown; an indoor player position does not prove an underground resource.
 ]]},
 {id="nodes",title="Your nodes on the maps",text=[[
 # Your nodes on the maps
@@ -78,6 +94,14 @@ Moving the map: right button or the hand tool; mouse wheel zooms. The layers but
 # Route settings
 In the editor's side bar and in the **Routes** tab.
 
+**Surface and underground:** each resource has a separate **(Underground)**
+choice, for example Iron Deposit and Iron Deposit (Underground). Switch either
+on independently. **Surface / unknown** means this choice also contains nodes
+whose location could not be confirmed; it is not proof that all are outdoors.
+The Routes setting **Select underground by default** only preselects underground
+resources for a new route (and controls quick routes). A saved route keeps its
+path; use **Calculate** to apply the current choices to it.
+
 | Setting | What it does | Example |
 |---|---|---|
 | Loop | The route ends where it began | farming the same circuit again and again |
@@ -95,7 +119,7 @@ In the editor's side bar and in the **Routes** tab.
 
 **Expert settings** (button in the Routes tab): the fixed values behind all this; see the page "Expert settings".
 
-**Jumps:** pieces of the route that drop down a cliff are drawn **orange**, in the editor and while you follow the route: jump there on purpose, and nowhere else. The status line counts them. Walls come from the terrain's fine heights: the route never climbs one. So does the height of each drop: with "Short drops" the route never jumps down further than "Short drop at most" (expert settings, 12 yards); where it has to, a warning sign "High drop" marks the place. Stops you cannot walk to and back from (a plateau, a pit; with a start point: that you cannot reach from there) are left out, and the status line says how many. A node at the foot of a rock counts when you can stand beside it. A leg drawn **red** has no way in the terrain data although both ends are reachable (rare): only its straight line is known.
+**Jumps:** pieces of the route that drop down a cliff are drawn **orange**, in the editor and while you follow the route: jump there on purpose, and nowhere else. The status line counts them. Walls come from the terrain's fine heights: the route never climbs one. So does the height of each drop: with "Short drops" the route never jumps down further than "Short drop at most" (expert settings, 12 yards); where it has to, a warning sign "High drop" marks the place. Stops disconnected from the main group of resource stops (a plateau or a pit without a return path) are left out, and the status line says how many. Your current floor does not exclude resources: the gathering route connects its resource stops, without planning an approach from your position. Your position can influence which stop comes first. A node at the foot of a rock counts when you can stand beside it. A leg drawn **red** has no way in the terrain data although both ends are reachable (rare): only its straight line is known.
 
 **Difficult spots:** the terrain data cannot know every map. Where the route crosses steep ground, swims, touches magma, passes an enemy base or your high-risk area, takes a long way round between two close stops, has no way, or leaves stops out, a **warning sign** marks the place; its tooltip says why and what may help. You know the place: paint No-go, Preferred or a transition there and Calculate again. **Example:** a sign "Long way round" between two stops on a plateau: paint Preferred up the ramp you know, and the next route takes it.
 ]]},
@@ -156,7 +180,7 @@ The **gather window** (`/bv gather window`): the gather mode switch, the route t
 
 - **Start**, **Pause** and **Stop**; **Sessions** lists the last ones in the chat.
 - Nodes, items with their value and **gold per hour**.
-- **Prices:** Auto (TradeSkillMaster, then Auctionator, then the vendor price) or one of them.
+- **Prices:** Auto (TradeSkillMaster, then Auctionator, then Blackthornes Tradeskills, then the vendor price) or one of them.
 - **Count all loot:** every item you loot while it runs, not only from gathering.
 - **Pause when idle:** after this many minutes without gathering the session pauses, counted up to your last node; the next node resumes it.
 
@@ -239,9 +263,8 @@ W.EXPERT=[[
 %s
 
 **Examples**
-- *A route still goes in and out of a ravine:* raise **Level change** (for example to 20), so changing levels counts even more.
-- *Stops on a gentle slope are split although you could walk between them:* raise **Same level** (for example to 10).
-- *Too many orange jumps:* raise **Jump marked from**; *jumps you would like to see are missing:* lower it.
+- *The route makes a hook to a node you could gather in passing:* raise **Gathered in passing** (for example to 9).
+- *Too many orange jumps:* set "Down cliffs" to Never; *higher drops are fine for you (Slow Fall):* set it to Always.
 - *The route avoids roads too little:* lower **Road and walked way cost** (for example to 0.4).
 - *A followed point counts as reached too early or too late:* change **Point reached at**.
 - *Known spawns should count like your own finds for "Way per node":* set **Known spawn weight** to 1.
@@ -270,7 +293,7 @@ function W.Page(id)
     return W.PAGES[1].text
 end
 function W:Open(id)
-    self.window=self.window or ns.UI:WikiWindow({entries=W.Entries,page=W.Page,limit=W.limit})
+    self.window=self.window or ns.UI:WikiWindow({entries=W.Entries,page=W.Page,limit=W.limit},{style=ns.Config and ns.Config.shellStyle})
     self.window:Open(id or "page:start")
     return self.window
 end

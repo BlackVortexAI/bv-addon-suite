@@ -193,7 +193,7 @@ function Wiki.Reference(owner,id,node)
     return ns.UI:NodeWiki(owner,function(topic) return A.NodeWiki.Page(n,topic) end)
 end
 function S:OpenWiki(id,node)
-    self.wikiWindow=self.wikiWindow or ns.UI:WikiWindow({entries=Wiki.Entries,page=Wiki.Page,limit=Wiki.limit,reference=Wiki.Reference})
+    self.wikiWindow=self.wikiWindow or ns.UI:WikiWindow({entries=Wiki.Entries,page=Wiki.Page,limit=Wiki.limit,reference=Wiki.Reference},{style=ns.Config and ns.Config.shellStyle})
     self.wikiWindow:Open(id or "page:start",node)
     return self.wikiWindow
 end

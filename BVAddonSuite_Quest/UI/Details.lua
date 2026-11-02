@@ -8,29 +8,54 @@ local UI,M=ns.UI,ns.DesignSystem.Metrics
 local Det={objectives={},rewards={},textOpen=true}
 Q.Details=Det
 local PAD,ACTIONS=12,64
-local function style() return Q:Style() end
+local function style() return Q.Panes.style or Q:Style() end
+local function accentRole() return style().materialProfile=="interface" and "accentText" or "accent" end
 local QUALITY={[0]={.62,.62,.62},[1]={1,1,1},[2]={.12,1,0},[3]={0,.44,.87},[4]={.64,.21,.93},[5]={1,.5,0}}
+
+-- Inline actions belong to the text, without a second framed surface.
+local function inline(parent,symbol,callback,text)
+    local s=style()
+    local b=CreateFrame("Button",nil,parent);b.bvTooltipStyle=s
+    M.Size(b,22,22)
+    b.icon=s:Icon(b,symbol,text and 12 or 16,"text")
+    if text then
+        M.Point(b.icon,"LEFT",b,"LEFT",2,0)
+        b.label=s:Label(b,text,12,"text");M.Point(b.label,"LEFT",b,"LEFT",18,0)
+        function b:SetLabelText(value) self.label:SetText(value) end
+    else M.Point(b.icon,"CENTER") end
+    local function paint()
+        local role=not b:IsEnabled() and "muted" or b.hovered and accentRole() or "text"
+        b.icon:SetColor(s:Color(role))
+        if b.label then b.label:SetTextColor(s:Color(role)) end
+    end
+    b:SetScript("OnClick",function() callback() end)
+    b:HookScript("OnEnter",function() b.hovered=true;paint() end)
+    b:HookScript("OnLeave",function() b.hovered=false;paint() end)
+    b:HookScript("OnHide",function() b.hovered=false;paint() end)
+    b:SetScript("OnEnable",paint);b:SetScript("OnDisable",paint)
+    s:Bind(paint,b)
+    return b
+end
 
 function Det:Build(pane)
     self.pane=pane
     local s=style()
-    self.close=UI:IconButton(pane,"close",function() Det:Select(nil) end,"window");M.Size(self.close,22,22)
-    self.title=UI:Label(pane,"",15,"text",true);self.title:SetWordWrap(true)
+    self.close=inline(pane,"x",function() Det:Select(nil) end)
+    self.title=UI:Label(pane,"",15,s.materialProfile~="interface" and "text",true);self.title:SetWordWrap(true)
     self.sub=UI:Label(pane,"",11,"muted")
     self.scrollFrame=CreateFrame("ScrollFrame",nil,pane);self.scrollFrame:SetClipsChildren(true);self.scrollFrame:EnableMouseWheel(true)
     self.child=CreateFrame("Frame",nil,self.scrollFrame);self.scrollFrame:SetScrollChild(self.child)
     self.scroll=0
     self.scrollFrame:SetScript("OnMouseWheel",function(_,delta) Det:Scroll(-delta*40) end)
     local c=self.child
-    self.objectivesHead=UI:Label(c,"OBJECTIVES",11,"accent",true)
-    self.textHead=UI:Button(c,"Quest text",120,function() Det.textOpen=not Det.textOpen;Det:Refresh() end,"ghost")
+    self.objectivesHead=UI:Label(c,"OBJECTIVES",11,accentRole(),true)
+    self.textHead=inline(c,"chevron-down",function() Det.textOpen=not Det.textOpen;Det:Refresh() end,"Quest text")
     -- Open/closed as Lucide chevrons (Florian 2026-10-16: the triangles
     -- were not in the suite's font and showed as a box).
-    self.textHead:SetLabelInsets(18,8,"LEFT")
     self.textHead.closed=UI:Icon(self.textHead,"chevron-right",12,"muted");M.Point(self.textHead.closed,"LEFT",self.textHead,"LEFT",2,0)
-    self.textHead.open=UI:Icon(self.textHead,"chevron-down",12,"muted");M.Point(self.textHead.open,"LEFT",self.textHead,"LEFT",2,0)
+    self.textHead.open=self.textHead.icon
     self.text=UI:Label(c,"",12,"text");self.text:SetWordWrap(true);self.text:SetJustifyV("TOP")
-    self.rewardsHead=UI:Label(c,"REWARDS",11,"accent",true)
+    self.rewardsHead=UI:Label(c,"REWARDS",11,accentRole(),true)
     self.money=UI:Label(c,"",12,"text")
     self.choiceHead=UI:Label(c,"Choose one:",11,"muted")
     self.track=UI:Button(pane,"Track",96,function() Det:Action("track") end)
@@ -74,6 +99,11 @@ local function textHeight(label,width)
     if h<=0 then h=math.ceil(#(label:GetText() or "")/math.max(1,width/7))*15 end
     M.Height(label,math.max(14,h));return math.max(14,h)
 end
+function Det:PaintObjective(row)
+    local r,g,b=style():Color("accent");row.bar:SetVertexColor(r,g,b,.9)
+    if row.finished then row.label:SetTextColor(.45,.8,.45)
+    else row.label:SetTextColor(style():Color(row.colorRole or "text")) end
+end
 function Det:Objective(index)
     local o=self.objectives[index]
     if o then return o end
@@ -81,10 +111,11 @@ function Det:Objective(index)
         o={label=UI:Label(self.child,"",12,"text"),back=self.child:CreateTexture(nil,"BORDER"),bar=self.child:CreateTexture(nil,"ARTWORK")}
         o.back:SetTexture("Interface\\Buttons\\WHITE8X8");o.bar:SetTexture("Interface\\Buttons\\WHITE8X8")
         -- Lead there (BV Quest Navigation, when installed): asked again, the next spot.
-        o.go=UI:IconButton(self.child,"navigation",function() Det:Go(o.key,o.target) end,"ghost");M.Size(o.go,22,22);o.go:Hide()
-        o.go:SetScript("OnEnter",function(btn) Det:GoTip(btn,o.key,o.target) end)
-        o.go:SetScript("OnLeave",function() if GameTooltip then GameTooltip:Hide() end end)
+        o.go=inline(self.child,"navigation",function() Det:Go(o.key,o.target) end);o.go:Hide()
+        o.go:HookScript("OnEnter",function(btn) Det:GoTip(btn,o.key,o.target) end)
+        o.go:HookScript("OnLeave",function() if GameTooltip then GameTooltip:Hide() end end)
         self.objectives[index]=o
+        if style().materialProfile=="interface" then style():Bind(function() Det:PaintObjective(o) end,o.label) end
         return o
     end)
 end
@@ -142,8 +173,8 @@ function Det:Refresh()
     local textWidth=targets and width-26 or width
     for index,o in ipairs(q.objectives) do
         local row=self:Objective(index);shown=index
-        row.label:SetText(o.text);row.label:SetTextColor(s:Color(o.finished and "muted" or "text"))
-        if o.finished then row.label:SetTextColor(.45,.8,.45) end
+        row.label:SetText(o.text);row.colorRole=o.finished and "muted" or "text";row.finished=o.finished
+        self:PaintObjective(row)
         UI:Place(row.label,self.child,0,y);go(row,"objective"..index,targets and targets.objectives[index],y)
         local h=textHeight(row.label,textWidth);y=y+h+2
         if o.need and o.need>1 then
@@ -155,14 +186,14 @@ function Det:Refresh()
     end
     if #q.objectives==0 then
         local row=self:Objective(1);shown=1
-        row.label:SetText(q.ready and "Ready to turn in." or "No objectives listed.");row.label:SetTextColor(s:Color("muted"))
+        row.label:SetText(q.ready and "Ready to turn in." or "No objectives listed.");row.colorRole="muted";row.finished=nil;self:PaintObjective(row)
         UI:Place(row.label,self.child,0,y);go(row,nil,nil,y);y=y+textHeight(row.label,width)+4;row.back:Hide();row.bar:Hide();row.label:Show()
     end
     -- Where to turn it in (Quest Navigation knows; Blizzard tells nothing).
     if targets and targets.turnin then
         shown=shown+1
         local row=self:Objective(shown)
-        row.label:SetText(targets.turnin.label);row.label:SetTextColor(s:Color(q.ready and "accent" or "muted"))
+        row.label:SetText(targets.turnin.label);row.colorRole=q.ready and accentRole() or "muted";row.finished=nil;self:PaintObjective(row)
         UI:Place(row.label,self.child,0,y);go(row,"turnin",targets.turnin,y)
         y=y+textHeight(row.label,textWidth)+4;row.back:Hide();row.bar:Hide();row.label:Show()
     end

@@ -5,7 +5,15 @@ local UI,M=ns.UI,ns.DesignSystem.Metrics
 local Actions=ns.Actions
 local ROW=50 -- compact rows (0.8.73)
 function UI:ShortcutOptions(parent,controller,width,height)
-    local panel=UI:Panel(parent,width,height,"surface");UI:HideSurface(panel)
+    local style=UI:GetStyle()
+    local function host(owner,w,h)
+        if style.materialProfile=="interface" then
+            local frame=CreateFrame("Frame",nil,owner);M.Size(frame,w,h);return frame
+        end
+        local frame=UI:Panel(owner,w,h,"surface");UI:HideSurface(frame);return frame
+    end
+    local panel=host(parent,width,height)
+    panel.bvStyle=style
     panel.rows={}
     panel.labels=UI:Switch(panel,true,function(value)
         panel:Stop()
@@ -51,11 +59,12 @@ function UI:ShortcutOptions(parent,controller,width,height)
     end
     local function row(index)
         local r=panel.rows[index];if r then return r end
+        return UI:WithStyle(style,function()
         local content=panel.form.content
-        r=UI:Panel(content,width-40,ROW-4,"surface");UI:HideSurface(r)
+        r=host(content,width-40,ROW-4)
         r.title=UI:Place(UI:Label(r,"",12,"text",true),r,4,2);M.Size(r.title,200,16);r.title:SetWordWrap(false)
         r.binding=UI:Place(UI:Label(r,"",11,"muted"),r,4,18);M.Size(r.binding,200,14);r.binding:SetWordWrap(false)
-        r.warning=UI:Place(UI:Label(r,"",10,"accent"),r,4,32);M.Size(r.warning,width-48,14);r.warning:SetWordWrap(false)
+        r.warning=UI:Place(UI:Label(r,"",10,style.materialProfile=="interface" and "accentText" or "accent"),r,4,32);M.Size(r.warning,width-48,14);r.warning:SetWordWrap(false)
         r.keyButton=UI:Place(UI:Button(r,"",120,function() panel:Start(r) end),r,208,4);M.Height(r.keyButton,26)
         r.clear=UI:Place(UI:Button(r,"Clear",64,function()
             panel:Stop()
@@ -64,6 +73,7 @@ function UI:ShortcutOptions(parent,controller,width,height)
             panel:Refresh()
         end,"ghost"),r,332,4);M.Height(r.clear,26)
         panel.rows[index]=r;return r
+        end)
     end
     function panel:Refresh()
         self.labels:SetValue(controller:Store().shortcutLabels~=false)
@@ -82,7 +92,12 @@ function UI:ShortcutOptions(parent,controller,width,height)
             r:Show()
         end
         self.empty:SetShown(#targets==0)
-        self.form:SetContentHeight(math.max(1,#targets*ROW))
+        local contentHeight=math.max(56,#targets*ROW)
+        local viewport=math.min(height-170,contentHeight)
+        M.Height(self.form,viewport);M.Height(self.form.slider,viewport)
+        UI:Place(self.status,self,12,124+viewport)
+        M.Height(self,174+viewport)
+        self.form:SetContentHeight(contentHeight)
     end
     panel:Refresh();return panel
 end

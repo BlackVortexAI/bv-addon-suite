@@ -1,8 +1,14 @@
 -- Shared texture-only gallery. The session owns catalog access and persistence.
 local _,ns=...
 local UI,M=ns.UI,ns.DesignSystem.Metrics
-function UI:IconPicker(parent,width)
-    local v=UI:Panel(parent,width,470,"surface"); UI:HideSurface(v)
+function UI:IconPicker(parent,width,options)
+    local style=options and options.style or UI:GetStyle()
+    -- Capture once. Deferred catalog refresh never consults ambient UI state.
+    return UI:WithStyle(style,function()
+    local v
+    if style.materialProfile=="interface" then v=CreateFrame("Frame",nil,parent);M.Size(v,width,470)
+    else v=UI:Panel(parent,width,470,"surface");UI:HideSurface(v)end
+    v.bvStyle=style
     local function at(widget,x,y) M.Point(widget,"TOPLEFT",v,"TOPLEFT",x,-y); return widget end
     v.input=at(UI:Input(v,width),0,0); v.input:SetMaxLetters(100)
     v.note=at(UI:Label(v,"",11,"muted"),0,41); M.Size(v.note,width,34)
@@ -91,4 +97,5 @@ function UI:IconPicker(parent,width)
     end
     v:HookScript("OnHide",function() v:Close() end)
     v:Hide(); return v
+    end)
 end

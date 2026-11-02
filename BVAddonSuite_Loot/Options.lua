@@ -12,7 +12,7 @@ local function optional(context,event,callback)
 end
 function L:Changed()
     if not self:Active() then return end
-    L.RollFrame:Sync();L.Results:Repaint();if L.Master.window then L.Master:Refresh() end
+    L.RollFrame:Sync();L.Monitor:Repaint();L.Results:Repaint();if L.Master.window then L.Master:Refresh() end
     L.Widgets:Refresh()
 end
 -- A style family changed (suite or own): what Loot draws itself follows at once.
@@ -63,8 +63,20 @@ local GROW={{value="UP",label="Upwards"},{value="DOWN",label="Downwards"}}
 local MODES={{value="toast",label="Fade out (toast)"},{value="sticky",label="Stay until closed"},{value="tooltip",label="Tooltip at the roll bar"}}
 local page
 local function build(parent)
-    page=UI:Panel(parent,880,600,"surface");UI:HideSurface(page)
+    local pageStyle=UI:GetStyle();local interface=pageStyle.materialProfile=="interface"
+    if interface then
+        page=UI:WithStyle(UI:ToolStyle(),function()
+            local host=UI:Panel(parent,880,600,"surface");UI:HideSurface(host);return host
+        end)
+        page.bvStyle=pageStyle
+    else page=UI:Panel(parent,880,600,"surface");UI:HideSurface(page)end
     local g=UI:SettingsGrid(page);page.grid=g
+    -- These modules persist RGBA, including alpha; only the popup style is captured.
+    local function colorInput(callback)
+        local field=UI:ColorInput(g,150,callback)
+        if interface then field.bvColorOptions={style=pageStyle}end
+        return field
+    end
     local controls={}
     local function cfg() return L:Config() end
     local function set(key) return function(value) cfg()[key]=value;L:Changed() end end
@@ -91,14 +103,21 @@ local function build(parent)
     -- In-game style (0.8.91): family, roll bar background, card opacity.
     local function styled(key) return function(value) cfg()[key]=value;ns.Styles:Changed();L:Changed();if page then page:Refresh() end end end
     g:Section("style","Style")
+    if interface then
+        g:Row("Interface appearance",UI:Button(g,"Appearance settings",190,function() ns.Config:OpenPage("appearance") end),{help="Loot surfaces follow the selected Interface theme, accent and suite font. Background switches, opacity and own colours below remain independent. The saved legacy gameplay style is preserved."})
+    else
     row("styleFamily","Style family",UI:Dropdown(g,190,ns.Styles:Choices(true),styled("styleFamily")),
-        "Look of roll bars, toasts and result cards: the suite's in-game style or an own one. The master loot window keeps the BV style.")
+        "Legacy gameplay style. Interface loot windows use the selected Interface theme and suite font. Item quality and player class colours remain unchanged.")
     controls.styleFamily:SetOptionsProvider(function() return ns.Styles:Choices(true) end)
+    end
     row("rollBackground","Roll bar background",UI:Switch(g,false,styled("rollBackground")),"A background behind each roll bar in the style's look. Off: icon, name and bar only.")
     row("rollBgOpacity","Background opacity",UI:InlineSlider(g,190,0,100,5,"%d %%",styled("rollBgOpacity")),"Opacity of the roll bar background.")
     row("rollBgOwnColor","Own background color",UI:Switch(g,false,styled("rollBgOwnColor")),"Off: the style's background colour.")
-    row("rollBgColor","Background color",UI:ColorInput(g,150,styled("rollBgColor")),"Used with an own background colour.",{width=150})
-    row("panelOpacity","Toast and card opacity",UI:InlineSlider(g,190,20,100,5,"%d %%",styled("panelOpacity")),"Background opacity of loot toasts and result cards.")
+    row("rollBgColor","Background color",colorInput(styled("rollBgColor")),"Used with an own background colour.",{width=150})
+    row("panelBackground","Toast and card background",UI:Switch(g,false,styled("panelBackground")),"Show the theme material behind loot toasts and result cards; contents and actions stay visible when off.")
+    row("panelBgOwnColor","Own toast and card color",UI:Switch(g,false,styled("panelBgOwnColor")),"Use the background colour below instead of the Interface theme ground. Item quality and player class colours stay unchanged.")
+    row("panelBgColor","Toast and card color",colorInput(styled("panelBgColor")),"Custom background colour; its alpha multiplies background opacity.",{width=150})
+    row("panelOpacity","Toast and card opacity",UI:InlineSlider(g,190,0,100,5,"%d %%",styled("panelOpacity")),"Background opacity of loot toasts and result cards.",{width=interface and 180 or nil})
     g:Section("rolls","Roll bars")
     switch("rolls","Show roll bars","Group loot rolls and roll requests as bars.")
     switch("hideBlizzard","Hide Blizzard roll frames","Takes effect when the module starts (reload or off/on).")
@@ -106,8 +125,8 @@ local function build(parent)
     switch("rollStats","Item stats","Primary stats of the item (e.g. Strength | Stamina) to the left of the bar.")
     switch("rollKeep","Keep bar after choosing","Otherwise the bar closes once you chose; results follow. Always on while roll results are shown as a tooltip at the roll bar.")
     switch("rollQualityBar","Bar in item quality color","Timer bar in the item's quality color; off uses the bar color below.")
-    row("rollBarColor","Bar color",UI:ColorInput(g,150,set("rollBarColor")),"Used when the quality color is off.",{width=150})
-    slider("rollHeight","Bar height",20,48,1,"%d px","Height of a roll bar including the item name; the icon and buttons scale with it.")
+    row("rollBarColor","Bar color",colorInput(set("rollBarColor")),"Used when the quality color is off.",{width=150})
+    slider("rollHeight",interface and "Bar height (minimum 28 px)" or "Bar height",20,48,1,"%d px",interface and "Requested content height. Interface rows use at least 28 px so the 10 px timer, item name and roll actions remain readable. Values below 28 px are retained; the visible row uses 28 px. Optional background padding is added outside this height." or "Height of a roll bar including the item name; the icon and buttons scale with it.")
     slider("rollSpacing","Spacing",0,24,1,"%d px","Gap between roll bars.")
     slider("rollMax","Bars at most",1,12,1,"%d","More open rolls wait until a bar is free.")
     dropdown("rollGrow","More bars",GROW,"Direction in which further bars stack from the first one.")
@@ -146,7 +165,7 @@ local function build(parent)
     function page:Arrange(width)
         self.width=width
         UI:Place(g,self,0,0)
-        local height=g:Arrange(width)+8
+        local height=g:Arrange(interface and math.max(1,width-10)or width)+8
         D.Height(self,height);return height
     end
     page.controls=controls
@@ -161,13 +180,13 @@ local function build(parent)
         if tooltip then controls.rollKeep:SetValue(true);controls.rollKeep:Disable() else controls.rollKeep:Enable() end
         if tooltip then controls.resultsLinger:Enable() else controls.resultsLinger:Disable() end
         -- Background options only matter with the background on.
-        for _,key in ipairs({"rollBgOpacity","rollBgOwnColor"}) do if c.rollBackground then controls[key]:Enable() else controls[key]:Disable() end end
-        if c.rollBackground and c.rollBgOwnColor then controls.rollBgColor:Enable() else controls.rollBgColor:Disable() end
+        for _,key in ipairs({"rollBgOpacity","rollBgOwnColor"}) do if interface or c.rollBackground then controls[key]:Enable() else controls[key]:Disable() end end
+        if interface or c.rollBackground and c.rollBgOwnColor then controls.rollBgColor:Enable() else controls.rollBgColor:Disable() end
     end
     select("general");page:Refresh()
     return page
 end
-ns.Config:RegisterPage("loot",{title="Loot",description="Roll bars, loot monitor, roll results and master loot with roll requests.",
+ns.Config:RegisterPage("loot",{interfaceSettings=true,title="Loot",description="Roll bars, loot monitor, roll results and master loot with roll requests.",
     build=function(parent) return page or build(parent) end,
     refresh=function() if page then page:Refresh() end end})
 

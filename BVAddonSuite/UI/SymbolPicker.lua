@@ -7,19 +7,26 @@ local _,ns=...
 local UI,D=ns.UI,ns.DesignSystem.Metrics
 local CELL,COLUMNS,MAX=44,8,240
 function UI:SymbolPicker(parent,width)
-    local panel=CreateFrame("Frame",nil,parent);D.Size(panel,width,470)
+    local style=self:GetStyle();local interface=style.materialProfile=="interface"
+    local panel=CreateFrame("Frame",nil,parent);D.Size(panel,width,470);panel.bvStyle=style
     panel.search=UI:Input(panel,width-20);UI:Place(panel.search,panel,0,0)
     UI:AttachTooltip(panel.search,"Find symbol","Filter by name, e.g. heart, shield, arrow.")
     panel.form=UI:Form(panel,width,420,panel);UI:Place(panel.form,panel,0,40);panel.form:SetClipsChildren(true)
     panel.buttons={}
     local function button(i)
         local b=panel.buttons[i];if b then return b end
-        b=CreateFrame("Button",nil,panel.form.content);D.Size(b,CELL-4,CELL-4)
-        b.bg=b:CreateTexture(nil,"BACKGROUND");b.bg:SetAllPoints(b);b.bg:SetColorTexture(1,1,1,.06)
+        if interface then
+            b=UI:WithStyle(style,UI.Button,UI,panel.form.content,"",CELL-4,nil,"nav")
+        else
+            b=CreateFrame("Button",nil,panel.form.content)
+            b.bg=b:CreateTexture(nil,"BACKGROUND");b.bg:SetAllPoints(b);b.bg:SetColorTexture(1,1,1,.06)
+        end
+        D.Size(b,CELL-4,CELL-4)
         b.glyph=b:CreateTexture(nil,"ARTWORK");D.Point(b.glyph,"CENTER");D.Size(b.glyph,26,26)
         b:SetScript("OnClick",function(self) if panel.onChoose and self.symbol then panel.onChoose(self.symbol) end end)
-        b:SetScript("OnEnter",function(self) self.bg:SetColorTexture(1,1,1,.18);UI:ShowTooltip(self,ns.Symbols:Label(self.symbol),"Click to use this symbol.") end)
-        b:SetScript("OnLeave",function(self) self.bg:SetColorTexture(1,1,1,self.symbol==panel.current and .22 or .06);UI:HideTooltip() end)
+        b:HookScript("OnEnter",function(self) if self.bg then self.bg:SetColorTexture(1,1,1,.18) end;UI:ShowTooltip(self,ns.Symbols:Label(self.symbol),"Click to use this symbol.") end)
+        b:HookScript("OnLeave",function(self) if self.bg then self.bg:SetColorTexture(1,1,1,self.symbol==panel.current and .22 or .06) end;UI:HideTooltip() end)
+        if interface then style:Bind(function()b.glyph:SetVertexColor(style:Color(b.selected and "accentText" or "text"))end,b) end
         panel.buttons[i]=b;return b
     end
     function panel:Refresh()
@@ -32,13 +39,13 @@ function UI:SymbolPicker(parent,width)
                 shown=shown+1;local b=button(shown);b.symbol=name
                 local path,l,r,t,bottom=ns.Symbols:Coords(name,26)
                 b.glyph:SetTexture(path);b.glyph:SetTexCoord(l,r,t,bottom);b.glyph:SetVertexColor(1,1,1,1)
-                b.bg:SetColorTexture(1,1,1,name==self.current and .22 or .06)
+                if interface then b:SetSelected(name==self.current);b.glyph:SetVertexColor(style:Color(b.selected and "accentText" or "text")) else b.bg:SetColorTexture(1,1,1,name==self.current and .22 or .06) end
                 b:ClearAllPoints();UI:Place(b,self.form.content,((shown-1)%COLUMNS)*CELL,math.floor((shown-1)/COLUMNS)*CELL);b:Show()
             end
         end
         for i=shown+1,#self.buttons do self.buttons[i]:Hide() end
         -- A line under the grid: how to reach the rest.
-        if not self.more then self.more=UI:Label(self.form.content,"",11,"muted");self.more:SetWordWrap(true) end
+        if not self.more then self.more=UI:WithStyle(style,UI.Label,UI,self.form.content,"",11,"muted");self.more:SetWordWrap(true) end
         local rows=math.ceil(shown/COLUMNS)*CELL
         if query=="" then self.more:SetText(string.format("Type to search all %d symbols.",#list))
         elseif matches>shown then self.more:SetText(string.format("%d of %d matches shown; type more to narrow it down.",shown,matches))

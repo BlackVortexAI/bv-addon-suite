@@ -1,0 +1,6 @@
+<Bindings>
+  <Binding name="BVCHAT_OPEN" header="BVCHAT">BVAddonSuiteCore.Chat:FocusComposer(false)</Binding>
+  <Binding name="BVCHAT_SLASH">BVAddonSuiteCore.Chat:FocusComposer(true)</Binding>
+  <Binding name="BVCHAT_REPLY">BVAddonSuiteCore.Chat:Reply(false)</Binding>
+  <Binding name="BVCHAT_LASTOUT">BVAddonSuiteCore.Chat:Reply(true)</Binding>
+</Bindings>

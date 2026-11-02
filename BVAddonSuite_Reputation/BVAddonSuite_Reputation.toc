@@ -2,8 +2,8 @@
 ## Title: BV Addon Suite - Reputation
 ## Notes: Watched-faction reputation bar. Requires BV Core.
 ## Author: BV
-## IconTexture: Interface\AddOns\BVAddonSuite\Media\Brand\bv-logo-small
-## Version: 0.8.89
+## IconTexture: Interface\AddOns\BVAddonSuite_Reputation\Media\Brand\module-icon
+## Version: 0.8.90
 ## Dependencies: BVAddonSuite
 
 Reputation.lua

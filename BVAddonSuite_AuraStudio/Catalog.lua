@@ -2,11 +2,11 @@ local package, A = ...
 local ns=BVAddonSuiteCore
 if not ns or not ns.RequireCore then
     A.blocked=true
-    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.89 or newer. Update Core; saved data is preserved.") end
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(package.." requires BV Addon Suite - Core 0.8.109 or newer. Update Core; saved data is preserved.") end
     return
 end
 -- Own version, oldest compatible Core, Core interface generation.
-if not ns:RequireCore(package,"0.8.91","0.8.89",1) then A.blocked=true; return end
+if not ns:RequireCore(package,"0.8.94","0.8.109",1) then A.blocked=true; return end
 A.G=ns.GraphModel
 local function port(label,t,default,wire,order) return {label=label,type=t,default=default,wire=wire,required=true,order=order} end
 local function logicDefinition(base,config)
@@ -299,7 +299,7 @@ A.catalog.media_overlay={label="Media text overlay",inputs={media=mediaPort(),te
         {key="outline",label="Outline",choices={"NONE","OUTLINE","THICKOUTLINE"},advanced=true}},
     help="Text over media. Connect String Formatter for readable aura stacks or item counts, or supported secret numbers/text through the native display-only path. Secret text stays opaque. Missing wired text invalidates the branch. Position reserves the existing layout frame."}
 A.catalog.media_graphic={label="Graphic file",source=true,inputs={},outputs={media=mediaPort()},
-    defaults={path="Interface\\AddOns\\BVAddonSuite\\Media\\Brand\\bv-logo-small.tga",left=0,right=1,top=0,bottom=1},fields={
+    defaults={path="Interface\\AddOns\\BVAddonSuite\\Media\\Interface\\Brand\\LogoNeutral.tga",left=0,right=1,top=0,bottom=1},fields={
         {key="path",label="Graphic path",type="string"},
         {key="left",label="Crop left (0..1)",type="float",advanced=true},{key="right",label="Crop right (0..1)",type="float",advanced=true},
         {key="top",label="Crop top (0..1)",type="float",advanced=true},{key="bottom",label="Crop bottom (0..1)",type="float",advanced=true}},

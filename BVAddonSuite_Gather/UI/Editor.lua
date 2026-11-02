@@ -13,9 +13,12 @@ if not G.ready then return end
 -- waypoints (a loop starts over) and go out as text.
 local ns=G.ns
 local UI,M=ns.UI,ns.DesignSystem.Metrics
-local Grid=G.Grid
+local Sch=G.Scheduler  -- (BV Routing's scheduler: Sch.Run)
+local Space=G.Space
 local E={MAXCORNERS=4000,tool="move",brush=25,zoom=1,ox=0,oy=0,zones={},chosen={},history={},pools={}}
 G.Editor=E
+-- Tool windows follow the Interface context; the Gather HUD keeps G:Style().
+function E:Style() return self.window and self.window.bvStyle or UI:InterfaceStyle() end
 local DISC="Interface\\CHARACTERFRAME\\TempPortraitAlphaMask"
 local WHITE="Interface\\Buttons\\WHITE8X8"
 local SIDE,ROWS,ROW,MAXROWS=300,8,22,20
@@ -28,7 +31,7 @@ E.TOOLS={
     {id="risk",icon="skull",title="High risk",text="Paint elite camps and the like; the setting below says how the route treats them."},
     {id="erase",icon="eraser",title="Eraser",text="Takes painted strokes away."},
     {id="edit",icon="route",title="Edit the route",text="Drag a point to move it, click on the map to add one to the nearest leg, right-click a point to remove it."},
-    {id="link",icon="arrow-right-left",title="Transition",text="A bridge, tunnel or cave entrance: click its start, then its end (Shift on the end: one way only). Right-click an end to remove it."},
+    -- Transition authoring is hidden until the navmesh editor replaces it (Florian, 2026-10-27).
 }
 
 -- Pools of textures, lines and point buttons on the board.
@@ -84,9 +87,11 @@ end
 local BAR=44
 function E:Build()
     if self.window then return self.window end
-    UI:WithStyle(G:Style(),function()
+    local style=UI:InterfaceStyle()
+    if not style then return nil end
+    UI:WithStyle(style,function()
         local w=UI:Window("BVGatherRouteEditor",1180,780,{title="Gather route editor",minWidth=1060,minHeight=700})
-        self.window=w
+        self.window=w;w.bvStyle=style
         local c=w.content
         local view=CreateFrame("Frame",nil,c)
         M.Point(view,"TOPLEFT",c,"TOPLEFT",10,-6);M.Point(view,"BOTTOMRIGHT",c,"BOTTOMRIGHT",-SIDE-26,10+BAR)
@@ -108,7 +113,7 @@ function E:Build()
         -- While drawing (Florian 2026-10-09: not clear whether the mode is on):
         -- an accent frame round the map, a banner at the top and the map a
         -- little darker under the nodes and the area's lines.
-        local ar,ag,ab=G:Style():Color("accent")
+        local ar,ag,ab=E:Style():Color("accent")
         catcher.edges={}
         for i,side in ipairs({{"TOPLEFT","TOPRIGHT",nil,2},{"BOTTOMLEFT","BOTTOMRIGHT",nil,2},{"TOPLEFT","BOTTOMLEFT",2,nil},{"TOPRIGHT","BOTTOMRIGHT",2,nil}}) do
             local e=catcher:CreateTexture(nil,"OVERLAY");e:SetColorTexture(ar,ag,ab,.9)
@@ -120,6 +125,11 @@ function E:Build()
         banner.bg=banner:CreateTexture(nil,"BACKGROUND");banner.bg:SetAllPoints(banner);banner.bg:SetColorTexture(.05,.05,.07,.85)
         banner.line=banner:CreateTexture(nil,"BORDER");banner.line:SetPoint("BOTTOMLEFT");banner.line:SetPoint("BOTTOMRIGHT");banner.line:SetHeight(2);banner.line:SetColorTexture(ar,ag,ab,1)
         banner.text=UI:Label(banner,"",12,"text",true);banner.text:SetPoint("CENTER",banner,"CENTER",0,1)
+        style:Bind(function()
+            local r,g,b=style:Color("accent")
+            for _,edge in ipairs(catcher.edges) do edge:SetColorTexture(r,g,b,.9) end
+            banner.line:SetColorTexture(r,g,b,1)
+        end,catcher)
         catcher.banner=banner
         self.dim=self.board:CreateTexture(nil,"ARTWORK",nil,-8);self.dim:SetAllPoints(view);self.dim:SetColorTexture(0,0,0,.35);self.dim:Hide()
         catcher:Hide()
@@ -153,15 +163,15 @@ function E:BuildBar(c)
         M.Point(widget,"BOTTOMLEFT",c,"BOTTOMLEFT",x,10);x=x+width+6
         return widget
     end
-    self.name=add(UI:Input(c,130,function() E:Save() end),130)
+    self.name=add(UI:Input(c,120,function() E:Save() end),120)
     UI:AttachTooltip(self.name,"Route name","Type a name, then Save.")
     self.save=add(UI:Button(c,"Save",64,function() E:Save() end),64)
-    self.saved=add(UI:Dropdown(c,160,{},function(value) E:Load(value) end),160)
+    self.saved=add(UI:Dropdown(c,144,{},function(value) E:Load(value) end),144)
     self.saved:SetOptionsProvider(function() return E:SavedOptions() end)
     self.saved:SetLabelText("Saved routes...")
-    self.delete=add(UI:Button(c,"Delete",64,function() E:Delete() end,"ghost"),64)
-    self.export=add(UI:Button(c,"Export",64,function() E:Export() end,"ghost"),64)
-    self.import=add(UI:Button(c,"Import",64,function() G.Exchange:Open("routeImport") end,"ghost"),64)
+    self.delete=add(UI:Button(c,"Delete",72,function() E:Delete() end,"ghost"),72)
+    self.export=add(UI:Button(c,"Export",72,function() E:Export() end,"ghost"),72)
+    self.import=add(UI:Button(c,"Import",72,function() G.Exchange:Open("routeImport") end,"ghost"),72)
     self.follow=UI:Button(c,"Follow route",130,function() E:Follow() end,true)
     UI:AttachTooltip(self.follow,"Follow route","Shows the route on your map and minimap with small points and arrows; you join at the nearest leg. Your waypoints stay as they are.")
     M.Point(self.follow,"BOTTOMRIGHT",c,"BOTTOMRIGHT",-SIDE-26,10)
@@ -170,46 +180,57 @@ function E:BuildSide(c)
     local side=CreateFrame("Frame",nil,c)
     M.Point(side,"TOPRIGHT",c,"TOPRIGHT",-12,-6);M.Point(side,"BOTTOMRIGHT",c,"BOTTOMRIGHT",-12,10);M.Width(side,SIDE)
     self.side=side
+    -- The selection list stays above the fixed route options at the minimum size.
+    self.selection=UI:Form(side,SIDE,1)
+    M.Point(self.selection,"TOPLEFT",side,"TOPLEFT",0,0)
+    local top=self.selection.content
+    local topWidth=SIDE-24
     -- Top part (placed by ArrangeSide).
-    self.zoneHeading=UI:Label(side,"Zones",12,"accent",true)
+    self.zoneHeading=UI:Label(top,"Zones",12,E:Style().materialProfile=="interface" and "accentText" or "accent",true)
     self.zoneRows={}
     for i=1,MAXZONES do
-        local row=CreateFrame("Frame",nil,side);M.Size(row,SIDE,ROW)
-        row.name=UI:Label(row,"",12,"text");M.Point(row.name,"LEFT",row,"LEFT",0,0);M.Size(row.name,SIDE-40,ROW);row.name:SetWordWrap(false)
+        local row=CreateFrame("Frame",nil,top);M.Size(row,topWidth,ROW)
+        row.name=UI:Label(row,"",12,"text");M.Point(row.name,"LEFT",row,"LEFT",0,0);M.Size(row.name,topWidth-40,ROW);row.name:SetWordWrap(false)
         row.remove=UI:IconButton(row,"close",function() E:RemoveZone(i) end,"ghost");M.Point(row.remove,"RIGHT",row,"RIGHT",0,0);M.Size(row.remove,ROW,ROW)
         self.zoneRows[i]=row
     end
-    self.addZone=UI:Dropdown(side,SIDE,{},function(value) E:AddZone(value) end)
+    self.addZone=UI:Dropdown(top,topWidth,{},function(value) E:AddZone(value) end)
     self.addZone:SetOptionsProvider(function() return E:ZoneOptions() end)
-    self.nameHeading=UI:Label(side,"Herbs and ore",12,"accent",true)
+    self.nameHeading=UI:Label(top,"Herbs and ore",12,E:Style().materialProfile=="interface" and "accentText" or "accent",true)
     self.nameRows={};self.nameOffset=0;self.rows=ROWS
-    self.list=CreateFrame("Frame",nil,side);M.Width(self.list,SIDE)
+    self.list=CreateFrame("Frame",nil,top);M.Width(self.list,topWidth)
     self.list:EnableMouseWheel(true);self.list:SetScript("OnMouseWheel",function(_,delta) E:ScrollNames(-delta) end)
+    self.nameRowHeight=ROW
     for i=1,MAXROWS do
-        local row=CreateFrame("Frame",nil,self.list);M.Size(row,SIDE,ROW);M.Point(row,"TOPLEFT",self.list,"TOPLEFT",0,-(i-1)*ROW)
+        local row=CreateFrame("Frame",nil,self.list);M.Size(row,topWidth,ROW);M.Point(row,"TOPLEFT",self.list,"TOPLEFT",0,-(i-1)*self.nameRowHeight)
         row.switch=UI:Switch(row,false,function(value) E:Choose(row.key,value) end);M.Point(row.switch,"LEFT",row,"LEFT",0,0)
-        row.name=UI:Label(row,"",12,"text");M.Point(row.name,"LEFT",row,"LEFT",44,0);M.Size(row.name,SIDE-96,ROW);row.name:SetWordWrap(false)
+        self.nameRowHeight=math.max(ROW,M.GetHeight(row.switch)+(E:Style().materialProfile=="interface" and 4 or 0));M.Height(row,self.nameRowHeight)
+        row.name=UI:Label(row,"",12,"text");M.Point(row.name,"LEFT",row,"LEFT",44,0);M.Size(row.name,topWidth-96,ROW);row.name:SetWordWrap(false)
+        E:Style():Bind(function() if row.nodeKind then row.name:SetTextColor(unpack(G:Color(row.nodeKind))) end end,row.name)
         row.count=UI:Label(row,"",11,"muted");M.Point(row.count,"RIGHT",row,"RIGHT",-4,0);M.Size(row.count,48,ROW);row.count:SetJustifyH("RIGHT")
+        row:EnableMouse(true)
+        row:SetScript("OnEnter",function() UI:ShowTooltip(row,row.fullName,row.layerHelp) end)
+        row:SetScript("OnLeave",function() UI:HideTooltip() end)
         self.nameRows[i]=row
     end
-    self.all=UI:Button(side,"All",64,function() E:ChooseAll(true) end,"ghost")
-    self.none=UI:Button(side,"None",64,function() E:ChooseAll(false) end,"ghost");M.Point(self.none,"LEFT",self.all,"RIGHT",6,0)
-    self.areaButton=UI:Button(side,"Area",76,function() E:AreaButton() end,"ghost");M.Point(self.areaButton,"LEFT",self.none,"RIGHT",6,0)
+    self.all=UI:Button(top,"All",64,function() E:ChooseAll(true) end,"ghost")
+    self.none=UI:Button(top,"None",64,function() E:ChooseAll(false) end,"ghost");M.Point(self.none,"LEFT",self.all,"RIGHT",6,0)
+    self.areaButton=UI:Button(top,"Area",76,function() E:AreaButton() end,"ghost");M.Point(self.areaButton,"LEFT",self.none,"RIGHT",6,0)
     UI:AttachTooltip(self.areaButton,"Search area","Only nodes inside it join the route (not a no-go area): click Area, click the corners on the map, then Finish. Click again to clear it.")
-    self.more=UI:Label(side,"",11,"muted");M.Point(self.more,"LEFT",self.areaButton,"RIGHT",8,0);M.Size(self.more,84,20)
+    self.more=UI:Label(top,"",11,"muted");M.Point(self.more,"TOPLEFT",self.all,"BOTTOMLEFT",0,-4);M.Size(self.more,topWidth,16);self.more:SetWordWrap(false)
     -- Bottom part, from the bottom up.
     local y=0
     self.status=UI:Label(side,"",11,"muted");M.Point(self.status,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y);M.Size(self.status,SIDE,40);self.status:SetWordWrap(true)
     self.status:SetJustifyV("TOP")
     -- While calculating: a bar over the status line, filling up.
-    self.progress=UI:StatusBar(side,SIDE,4);M.Point(self.progress,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y+40);self.progress:SetValue(0);self.progress:Hide()
+    self.progress=UI:StatusBar(side,SIDE,4,self:Style());M.Point(self.progress,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y+40);self.progress:SetValue(0);self.progress:Hide()
     y=y+44
     -- While it runs the button cancels it (Florian 2026-10-10).
     self.calculate=UI:Button(side,"Calculate",SIDE,function() if E.job then E:Cancel() else E:Calculate() end end,true);M.Point(self.calculate,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y);y=y+40
     UI:AttachTooltip(self.calculate,"Calculate the route","Plans the route through the chosen nodes. While it runs, the button cancels it; the route you had stays. Warning: the game's performance drops noticeably for a moment at the start, while the terrain is read; after that it runs smoothly in the background.")
     -- Florian 2026-10-09: warn before the first click, the start lags.
     self.lagNote=UI:Label(side,"Warning: performance drops for a moment when calculating starts.",10,"muted");M.Point(self.lagNote,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y-2);M.Size(self.lagNote,SIDE,14)
-    self.lagNote:SetTextColor(1,.78,.2);y=y+14
+    E:Style():Bind(function() self.lagNote:SetTextColor(1,.78,.2) end,self.lagNote);y=y+14
     local function option(title,control,height)
         local l=UI:Label(side,title,12,"text");M.Point(l,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y+4);M.Size(l,110,20)
         self.lastLabel=l
@@ -221,7 +242,7 @@ function E:BuildSide(c)
     for i,tool in ipairs(self.TOOLS) do
         local b=UI:IconButton(side,tool.icon,function() E:Tool(tool.id) end,"ghost");M.Size(b,30,30);M.Point(b,"BOTTOMLEFT",side,"BOTTOMLEFT",(i-1)*33,y)
         b.mark=b:CreateTexture(nil,"OVERLAY");M.Point(b.mark,"BOTTOMLEFT",b,"BOTTOMLEFT",4,0);M.Point(b.mark,"BOTTOMRIGHT",b,"BOTTOMRIGHT",-4,0);M.Height(b.mark,2)
-        b.mark:SetColorTexture(G:Style():Color("accent"))
+        E:Style():Bind(function() b.mark:SetColorTexture(E:Style():Color("accent")) end,b.mark)
         UI:AttachTooltip(b,tool.title,tool.text)
         self.toolButtons[tool.id]=b
     end
@@ -230,7 +251,7 @@ function E:BuildSide(c)
     self.undo=UI:IconButton(side,"undo-2",function() E:Undo() end,"ghost");M.Point(self.undo,"BOTTOMRIGHT",side,"BOTTOMRIGHT",0,y)
     UI:AttachTooltip(self.undo,"Undo","Takes back the last painted or erased stroke.")
     y=y+36
-    local paint=UI:Label(side,"Paint and edit",12,"accent",true);M.Point(paint,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y);y=y+24
+    local paint=UI:Label(side,"Paint and edit",12,E:Style().materialProfile=="interface" and "accentText" or "accent",true);M.Point(paint,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y);y=y+24
     self.risk=option("High risk",UI:Dropdown(side,180,{{value="ignore",label="Ignore"},{value="avoid",label="Avoid where possible"},{value="block",label="Treat as no-go"}},
         function(value) G.Routing:Config().risk=value;E:Stale() end),38)
     self.worth=option("Way per node",UI:InlineSlider(side,180,0,600,10,"%d yd",function(value) G:Config().worthLimit=value;E:Stale() end))
@@ -247,7 +268,7 @@ function E:BuildSide(c)
     UI:AttachTooltip(self.sight,"Sight radius","Each node comes within this distance of a stop (the minimap shows about 230 yards zoomed out, 150 indoors).")
     self.loop=option("Loop",UI:Switch(side,true,function(value) G:Config().loop=value;E:Stale() end))
     UI:AttachTooltip(self.loop,"Loop","The route ends where it started and starts over; off: one way from the first point to the last.")
-    local route=UI:Label(side,"Route",12,"accent",true);M.Point(route,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y)
+    local route=UI:Label(side,"Route",12,E:Style().materialProfile=="interface" and "accentText" or "accent",true);M.Point(route,"BOTTOMLEFT",side,"BOTTOMLEFT",0,y)
     -- Wiki and expert settings beside the heading (Florian 2026-10-09: in
     -- the bar under the map they ran into "Follow route").
     self.expert=UI:IconButton(side,"sliders-horizontal",function() G.Expert:Open() end,"ghost");M.Size(self.expert,26,26)
@@ -265,7 +286,7 @@ end
 function E:ArrangeSide()
     local side=self.side
     if not side then return end
-    local function place(widget,x,y) widget:ClearAllPoints();M.Point(widget,"TOPLEFT",side,"TOPLEFT",x,y) end
+    local function place(widget,x,y) widget:ClearAllPoints();M.Point(widget,"TOPLEFT",self.selection.content,"TOPLEFT",x,y) end
     local y=0
     place(self.zoneHeading,0,y);y=y-22
     for i,row in ipairs(self.zoneRows) do
@@ -275,20 +296,25 @@ function E:ArrangeSide()
     place(self.nameHeading,0,y);y=y-22
     place(self.list,0,y)
     local height=M.GetHeight(side)
-    local free=(height>0 and height or 700)-self.bottomHeight-(-y)-44
-    self.rows=math.max(3,math.min(MAXROWS,math.floor(free/ROW)))
-    M.Height(self.list,self.rows*ROW)
-    y=y-self.rows*ROW-4
+    height=height>0 and height or 700
+    local available=math.max(80,height-self.bottomHeight-8)
+    M.Height(self.selection,available);M.Height(self.selection.slider,available)
+    local free=available-(-y)-64
+    self.rows=math.max(3,math.min(MAXROWS,math.floor(free/self.nameRowHeight)))
+    M.Height(self.list,self.rows*self.nameRowHeight)
+    y=y-self.rows*self.nameRowHeight-4
     place(self.all,0,y)
+    self.selection:SetContentHeight(-y+54)
     for i,row in ipairs(self.nameRows) do if i>self.rows then row:Hide() end end
 end
 
 function E:LayerMenu(anchor)
+    anchor.bvMenuStyle=self:Style()
     local c=G:Config()
     UI:ContextMenu(anchor,{
         {value="terrain",label=(c.editorTerrain and "Hide" or "Show").." terrain"},
         {value="names",label=(c.editorNames and "Hide" or "Show").." names and flight masters"},
-        {value="relief",label=(c.editorRelief and "Hide" or "Show").." slopes, water, roads and entrances"},
+        {value="relief",label=(c.editorRelief and "Hide" or "Show").." slopes, water, roads and levels"},
         {value="heat",label=(c.editorHeat and "Hide" or "Show").." walked ways"},
         {value="waypoints",label="Send the route to the Map waypoints"},
         {value="areasExport",label="Export areas and transitions"},
@@ -315,11 +341,13 @@ function E:ToggleTerrain()
 end
 function E:Toggle()
     local w=self:Build()
+    if not w then return nil end
     if w:IsShown() then w:Hide() else self:Open() end
 end
 -- Opens with the given zones, else the ones of last time, else where you are.
 function E:Open(zones)
     local w=self:Build()
+    if not w then return nil end
     if zones then self.zones={} for i,zone in ipairs(zones) do self.zones[i]=zone end end
     if #self.zones==0 then
         local mapID=G.Record:Position()
@@ -404,19 +432,19 @@ end
 function E:SetZones(zones)
     self.zones=zones;self.placed=nil
     if #zones==0 then return end
-    self.space=Grid.Space(zones)
+    self.space=Space.Space(zones)
     self.namesKey=nil;self:Names()
     -- New names start chosen when nothing of them was chosen before.
     local any=false
     for _,entry in ipairs(self.names) do if self.chosen[entry.key] then any=true end end
-    if not any then for _,entry in ipairs(self.names) do self.chosen[entry.key]=true end end
+    if not any then for _,entry in ipairs(self.names) do self.chosen[entry.key]=not entry.under or G:Config().routeUnderground or nil end end
     self.nameOffset=0
     self.nodes={}
     for _,t in ipairs(G.TYPES) do
         for _,zone in ipairs(zones) do
             for _,node in ipairs(G.Data:Nodes(t.id,zone) or {}) do
-                local x,y=Grid.ToSpace(self.space,zone,node.x,node.y)
-                if x then self.nodes[#self.nodes+1]={x=x,y=y,kind=t.id,key=G.Plan.Key(t.id,node.name or ("Unknown "..t.label:lower())),under=node.under,zone=zone,raw=node} end
+                local x,y=Space.ToSpace(self.space,zone,node.x,node.y)
+                if x then self.nodes[#self.nodes+1]={x=x,y=y,kind=t.id,key=G.Plan.Key(t.id,node.name or ("Unknown "..t.label:lower()),node.under),under=node.under,zone=zone,raw=node} end
             end
         end
     end
@@ -446,9 +474,11 @@ function E:RefreshSide()
         local entry=i<=rows and names[i+self.nameOffset]
         row:SetShown(entry and true or false)
         if entry then
-            row.key=entry.key
+            row.key=entry.key;row.nodeKind=entry.kind
             row.switch:SetValue(self.chosen[entry.key]==true)
-            row.name:SetText(G.WithSkill(entry.name));row.name:SetTextColor(unpack(G:Color(entry.kind)))
+            row.fullName=G.WithSkill(entry.name)..(entry.under and " (Underground)" or (entry.unknown or 0)>0 and " (Surface / unknown)" or "")
+            row.layerHelp=entry.under and "Only underground nodes of this resource." or (entry.unknown or 0)>0 and string.format("Surface nodes and %d nodes whose layer is not confirmed.",entry.unknown) or "Only surface nodes of this resource."
+            row.name:SetText(row.fullName);row.name:SetTextColor(unpack(G:Color(entry.kind)))
             row.count:SetText(tostring(entry.count))
         end
     end
@@ -747,11 +777,11 @@ function E:Stroke(x,y)
                 local hit
                 if stroke.poly then
                     -- A polygon goes when the eraser is inside it.
-                    local zx,zy=select(2,Grid.FromSpace(s,x,y))
-                    hit=zx and Grid.Inside(stroke.poly,zx,zy)
+                    local zx,zy=select(2,Space.FromSpace(s,x,y))
+                    hit=zx and Space.Inside(stroke.poly,zx,zy)
                 else
-                    local sx,sy=Grid.ToSpace(s,zone,stroke.x,stroke.y)
-                    hit=sx and Grid.Yards(s,x,y,sx,sy)<=self.brush/2+(stroke.r or 0)/2
+                    local sx,sy=Space.ToSpace(s,zone,stroke.x,stroke.y)
+                    hit=sx and Space.Yards(s,x,y,sx,sy)<=self.brush/2+(stroke.r or 0)/2
                 end
                 if hit then
                     table.remove(strokes,i);session.removed[#session.removed+1]={zone=zone,stroke=stroke,index=i}
@@ -763,8 +793,8 @@ function E:Stroke(x,y)
         end
     else
         local last=self.lastStroke
-        if last and last.session==session and Grid.Yards(s,x,y,last.x,last.y)<self.brush*.4 then return end
-        local zone,zx,zy=Grid.FromSpace(s,x,y)
+        if last and last.session==session and Space.Yards(s,x,y,last.x,last.y)<self.brush*.4 then return end
+        local zone,zx,zy=Space.FromSpace(s,x,y)
         local inside=false;for _,z in ipairs(self.zones) do if z==zone then inside=true end end
         if not inside then return end
         local stroke={x=zx,y=zy,r=self.brush,kind=self.tool}
@@ -792,7 +822,7 @@ function E:Undo()
 end
 
 -- Route points by hand.
-function E:SpacePoint(point) return Grid.ToSpace(self.space,point.mapID,point.x,point.y) end
+function E:SpacePoint(point) return Space.ToSpace(self.space,point.mapID,point.x,point.y) end
 function E:Insert(x,y)
     local r=self.route
     if not r or #r.points<2 then return end
@@ -804,13 +834,13 @@ function E:Insert(x,y)
         if b then
             local ax,ay=self:SpacePoint(a);local bx,by=self:SpacePoint(b)
             if ax and bx then
-                local cost=Grid.Yards(s,ax,ay,x,y)+Grid.Yards(s,x,y,bx,by)-Grid.Yards(s,ax,ay,bx,by)
+                local cost=Space.Yards(s,ax,ay,x,y)+Space.Yards(s,x,y,bx,by)-Space.Yards(s,ax,ay,bx,by)
                 if not bestCost or cost<bestCost then best,bestCost=i,cost end
             end
         end
     end
     if not best then return end
-    local zone,zx,zy=Grid.FromSpace(s,x,y)
+    local zone,zx,zy=Space.FromSpace(s,x,y)
     table.insert(r.points,best+1,{mapID=zone,x=zx,y=zy,stop=true,count=0})
     self:Edited()
 end
@@ -823,7 +853,7 @@ end
 function E:Move(index,x,y)
     local r=self.route
     if not (r and r.points[index]) then return end
-    local zone,zx,zy=Grid.FromSpace(self.space,x,y)
+    local zone,zx,zy=Space.FromSpace(self.space,x,y)
     local point=r.points[index]
     point.mapID,point.x,point.y=zone,zx,zy
     self:Edited()
@@ -1102,7 +1132,7 @@ end
 -- One zone: its own map. Several zones: their continent's map, so the zone
 -- maps (each showing its neighbours too) never overlap (Florian 2026-10-08).
 function E:Tiles()
-    local frames,labels=pool("zones",texture("BACKGROUND",0)),pool("labels",function() return UI:Label(E.board,"",12,"muted") end)
+    local frames,labels=pool("zones",texture("BACKGROUND",0)),pool("labels",function() return E:Style():Label(E.board,"",12,"muted") end)
     reset(pool("tiles",texture("BACKGROUND",1)));reset(pool("overlays",texture("BACKGROUND",2)))
     reset(frames);reset(labels)
     local s=self.space
@@ -1169,7 +1199,7 @@ function E:Layout()
         do
             local x,y
             if stroke.poly then self:DrawPolygon(zone,stroke,fills,outlines,self.outlinesOnly)
-            else x,y=Grid.ToSpace(self.space,zone,stroke.x,stroke.y) end
+            else x,y=Space.ToSpace(self.space,zone,stroke.x,stroke.y) end
             local color=self.AREA[stroke.kind]
             if x and color then
                 local t=take(strokes)
@@ -1227,7 +1257,7 @@ function E:DrawPolygon(zone,area,fills,outlines,bare)
     local s=self.space
     local points={}
     for i=1,#area.poly-1,2 do
-        local x,y=Grid.ToSpace(s,zone,area.poly[i],area.poly[i+1])
+        local x,y=Space.ToSpace(s,zone,area.poly[i],area.poly[i+1])
         if not x then return end
         points[#points+1]={x,y}
     end
@@ -1241,13 +1271,13 @@ function E:DrawPolygon(zone,area,fills,outlines,bare)
     if bare then return end
     local minX,minY,maxX,maxY=math.huge,math.huge,-math.huge,-math.huge
     for _,p in ipairs(points) do minX,minY,maxX,maxY=math.min(minX,p[1]),math.min(minY,p[2]),math.max(maxX,p[1]),math.max(maxY,p[2]) end
-    local stepX,stepY=Grid.CELL/s.width,Grid.CELL/s.height
+    local stepX,stepY=Space.CELL/s.width,Space.CELL/s.height
     local flat={};for _,p in ipairs(points) do flat[#flat+1]=p[1];flat[#flat+1]=p[2] end
     local y=minY+stepY/2
     while y<maxY do
         local x,from=minX+stepX/2,nil
         while x<maxX+stepX do
-            local inside=x<maxX and Grid.Inside(flat,x,y)
+            local inside=x<maxX and Space.Inside(flat,x,y)
             if inside and not from then from=x end
             if not inside and from then
                 local px0,py0=self:ToBoard(from-stepX/2,y-stepY/2);local px1,py1=self:ToBoard(x-stepX/2,y+stepY/2)
@@ -1311,7 +1341,7 @@ function E:Rubber()
     self.rubberKey=key
     for _,l in ipairs(self.rubber) do l:Hide() end
     if not (x and last) then return end
-    local ar,ag,ab=G:Style():Color("accent")
+    local ar,ag,ab=E:Style():Color("accent")
     local tx,ty=self:ToBoard(x,y)
     local near=#self.areaDraw>=3 and self:NearFirst(cx,cy)
     if near then tx,ty=self:ToBoard(first[1],first[2]) end
@@ -1330,10 +1360,10 @@ end
 function E:AreaButton()
     if self.areaDraw then
         if #self.areaDraw>=3 then
-            local zone=Grid.FromSpace(self.space,self.areaDraw[1][1],self.areaDraw[1][2])
+            local zone=Space.FromSpace(self.space,self.areaDraw[1][1],self.areaDraw[1][2])
             local poly={}
             for _,corner in ipairs(self.areaDraw) do
-                local z,zx,zy=Grid.FromSpace(self.space,corner[1],corner[2])
+                local z,zx,zy=Space.FromSpace(self.space,corner[1],corner[2])
                 if z~=zone then zx,zy=ns.MapPins:OnMap({mapID=z,x=zx,y=zy},zone) end
                 poly[#poly+1]=zx;poly[#poly+1]=zy
             end
@@ -1353,11 +1383,11 @@ function E:DrawArea()
         for _,corner in ipairs(self.areaDraw) do points[#points+1]=corner end
     elseif self.area then
         for i=1,#self.area.poly-1,2 do
-            local x,y=Grid.ToSpace(self.space,self.area.mapID,self.area.poly[i],self.area.poly[i+1])
+            local x,y=Space.ToSpace(self.space,self.area.mapID,self.area.poly[i],self.area.poly[i+1])
             if x then points[#points+1]={x,y} end
         end
     end
-    local ar,ag,ab=G:Style():Color("accent")
+    local ar,ag,ab=E:Style():Color("accent")
     local closed=not self.areaDraw
     -- Corners as dots while drawing; the first larger (click it to close).
     local corners=pool("areaCorners",function() local t=E.board:CreateTexture(nil,"OVERLAY",nil,6);t:SetTexture(DISC);return t end)
@@ -1392,10 +1422,10 @@ function E:Corner(x,y,more)
         self.corners[#self.corners+1]={x,y}
         if self.hint then self.hint:SetText(#self.corners.." corners. Shift+click: more; click: close the area.") end
     else
-        local zone=Grid.FromSpace(self.space,self.corners[1][1],self.corners[1][2])
+        local zone=Space.FromSpace(self.space,self.corners[1][1],self.corners[1][2])
         local poly={}
         for _,corner in ipairs(self.corners) do
-            local z,zx,zy=Grid.FromSpace(self.space,corner[1],corner[2])
+            local z,zx,zy=Space.FromSpace(self.space,corner[1],corner[2])
             if z~=zone then zx,zy=ns.MapPins:OnMap({mapID=z,x=zx,y=zy},zone) end
             poly[#poly+1]=zx;poly[#poly+1]=zy
         end
@@ -1410,7 +1440,7 @@ function E:Corner(x,y,more)
 end
 -- Transitions: start, then end; both ends in our zones.
 function E:LinkClick(x,y,oneway)
-    local zone,zx,zy=Grid.FromSpace(self.space,x,y)
+    local zone,zx,zy=Space.FromSpace(self.space,x,y)
     if not self.linkStart then
         self.linkStart={mapID=zone,x=zx,y=zy}
         if self.hint then self.hint:SetText("Now click the transition's end (Shift: one way).") end
@@ -1442,8 +1472,8 @@ function E:DrawLinks()
     self.linkArrows=self.linkArrows or {}
     local arrows=0
     for index,link in ipairs(G.Plan:Links()) do
-        local ax,ay=Grid.ToSpace(self.space,link.a.mapID,link.a.x,link.a.y)
-        local bx,by=Grid.ToSpace(self.space,link.b.mapID,link.b.x,link.b.y)
+        local ax,ay=Space.ToSpace(self.space,link.a.mapID,link.a.x,link.a.y)
+        local bx,by=Space.ToSpace(self.space,link.b.mapID,link.b.x,link.b.y)
         if ax and bx then
             local x1,y1=self:ToBoard(ax,ay);local x2,y2=self:ToBoard(bx,by)
             local l=take(lines)
@@ -1462,10 +1492,10 @@ function E:DrawLinks()
     end
     for i=arrows+1,#self.linkArrows do self.linkArrows[i]:Hide() end
 end
--- Slopes and water (terrain data): steep and unwalkable ground, swimming
--- water, magma, roads (light) and entrances (holes, violet: caves and
--- buildings, where transitions belong) as tinted areas, in blocks of 4 x 4 cells (33 yards) and
--- merged along each row, only near the view and not zoomed far out.
+-- Slopes and water (BV Routing's navmesh classes since 2026-10-26, Claude; before: the terrain data): steep and
+-- unwalkable ground, swimming water, magma, roads (light) and places of several levels (violet: bridges, caves,
+-- buildings) as tinted areas, in blocks of 4 x 4 navmesh cells (32 yards) merged along each row, only near the view
+-- and not zoomed far out.
 E.RELIEF={[1]={1,.62,.1,.26},[2]={.92,.15,.1,.36},[3]={.25,.55,1,.34},[4]={1,0,.6,.45},[5]={1,.92,.55,.5},[6]={.85,.3,1,.8}}
 -- Which one a block shows: magma, swimming water, road, unwalkable, steep.
 E.RANK={[0]=0,[1]=1,[2]=2,[5]=3,[3]=4,[4]=5,[6]=6}
@@ -1509,72 +1539,76 @@ function E:DrawRelief()
     local relief=pool("relief",texture("BORDER",-1))
     reset(relief)
     local c=G:Config()
-    if not c.editorRelief or self.zoom<.6 or not ns.MapTerrain then return end
-    local frame=self:WorldFrame(self.space.mapID)
-    if not (frame and ns.MapTerrain:Data(frame.instance)) then return end
+    if not c.editorRelief or self.zoom<.6 then return end
     local s=self.space
+    local H=G.Routing and G.Routing.Hpa
+    if not (s and H and H:Has(s.mapID) and H:Active(s.mapID)) then return end
+    H:Costs()
+    local g=H.geo
     local w,h=self:Size()
     local vw,vh=self.view:GetWidth(),self.view:GetHeight()
     local ax,bx=s.minX+(0-self.ox)/w*(s.maxX-s.minX),s.minX+(vw-self.ox)/w*(s.maxX-s.minX)
     local ay,by=s.minY+(0-self.oy)/h*(s.maxY-s.minY),s.minY+(vh-self.oy)/h*(s.maxY-s.minY)
-    local c0,c1,r0,r1=ns.MapTerrain.Range(frame,ax,ay,bx,by)
+    local B=4*H.cell
+    local function block(x,y) return math.floor((x-g.minX)*g.width/B),math.floor((y-g.minY)*g.height/B) end
+    local bx0,by0=block(math.max(ax,g.minX),math.max(ay,g.minY))
+    local bx1,by1=block(bx,by)
+    bx1=math.min(bx1,math.ceil(H.cols/4)-1);by1=math.min(by1,math.ceil(H.rows/4)-1)
     local function board(mx,my) return (mx-s.minX)/(s.maxX-s.minX)*w,(my-s.minY)/(s.maxY-s.minY)*h end
-    for col=c0,c1 do
-        for row=r0,r1 do
-            local runs=self:ReliefRuns(frame.instance,col,row)
-            if runs then
-                local x0,y0,x1,y1=ns.MapTerrain.Rect(frame,col,row)
-                local bw,bh=(x1-x0)/16,(y1-y0)/16
-                for i=1,#runs,4 do
-                    local by4,from,to,value=runs[i],runs[i+1],runs[i+2],runs[i+3]
-                    local color=self.RELIEF[value]
-                    local px0,py0=board(x0+from*bw,y0+by4*bh)
-                    local px1,py1=board(x0+to*bw,y0+(by4+1)*bh)
+    local drawn=0
+    for yb=by0,by1 do
+        local run,from=0,bx0
+        for xb=bx0,bx1+1 do
+            local value=xb<=bx1 and self:ReliefBlock(H,xb,yb) or 0
+            if value~=run then
+                if run>0 and drawn<4000 then
+                    drawn=drawn+1
+                    local color=self.RELIEF[run]
+                    local px0,py0=board(g.minX+from*B/g.width,g.minY+yb*B/g.height)
+                    local px1,py1=board(g.minX+xb*B/g.width,g.minY+(yb+1)*B/g.height)
                     local t=take(relief)
                     t:SetColorTexture(color[1],color[2],color[3],color[4])
                     t:ClearAllPoints();t:SetPoint("TOPLEFT",self.board,"TOPLEFT",px0,-py0)
                     t:SetSize(math.max(1,px1-px0),math.max(1,py1-py0))
                 end
+                run,from=value,xb
             end
         end
     end
 end
--- A tile's tinted areas as runs {row, from, to, value, ...} in blocks of 4 x 4
--- cells, worked out once per tile (moving the map only places them).
-E.reliefRuns={}
-function E:ReliefRuns(instance,col,row)
-    local key=instance*10000+col*100+row
-    local codes=ns.MapTerrain:Codes(instance,col,row)
-    if not codes then return nil end
-    -- Kept with the decoded tile it came from (new data: worked out anew).
-    local cached=self.reliefRuns[key]
-    if cached and cached.codes==codes then return cached.runs end
-    local runs={}
-    for by4=0,15 do
-        local run,from=0,0
-        for bx4=0,16 do
-            local value=0
-            if bx4<16 then
-                -- The block's worst: entrance, magma, swimming water, road, unwalkable, steep.
-                for dy=0,3 do
-                    for dx=0,3 do
-                        local code=codes[(by4*4+dy)*64+bx4*4+dx+1] or 0
-                        local water,slope=math.floor(code/4)%4,code%4
-                        local road=code%64>=32 and water==0
-                        local hole=math.floor(code/16)%2==1
-                        local v=(hole and 6) or (water==3 and 4) or (water==2 and 3) or (road and 5) or (slope==3 and 2) or (slope==2 and 1) or 0
-                        if E.RANK[v]>E.RANK[value] then value=v end
+-- A block's tint (4 x 4 cells): the worst of its cells - magma, swimming water, road, unwalkable, steep, several levels
+-- (E.RANK). Kept per continent and block.
+E.reliefBlocks={}
+function E:ReliefBlock(H,xb,yb)
+    local key=H.cont*1e8+yb*1e4+xb
+    local v=self.reliefBlocks[key]
+    if v then return v end
+    v=0
+    for dy=0,3 do
+        for dx=0,3 do
+            local cx,cy=xb*4+dx,yb*4+dy
+            if cx<H.cols and cy<H.rows then
+                local walk,worst=0,nil
+                for _,n in ipairs(H.CellNodes(cy*H.cols+cx)) do
+                    if H.Cost(n) then
+                        walk=walk+1
+                        local cl=H.classes[H.ClassOf(n)]
+                        local code=cl and cl[4] or 255
+                        local road=cl and math.floor(cl[2]/4)%2==1
+                        if code~=255 then
+                            local water,slope=math.floor(code/4)%4,code%4
+                            road=road or (code%64>=32 and water==0)
+                            worst=(water==3 and 4) or (water==2 and 3) or (road and 5) or (slope==3 and 2) or (slope==2 and 1) or worst
+                        elseif road then worst=5 end
                     end
                 end
-            end
-            if value~=run or bx4==16 then
-                if run>0 then runs[#runs+1]=by4;runs[#runs+1]=from;runs[#runs+1]=bx4;runs[#runs+1]=run end
-                run,from=value,bx4
+                local cell=(walk==0 and 2) or (walk>1 and 6) or worst or 0
+                if E.RANK[cell]>E.RANK[v] then v=cell end
             end
         end
     end
-    self.reliefRuns[key]={codes=codes,runs=runs}
-    return runs
+    self.reliefBlocks[key]=v
+    return v
 end
 -- Names and places (Florian 2026-10-08): zone names when zoomed out, the
 -- subzone names Blizzard's map shows on hover (Core's overlay labels) and
@@ -1601,16 +1635,16 @@ function E:Places()
     local s=self.space
     local out,flights={},{}
     for _,zone in ipairs(self:PlaceZones()) do
-        local x,y=Grid.ToSpace(s,zone,.5,.5)
+        local x,y=Space.ToSpace(s,zone,.5,.5)
         if x then
             out[#out+1]={kind="zone",x=x,y=y,name=self:ZoneName(zone)}
             for _,label in ipairs(ns.MapOverlays and ns.MapOverlays:Labels(zone) or {}) do
-                local lx,ly=Grid.ToSpace(s,zone,label.x,label.y)
+                local lx,ly=Space.ToSpace(s,zone,label.x,label.y)
                 if lx and label.name~="" then out[#out+1]={kind="area",x=lx,y=ly,name=label.name} end
             end
             for _,place in ipairs(ns.MapOverlays and ns.MapOverlays.Hostile and ns.MapOverlays:Hostile(zone) or {}) do
-                local ex0,ey0=Grid.ToSpace(s,zone,place.left,place.top)
-                local ex1,ey1=Grid.ToSpace(s,zone,place.right,place.bottom)
+                local ex0,ey0=Space.ToSpace(s,zone,place.left,place.top)
+                local ex1,ey1=Space.ToSpace(s,zone,place.right,place.bottom)
                 if ex0 and ex1 then out[#out+1]={kind="enemy",x=(ex0+ex1)/2,y=(ey0+ey1)/2,x0=ex0,y0=ey0,x1=ex1,y1=ey1,name=place.name} end
             end
             local nodes=G.Call("C_TaxiMap.GetTaxiNodesForMap",zone)
@@ -1621,7 +1655,7 @@ function E:Places()
                 local id=node.nodeID or node.name
                 local hidden=G:Config().ownFlights and ns.MapOverlays and ns.MapOverlays.HostileNode(node.faction)
                 if ok and not hidden and type(px)=="number" and px>=0 and px<=1 and py>=0 and py<=1 and not flights[id] then
-                    local fx,fy=Grid.ToSpace(s,zone,px,py)
+                    local fx,fy=Space.ToSpace(s,zone,px,py)
                     if fx then flights[id]=true;out[#out+1]={kind="flight",x=fx,y=fy,name=node.name} end
                 end
             end
@@ -1632,8 +1666,14 @@ function E:Places()
 end
 function E:DrawPlaces()
     local names=pool("names",function()
-        local l=UI:Label(E.board,"",12,"text",true);l:SetDrawLayer("OVERLAY",6)
+        local l=E:Style():Label(E.board,"",12,"text","bold");l:SetDrawLayer("OVERLAY",6)
         if l.SetShadowOffset then l:SetShadowOffset(1,-1);l:SetShadowColor(0,0,0,1) end
+        E:Style():Bind(function()
+            if not l.place then return end
+            local zone=l.place.kind=="zone";local c=zone and E.ZONECOLOR or E.AREACOLOR
+            E:Style():Font(l,zone and 16 or 11)
+            l:SetTextColor(c[1],c[2],c[3],zone and .95 or .9)
+        end,l)
         return l
     end)
     local flights=pool("flights",function()
@@ -1680,9 +1720,9 @@ function E:DrawPlaces()
                 local b=take(flights);b.name=place.name
                 b:ClearAllPoints();b:SetPoint("CENTER",self.board,"TOPLEFT",bx,-by)
             elseif (place.kind=="zone" and zone) or (place.kind=="area" and area) then
-                local l=take(names)
+                local l=take(names);l.place=place
                 local c=place.kind=="zone" and self.ZONECOLOR or self.AREACOLOR
-                UI:GetStyle():Font(l,place.kind=="zone" and 16 or 11)
+                E:Style():Font(l,place.kind=="zone" and 16 or 11)
                 l:SetText(place.kind=="zone" and place.name:upper() or place.name)
                 l:SetTextColor(c[1],c[2],c[3],place.kind=="zone" and .95 or .9)
                 l:ClearAllPoints();l:SetPoint("CENTER",self.board,"TOPLEFT",bx,-by)
@@ -1704,7 +1744,7 @@ function E:DrawRoute()
         local b=CreateFrame("Button",nil,E.board);b:SetFrameLevel(E.board:GetFrameLevel()+5)
         b.disc=b:CreateTexture(nil,"BACKGROUND");b.disc:SetAllPoints(b);b.disc:SetTexture(DISC)
         b.dot=b:CreateTexture(nil,"ARTWORK");b.dot:SetPoint("CENTER");b.dot:SetTexture(DISC)
-        b.number=UI:Label(b,"",10,"text",true);b.number:SetPoint("CENTER")
+        b.number=E:Style():Label(b,"",10,"text","bold");b.number:SetPoint("CENTER")
         b:RegisterForClicks("LeftButtonUp","RightButtonUp")
         b:SetScript("OnMouseDown",function(self,button) E:PointDown(button,self.index) end)
         b:SetScript("OnMouseUp",function(self) E:PointUp(self.index) end)
@@ -1715,7 +1755,7 @@ function E:DrawRoute()
     reset(lines);reset(points)
     local r=self.route
     if not r then return end
-    local ar,ag,ab=G:Style():Color("accent")
+    local ar,ag,ab=E:Style():Color("accent")
     local stale=r.stale and .5 or 1
     -- Ways round closer than 4 pixels to the point drawn before are left
     -- out of the lines (thousands of them on long routes made every redraw
@@ -1888,15 +1928,17 @@ function E:Calculate()
     local zones={unpack(self.zones)}
     local area=self.area
     local goal,sight,worth=c.routeGoal,c.sightRadius,c.worthLimit
-    G.Plan.Report(0,"Starting")
+    G.Plan.Begin("Starting")
     if self.progressTicker then self.progressTicker:Cancel() end
     self.progressTicker=C_Timer.NewTicker(.1,function() E:Status() end)
-    Grid.nextLabel="Calculating the route"
-    self.job=Grid.Run(function() return G.Plan:Build(zones,chosen,{loop=c.loop,radius=c.passRadius,start=start,smooth=c.routeSmooth,area=area,goal=goal,sight=sight,worth=worth}) end,function(result)
+    Sch.nextLabel="Calculating the route"
+    self.job=Sch.Run(function() return G.Plan:Build(zones,chosen,{loop=c.loop,radius=c.passRadius,start=start,smooth=c.routeSmooth,area=area,goal=goal,sight=sight,worth=worth}) end,function(result)
         E.job=nil
+        G.Plan.ClearWork() -- also called when the scheduler reports an error
         if E.progressTicker then E.progressTicker:Cancel();E.progressTicker=nil end
         if result then
             result.chosen,result.radius,result.area,result.sight=chosen,c.passRadius,area,sight
+            result.selectionVersion=1
             E.route=result
         end
         E:Status();E:Layout()
@@ -1908,7 +1950,7 @@ function E:Cancel()
     if not self.job then return false end
     self.job:Cancel();self.job=nil
     if self.progressTicker then self.progressTicker:Cancel();self.progressTicker=nil end
-    G.Plan.Report(0,"")
+    G.Plan.Begin("")
     G:Print("Calculation cancelled.")
     self:Status()
     return true
@@ -1940,7 +1982,7 @@ function E:Load(name)
         if point.gap then route.unreachable=route.unreachable+1 end
     end
     for i,zone in ipairs(saved.zones) do route.zones[i]=zone end
-    for key in pairs(saved.chosen or {}) do route.chosen[key]=true end
+    route.chosen=G.Plan:Choices(saved);route.selectionVersion=1
     route.area=saved.area;route.goal=saved.goal;route.sight=saved.sight
     if saved.issues then
         route.issues={}

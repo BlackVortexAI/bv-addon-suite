@@ -99,6 +99,47 @@ function R:Report()
     add("ScrollContainer.Child: "..(scroll and scroll.Child and "yes" or "no").."  GetCanvasScale: "..(scroll and scroll.GetCanvasScale and "yes" or "no")
         .."  GetNormalizedCursorPosition: "..(scroll and scroll.GetNormalizedCursorPosition and "yes" or "no").."  InstantPanAndZoom: "..(scroll and scroll.InstantPanAndZoom and "yes" or "no"))
     add("mapFade CVar: "..value(api("GetCVarBool","mapFade")))
+    -- Painted map layers and seamless detail diagnostics.
+    local canvas=scroll and scroll.Child
+    add("detailLayerPool: "..(map and map.detailLayerPool and "yes" or "no").."  RefreshDetailLayers: "..(map and type(map.RefreshDetailLayers)=="function" and "yes" or "no")
+        .."  AdjustDetailLayerAlpha: "..(map and type(map.AdjustDetailLayerAlpha)=="function" and "yes" or "no"))
+    if canvas then
+        local names={}
+        for _,child in ipairs({canvas:GetChildren()}) do
+            local keys={}
+            for key in pairs(child) do
+                if type(key)=="string" and (key:lower():find("layer",1,true) or key:lower():find("tile",1,true) or key:lower():find("detail",1,true)) then keys[#keys+1]=key end
+            end
+            table.sort(keys)
+            names[#names+1]=(child.GetName and child:GetName() or "?")..(#keys>0 and (" {"..table.concat(keys,",").."}") or "").." L"..child:GetFrameLevel().." a"..string.format("%.2f",child:GetAlpha())
+        end
+        add("Canvas children ("..#names.."): "..table.concat(names,"; "))
+        add("Canvas size: "..value(canvas:GetWidth()).." x "..value(canvas:GetHeight()).."  scroll "..value(scroll:GetWidth()).." x "..value(scroll:GetHeight()).."  scale "..value(ns.MapPins and ns.MapPins:CanvasScale()))
+        local levels=scroll.zoomLevels
+        local list={}
+        for i,level in ipairs(type(levels)=="table" and levels or {}) do list[i]=string.format("%.2f%s",level.scale or 0,level.bv and "*" or "") end
+        add("Zoom levels ("..#list.."): "..table.concat(list," ").."  (* ours)")
+        local shown=map and map.GetMapID and map:GetMapID()
+        local Terrain=ns.MapTerrain
+        add("Map shown: "..value(shown).."  frame (Core): "..(Terrain and Terrain:Frame(shown) and "yes" or "no").."  frame (ours): "..(P.Terrain and P.Terrain:Frame(shown) and "yes" or "no")
+            .."  seamless: "..(P.Seamless and P.Seamless:On() and "on" or "off").."  continent of it: "..value(P.Seamless and P.Seamless:ContinentOf(shown)))
+        if P.Terrain then
+            local T=P.Terrain
+            add("Close-zoom detail: tiles "..T:Count().."  fills "..T:FillCount())
+            local lm=T.landMask
+            add("Stitch: art pieces "..T:ArtCount().."  base pieces "..tostring(T.baseCount).."  masks "..#T.masks.."  land mask "..(lm and (tostring(lm.file).." "..value(lm:GetWidth()).." x "..value(lm:GetHeight()).." shown "..tostring(lm:IsShown())) or "none")
+                .."  MaskTexture.SetTexCoord "..(lm and type(lm.SetTexCoord)=="function" and "yes" or "no"))
+            local sample
+            for _,tex in ipairs(T.arts) do if tex:IsShown() and tex.sublevel==nil then sample=tex;break end end
+            local first=T.arts[1]
+            if first then add("First art piece: file "..tostring(first.file).."  shown "..tostring(first:IsShown()).."  masks "..tostring(first.GetNumMaskTextures and first:GetNumMaskTextures()).."  alpha "..value(select(4,first:GetVertexColor()))) end
+            local zone=T:Zones(shown)[1]
+            if zone then
+                local textures=P.Call("C_Map.GetMapArtLayerTextures",zone.mapID,1)
+                add("Base art of "..zone.name..": "..(type(textures)=="table" and (#textures.." texture(s), first "..tostring(textures[1])) or value(textures)))
+            end
+        end
+    end
     add("")
     add("[Waypoints and navigation]")
     add("UiMapPoint.CreateFromCoordinates: "..(exists("UiMapPoint.CreateFromCoordinates") and "yes" or "missing"))
@@ -116,6 +157,14 @@ function R:Report()
     add("C_MapExplorationInfo.GetExploredMapTextures: "..count(api("C_MapExplorationInfo.GetExploredMapTextures",mapID)))
     add("C_AreaPoiInfo.GetAreaPOIForMap: "..count(api("C_AreaPoiInfo.GetAreaPOIForMap",mapID)))
     add("C_TaxiMap.GetTaxiNodesForMap: "..count(api("C_TaxiMap.GetTaxiNodesForMap",mapID)))
+    -- Zones with no continent above them (Zephras Isle): what the client says of them on the world map.
+    for _,id in ipairs({2521,2665}) do
+        local zi=api("C_Map.GetMapInfo",id)
+        local a,b,c,d=api("C_Map.GetMapRectOnMap",id,947)
+        add("Map "..id..": type "..value(type(zi)=="table" and zi.mapType).." parent "..value(type(zi)=="table" and zi.parentMapID).."  no continent: "..value(P.Islands and P.Islands:Rootless(id))
+            .."  rect on 947: "..value(a).." - "..value(b).." x "..value(c).." - "..value(d).."  alone (own seamless map): "..(P.Seamless and P.Seamless:Alone(id) and "yes" or "no"))
+    end
+    add("Islands on 947: "..(P.Islands and #P.Islands:List(947) or 0).."  shown buttons: "..(function() local n=0;for _,b in ipairs(P.Islands and P.Islands.buttons or {}) do if b:IsShown() then n=n+1 end end;return n end)())
     add("C_Map.GetMapChildrenInfo(946): "..count(api("C_Map.GetMapChildrenInfo",946,nil,true)).."  (947): "..count(api("C_Map.GetMapChildrenInfo",947,nil,true)))
     add("")
     add("[Gathering]")
